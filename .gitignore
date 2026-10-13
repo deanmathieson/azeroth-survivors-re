@@ -12,7 +12,7 @@
 # The user's legally-installed 1.12.1 client. Read at runtime; not redistributed.
 /WoW
 # Fetched by scripts/fetch-data.sh (archive.org) — the client's Data folder, not redistributed.
-/wow-data/
+/wow-data
 # Cached / extracted assets derived from the user's install.
 /extracted/
 /out/
