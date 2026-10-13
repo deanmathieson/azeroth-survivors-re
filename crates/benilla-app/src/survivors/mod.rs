@@ -6,6 +6,7 @@
 
 mod abilities;
 mod auto;
+mod bonus;
 mod cards;
 mod data;
 mod enemies;
