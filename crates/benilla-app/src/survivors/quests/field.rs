@@ -865,7 +865,7 @@ mod tests {
             };
             world
                 .spawn((
-                    Hero { vy: 0.0, air: 0.0 },
+                    Hero::default(),
                     Transform::from_xyz(x, 0.0, 0.0),
                     state,
                 ))
