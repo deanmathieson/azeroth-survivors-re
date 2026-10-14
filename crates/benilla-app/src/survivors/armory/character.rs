@@ -1,15 +1,18 @@
 //! The Armory's Character tab: the stat sheet a fresh run of the picked class starts on, each row
-//! explained on hover, and the pick's class, race and sex under Details. The center is left clear,
-//! so the menu's own 3D hero stands in it.
+//! explained on hover, with the worn gear's summed bonuses under it; the pick's class, race and sex
+//! and what each slot wears under Details. The center is left clear, so the menu's own 3D hero
+//! stands in it.
 
 use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
 
+use super::collection::{item_tip, sheen};
 use super::{columns, para, text, ArmoryTip, Column, TabCtx};
 use crate::char_select::race_name;
 use crate::glue::art::{class_tc, tc_rect, DIM, GOLD};
 use crate::glue::widgets::{outlined_text, overlay, GlueText, Hilight};
 use crate::survivors::data::ClassDef;
+use crate::survivors::gear::{class_gear, summed, GearSave, Slot};
 use crate::survivors::hud::rgb;
 use crate::survivors::{Run, Stats, BASE_HP, BASE_SPEED};
 
@@ -166,6 +169,9 @@ fn stat_sheet(p: &mut ChildSpawnerCommands, ctx: &TabCtx, class: Option<&'static
     for row in stat_rows(&starting_stats(class)) {
         stat_row(p, ctx, row);
     }
+    if let Some(gear) = ctx.selection.class.map(|c| class_gear(ctx.world, c)) {
+        gear_bonuses(p, ctx, gear);
+    }
     p.spawn(Node {
         flex_grow: 1.0,
         ..default()
@@ -177,6 +183,40 @@ fn stat_sheet(p: &mut ChildSpawnerCommands, ctx: &TabCtx, class: Option<&'static
         11.0,
         DIM,
     );
+}
+
+/// Under the stats: the worn gear's bonuses, like ones summed, which every run of the class adds.
+fn gear_bonuses(p: &mut ChildSpawnerCommands, ctx: &TabCtx, gear: &GearSave) {
+    p.spawn(Node {
+        flex_shrink: 0.0,
+        margin: UiRect::new(Val::Px(6.0), Val::Px(0.0), Val::Px(10.0), Val::Px(2.0)),
+        ..default()
+    })
+    .with_children(|h| {
+        text(h, ctx, "Gear Bonuses", 13.0, GOLD);
+    });
+    let lines = summed(&gear.equipped_ids());
+    if lines.is_empty() {
+        p.spawn(Node {
+            padding: UiRect::horizontal(Val::Px(6.0)),
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|r| {
+            para(r, ctx, "None: no gear worn yet.", 12.0, DIM);
+        });
+        return;
+    }
+    for b in lines {
+        p.spawn(Node {
+            padding: UiRect::horizontal(Val::Px(6.0)),
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|r| {
+            text(r, ctx, &b.describe(), 12.0, TIP_GREEN);
+        });
+    }
 }
 
 /// One stat line, label left and value right, lit on hover with its tooltip up.
@@ -302,6 +342,74 @@ fn details(
         .with_children(|r| {
             text(r, ctx, label, 13.0, GOLD);
             text(r, ctx, value, 13.0, Color::WHITE);
+        });
+    }
+    if let Some(gear) = ctx.selection.class.map(|c| class_gear(ctx.world, c)) {
+        equipment(p, ctx, gear);
+    }
+}
+
+/// What each slot wears, in its rarity's colour; an empty slot greyed. Hover a piece for it in
+/// full.
+fn equipment(p: &mut ChildSpawnerCommands, ctx: &TabCtx, gear: &GearSave) {
+    p.spawn(Node {
+        flex_shrink: 0.0,
+        margin: UiRect::new(Val::Px(6.0), Val::Px(0.0), Val::Px(12.0), Val::Px(2.0)),
+        ..default()
+    })
+    .with_children(|h| {
+        text(h, ctx, "Equipment", 13.0, GOLD);
+    });
+    for slot in Slot::ALL {
+        let worn = gear.worn(slot);
+        let mut row = p.spawn(Node {
+            min_height: Val::Px(20.0),
+            flex_shrink: 0.0,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            padding: UiRect::horizontal(Val::Px(6.0)),
+            ..default()
+        });
+        if let Some(piece) = worn {
+            row.insert((Button, item_tip(piece, gear)));
+        }
+        row.with_children(|r| {
+            if worn.is_some() {
+                sheen(r, ctx);
+            }
+            r.spawn(Node {
+                width: Val::Px(70.0),
+                flex_shrink: 0.0,
+                ..default()
+            })
+            .with_children(|c| {
+                text(
+                    c,
+                    ctx,
+                    slot.label(),
+                    12.0,
+                    if worn.is_some() { GOLD } else { DIM },
+                );
+            });
+            let (name, color) = worn.map_or(("Empty", DIM), |i| (i.name, i.rarity.color()));
+            outlined_text(
+                r,
+                Node {
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    ..default()
+                },
+                (),
+                (),
+                GlueText {
+                    text: name,
+                    size: 12.0,
+                    color,
+                    wrap: true,
+                },
+                ctx.font,
+                1.0,
+            );
         });
     }
 }

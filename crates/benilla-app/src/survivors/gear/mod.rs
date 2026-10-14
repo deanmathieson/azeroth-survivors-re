@@ -3,22 +3,100 @@
 //! `ItemDisplayInfo.dbc` row and each icon its inventory icon. The stats are the mode's own, in the
 //! shared [`Bonus`] vocabulary, scaled by rarity so a full Legendary set about doubles a hero's
 //! output.
-
-// Consumers (the loot roll, the equip screen, saves) land in later workstreams; drop this then.
-#![allow(dead_code)]
+//!
+//! A slain roster boss rolls its drop ([`loot`]); new pieces join the class's collection in its
+//! profile record ([`save`], through [`store`]) and go on when they beat what the slot wears. What
+//! the picked class wears is its share of the meta bonuses ([`MetaParts::gear`]), and its main
+//! hand is the hero's weapon. The Armory's Collection, Drop Tables and Character tabs show it all
+//! ([`view`], [`ui`]).
+//!
+//! `WOW_SURVIVORS_GEAR=all|<n>` collects every piece of each class, or its first `n` in catalog
+//! order (Common first), and wears the best of them, in memory only: nothing of it is saved.
 
 mod catalog;
 mod drops;
+mod loot;
 mod save;
+mod store;
+mod ui;
+mod view;
 
-use bevy::prelude::App;
+use bevy::prelude::*;
 
 use super::bonus::{Bonus, Bonuses};
 pub(super) use super::cards::Rarity;
+use super::meta::MetaParts;
+use super::{enemies, hud, Phase, Selection};
 pub(super) use save::GearSave;
+pub(super) use store::class_gear;
+pub(super) use ui::{GearAction, GearView, ItemIcon};
+pub(super) use view::{
+    boss_rows, clock, percent, progress, rarity_label, sources, summed, zone_rows, zones_dropping,
+    BossRow, ZoneRow, RARITIES,
+};
 
 /// This workstream's systems, registered by [`super::SurvivorsPlugin`].
-pub(super) fn plugin(_app: &mut App) {}
+pub(super) fn plugin(app: &mut App) {
+    app.init_resource::<loot::LootToasts>()
+        .init_resource::<GearView>()
+        .add_systems(Startup, shadow_for_auto)
+        .add_systems(
+            Update,
+            (
+                store::fill_shadow.run_if(resource_exists::<store::Shadow>),
+                (loot::roll_loot, apply_gear, loot::dress_hero).chain(),
+            )
+                .chain()
+                .after(enemies::drop_loot),
+        )
+        .add_systems(
+            Update,
+            (
+                loot::show_toasts.after(hud::refresh_hud),
+                ui::gear_clicks,
+                ui::fill_item_icons,
+            ),
+        )
+        .add_systems(OnEnter(Phase::Menu), loot::clear_toasts);
+    let Some(text) = crate::webenv::var("WOW_SURVIVORS_GEAR") else {
+        return;
+    };
+    match store::dev_count(&text) {
+        Some(n) => {
+            app.insert_resource(store::Shadow::with_extra(n));
+        }
+        None => warn!("survivors: WOW_SURVIVORS_GEAR={text:?} (want all or a count)"),
+    }
+}
+
+/// An auto-runner run the profile does not record ([`super::profile::record_finished`]) keeps
+/// its drops in memory too.
+fn shadow_for_auto(
+    mut commands: Commands,
+    auto: Option<Res<super::auto::Auto>>,
+    shadow: Option<Res<store::Shadow>>,
+) {
+    if auto.is_some()
+        && shadow.is_none()
+        && std::env::var("WOW_SURVIVORS_RECORD").as_deref() != Ok("1")
+    {
+        commands.insert_resource(store::Shadow::default());
+    }
+}
+
+/// [`MetaParts::gear`] is what the picked class wears, kept in step as the pick or the gear
+/// changes.
+fn apply_gear(selection: Res<Selection>, gear: store::GearRead, mut parts: ResMut<MetaParts>) {
+    if !selection.is_changed() && !gear.is_changed() {
+        return;
+    }
+    let want = selection.class.map_or_else(Bonuses::default, |c| {
+        bonuses_of(&gear.get(c).equipped_ids())
+    });
+    if parts.gear != want {
+        parts.gear = want;
+    }
+}
 
 /// Where a piece is worn: the nine slots the catalog fills for every class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -61,6 +139,21 @@ impl Slot {
             Slot::MainHand => "Main Hand",
         }
     }
+
+    /// The slot's key in a save's [`GearSave::equipped`]; never rename one.
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Slot::Head => "head",
+            Slot::Shoulder => "shoulder",
+            Slot::Chest => "chest",
+            Slot::Waist => "waist",
+            Slot::Legs => "legs",
+            Slot::Feet => "feet",
+            Slot::Wrist => "wrist",
+            Slot::Hands => "hands",
+            Slot::MainHand => "main_hand",
+        }
+    }
 }
 
 /// One piece of gear.
@@ -80,8 +173,9 @@ pub(super) struct Item {
     pub bonuses: &'static [Bonus],
 }
 
-/// What one boss drops. A kill rolls `chance` once; on a hit, one of `slots` (picked evenly)
-/// drops at `rarity` for the hero's own class ([`piece`]).
+/// What one boss drops. A kill rolls each of `slots` on its own at `chance` (raised by the
+/// rewards multiplier and luck, [`loot::drop_odds`]); each hit drops that slot's piece at
+/// `rarity` for the hero's own class ([`piece`]).
 #[derive(Debug)]
 pub(super) struct BossDrop {
     /// The boss's roster name, kept beside its index so a reordered roster fails the tests.
@@ -241,6 +335,52 @@ mod tests {
             let mh = piece(class, Slot::MainHand, Rarity::Legendary).unwrap();
             assert_eq!(bonuses_of(&[mh.id]).get(StatKey::Targets), 1.0);
         }
+    }
+
+    #[test]
+    fn meta_gear_is_what_the_picked_class_wears() {
+        use super::super::profile::{slug, Profile};
+        let mut app = App::new();
+        app.init_resource::<MetaParts>()
+            .init_resource::<Selection>()
+            .insert_resource(Profile::default())
+            .add_systems(Update, apply_gear);
+        app.update();
+        assert_eq!(app.world().resource::<MetaParts>().gear, Bonuses::default());
+
+        let collect = |app: &mut App, class: usize, slot: Slot, rarity: Rarity| {
+            let mut profile = app.world_mut().resource_mut::<Profile>();
+            let record = profile.classes.entry(slug(CLASSES[class].name));
+            record
+                .or_default()
+                .gear
+                .collect(piece(class, slot, rarity).unwrap());
+        };
+        let worn =
+            |app: &App, class: usize| bonuses_of(&class_gear(app.world(), class).equipped_ids());
+        let meta = |app: &App| app.world().resource::<MetaParts>().gear.clone();
+        collect(&mut app, 5, Slot::Head, Rarity::Rare);
+        collect(&mut app, 5, Slot::MainHand, Rarity::Rare);
+        collect(&mut app, 6, Slot::Chest, Rarity::Rare);
+        app.world_mut().resource_mut::<Selection>().class = Some(5);
+        app.update();
+        assert_ne!(meta(&app), Bonuses::default());
+        assert_eq!(meta(&app), worn(&app, 5));
+
+        // Another pick, then a better piece for it.
+        app.world_mut().resource_mut::<Selection>().class = Some(6);
+        app.update();
+        assert_eq!(meta(&app), worn(&app, 6));
+        let before = meta(&app);
+        collect(&mut app, 6, Slot::Chest, Rarity::Epic);
+        app.update();
+        assert_eq!(meta(&app), worn(&app, 6));
+        assert_ne!(meta(&app), before);
+
+        // No pick wears nothing.
+        app.world_mut().resource_mut::<Selection>().class = None;
+        app.update();
+        assert_eq!(meta(&app), Bonuses::default());
     }
 
     #[test]
