@@ -151,6 +151,8 @@ mod tests {
             damage: 0.0,
             gold: 0,
             reward_mult: 1.0,
+            quests: 0,
+            final_boss: false,
         }
     }
 

@@ -6,8 +6,9 @@
 //! through `md5translate.trs` (north up, 533.33 yd per 256-px tile), masked by `MinimapMask.blp`,
 //! then the player arrow, then the red `ObjectIcons` cell per live enemy, the dot the reference
 //! draws for a tracked creature, ringed for an elite or a guardian, and a gold diamond per unopened
-//! treasure cache. Sizes are the engine minimap's ([`crate::minimap`]), measured against its
-//! 140.8-px blip basis.
+//! treasure cache. A quest giver is the gold quest dot, and a Defend quest's spot a green ring
+//! ([`super::quests::MapPin`]). Sizes are the engine minimap's ([`crate::minimap`]), measured
+//! against its 140.8-px blip basis.
 
 use std::collections::HashMap;
 
@@ -23,6 +24,7 @@ use benilla_world::world_point::WorldPoint;
 use super::enemies::Enemy;
 use super::hero::Hero;
 use super::hud::UiArt;
+use super::quests::MapPin;
 use super::treasure::Cache;
 use super::{HeroState, LocalHero};
 use crate::area::AreaTableRes;
@@ -56,6 +58,12 @@ const CACHE_MARK: f32 = 1.4;
 /// The local hero is the arrow.
 const ALLY_DOT: f32 = 1.3;
 const ALLY_COLOR: [f32; 3] = [70.0, 150.0, 255.0];
+/// `ObjectIcons.blp` cell 3, the gold quest dot: a quest giver, this many dots across on a dark
+/// disc, pinned to the rim while out of view.
+const QUEST_DOT_CELL: [f32; 4] = [0.75, 1.0, 0.0, 0.25];
+const GIVER_DOT: f32 = 1.8;
+/// A Defend quest's spot: a ring of its true size.
+const SPOT_RING_COLOR: [f32; 3] = [90.0, 230.0, 90.0];
 
 /// `GAMETIME_DAWN` and `GAMETIME_DUSK`, minutes into the day.
 const DAWN: u32 = 5 * 60 + 30;
@@ -379,6 +387,7 @@ pub(super) fn compose(
     allies: Query<&Transform, (With<Hero>, Without<LocalHero>)>,
     enemies: Query<(&Transform, &Enemy)>,
     caches: Query<(&Transform, &Cache)>,
+    pins: Query<(&Transform, &MapPin)>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if *phase.get() == super::Phase::Menu || !map.shown {
@@ -499,6 +508,19 @@ pub(super) fn compose(
 
     let scale = SIDE as f32 / BLIP_BASIS_PX;
     let center = Vec2::splat(half);
+    // A Defend quest's spot under everything else: a ring a pixel and a half thick.
+    for (tf, pin) in &pins {
+        let MapPin::Spot { radius: yards } = *pin else {
+            continue;
+        };
+        let at = center + Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z) / yd_per_px;
+        let r = yards / yd_per_px;
+        blit(buf, at, 2.0 * r + 4.0, |q| {
+            let a = (1.5 - (q.length() - r).abs()).clamp(0.0, 1.0);
+            let [cr, cg, cb] = SPOT_RING_COLOR;
+            (a > 0.0).then_some([cr, cg, cb, 255.0 * a])
+        });
+    }
     // The arrow turns with the hero's facing: counter-clockwise from north, as the yaw runs.
     if let Some(arrow) = &art.arrow {
         let yaw = hero.rotation.to_euler(EulerRot::YXZ).0;
@@ -581,6 +603,29 @@ pub(super) fn compose(
                 (a > 0.0).then_some([rgb[0], rgb[1], rgb[2], 255.0 * a])
             });
             dot(buf, at, size * ELITE_DOT);
+        }
+        // The quest givers on top: the gold quest dot on a dark disc.
+        let [ql, qr, qt, qb] = QUEST_DOT_CELL;
+        let giver = size * GIVER_DOT;
+        for (tf, pin) in &pins {
+            if *pin != MapPin::Giver {
+                continue;
+            }
+            let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+            if off.length() > radius {
+                off = off.normalize() * radius * 0.88;
+            }
+            let at = center + off / yd_per_px;
+            blit(buf, at, giver * 1.2, |q| {
+                let a = ((giver * 0.6 - q.length()).clamp(0.0, 1.0) * 200.0).round();
+                (a > 0.0).then_some([20.0, 14.0, 0.0, a])
+            });
+            blit(buf, at, giver, |q| {
+                let f = q / giver + 0.5;
+                let x = (ql + (qr - ql) * f.x) * icons.w as f32;
+                let y = (qt + (qb - qt) * f.y) * icons.h as f32;
+                Some(icons.sample(x, y))
+            });
         }
     }
     // The rest of the party, pinned to the rim while out of view.

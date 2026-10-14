@@ -22,7 +22,7 @@ use super::meta::MetaParts;
 use super::profile::{slug, Profile};
 use super::{data, hud, Selection};
 
-pub(super) use progress::{earned_points, xp_for_points, TalentDevXp};
+pub(super) use progress::{add_xp, earned_points, xp_for_points, TalentDevXp};
 use rules::{bonuses, can_learn, can_unlearn};
 pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;

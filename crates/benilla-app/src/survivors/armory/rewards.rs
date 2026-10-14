@@ -14,8 +14,8 @@ use crate::glue::widgets::{
 use crate::survivors::achievements::earned_points;
 use crate::survivors::profile::Profile;
 use crate::survivors::rewards::{
-    companion_unlocked, look_for, points, DevPoints, Perk, PerkSession, RewardsAction, RewardsSave,
-    FETCH_EVERY, FETCH_REACH, LOOKS, PERKS,
+    all_looks, companion_unlocked, look_for, offered, points, DevPoints, Perk, PerkSession,
+    RewardsAction, RewardsSave, FETCH_EVERY, FETCH_REACH, PERKS,
 };
 
 /// The side columns, as wide as the Armory's own.
@@ -277,7 +277,7 @@ fn companion(p: &mut ChildSpawnerCommands, ctx: &TabCtx, save: &RewardsSave) {
         );
         gap(p, 10.0);
         text(p, ctx, "Looks to pick from", 13.0, DIM);
-        for look in LOOKS {
+        for look in all_looks().filter(|l| offered(l, save)) {
             text(p, ctx, look.name, 13.0, DIM);
         }
         return;
@@ -293,7 +293,8 @@ fn companion(p: &mut ChildSpawnerCommands, ctx: &TabCtx, save: &RewardsSave) {
     text(p, ctx, "Look", 13.0, GOLD);
     gap(p, 4.0);
     let worn = look_for(&save.companion).key;
-    for (i, look) in LOOKS.iter().enumerate() {
+    // Indexed over every look, so a quest chain's look keeps its place once unlocked.
+    for (i, look) in all_looks().enumerate().filter(|(_, l)| offered(l, save)) {
         let picked = look.key == worn;
         p.spawn((
             Button,

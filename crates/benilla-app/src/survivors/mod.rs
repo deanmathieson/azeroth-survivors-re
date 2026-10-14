@@ -23,6 +23,7 @@ mod minimap;
 mod mobility;
 mod party;
 mod profile;
+mod quests;
 mod racials;
 mod rewards;
 mod run_options;
@@ -62,6 +63,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(gear::plugin)
             .add_plugins(achievements::plugin)
             .add_plugins(rewards::plugin)
+            .add_plugins(quests::plugin)
             .add_plugins(meta::plugin)
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)
@@ -423,6 +425,10 @@ pub(super) struct Run {
     pub guarded: bool,
     /// The Run Options rewards multiplier the run began under, for whatever pays out.
     pub reward_mult: f32,
+    /// In-run quests turned in ([`quests`]).
+    pub quests: u32,
+    /// Whether the zone's last boss fell, for the quest chains' second step.
+    pub final_boss: bool,
 }
 
 impl Default for Run {
@@ -447,6 +453,8 @@ impl Default for Run {
             next_elite: treasure::ELITE_FIRST_SECS,
             guarded: false,
             reward_mult: 1.0,
+            quests: 0,
+            final_boss: false,
         }
     }
 }

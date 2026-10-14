@@ -1,7 +1,7 @@
 //! The rewards' section of the profile, `Profile::rewards` in [`crate::survivors::profile`]: perks,
 //! companions and reward-point spending. Only the rewards workstream edits this file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,10 +17,14 @@ pub(in crate::survivors) struct RewardsSave {
     pub(in crate::survivors) spent: u32,
     /// Perk resets left; a save from before resets reads the full [`PERK_RESETS`].
     pub(in crate::survivors) resets_left: u32,
-    /// The companion's look, a [`super::companion::LOOKS`] key; empty or unknown wears the first.
+    /// The companion's look, a [`super::companion::all_looks`] key; empty or unknown wears the
+    /// first.
     pub(in crate::survivors) companion: String,
     /// Ranks bought, by perk id; a missing perk is rank 0, and an id this build lacks is ignored.
     pub(in crate::survivors) perks: BTreeMap<String, u32>,
+    /// The displays of the [`super::companion::EARNED_LOOKS`] unlocked, which the quest chains
+    /// award ([`crate::survivors::quests`]).
+    pub(in crate::survivors) unlocked_looks: BTreeSet<u32>,
 }
 
 impl Default for RewardsSave {
@@ -30,6 +34,7 @@ impl Default for RewardsSave {
             resets_left: PERK_RESETS,
             companion: String::new(),
             perks: BTreeMap::new(),
+            unlocked_looks: BTreeSet::new(),
         }
     }
 }

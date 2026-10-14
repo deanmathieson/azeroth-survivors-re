@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::achievements::AchievementSave;
 use super::gear::GearSave;
+use super::quests::QuestSave;
 use super::rewards::RewardsSave;
 use super::talents::TalentSave;
 use super::{data, Run, Selection};
@@ -77,6 +78,10 @@ pub(super) struct Profile {
     pub achievements: AchievementSave,
     /// Perks, companions and reward points, defined and edited in [`super::rewards`].
     pub rewards: RewardsSave,
+    /// Each zone's quests and chain, and the unlocks they record, defined and edited in
+    /// [`super::quests`].
+    #[serde(default)]
+    pub quests: QuestSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -101,6 +106,7 @@ impl Default for Profile {
             zones: BTreeMap::new(),
             achievements: AchievementSave::default(),
             rewards: RewardsSave::default(),
+            quests: QuestSave::default(),
             writable: true,
             dirty: false,
         }
@@ -121,6 +127,10 @@ pub(super) struct RunOutcome {
     pub gold: u32,
     /// The Run Options rewards multiplier the run was played under ([`Run::reward_mult`]).
     pub reward_mult: f32,
+    /// In-run quests turned in ([`Run::quests`]).
+    pub quests: u32,
+    /// Whether the zone's last boss fell ([`Run::final_boss`]).
+    pub final_boss: bool,
 }
 
 /// A run, recorded: [`record_finished`] writes exactly one per run, on the GameOver frame after
@@ -457,6 +467,8 @@ pub(super) fn record_finished(
         damage: me.map_or(run.damage_done, |hero| hero.damage_done),
         gold: run.gold,
         reward_mult: run.reward_mult,
+        quests: run.quests,
+        final_boss: run.final_boss,
     };
     // The save on disk may be newer (another copy of the game): this run is applied to it. The
     // reload lives only here, where the change to reapply is known; a profile with unsaved changes
@@ -696,6 +708,8 @@ mod tests {
             damage: 5.0,
             gold: 40,
             reward_mult: 1.0,
+            quests: 0,
+            final_boss: false,
         };
         let first = profile.record(&death);
         assert!(!first.new_best_survival);
@@ -824,6 +838,8 @@ mod tests {
             damage: 1.0,
             gold: u32::MAX,
             reward_mult: 1.0,
+            quests: u32::MAX,
+            final_boss: true,
         });
         assert_eq!(profile.account.runs, u32::MAX);
         assert_eq!(profile.account.wins, u32::MAX);
