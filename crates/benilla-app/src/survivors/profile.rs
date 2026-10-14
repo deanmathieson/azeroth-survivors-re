@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::achievements::AchievementSave;
+use super::faire::FaireSave;
 use super::gear::GearSave;
 use super::quests::QuestSave;
 use super::rewards::RewardsSave;
@@ -82,6 +83,10 @@ pub(super) struct Profile {
     /// [`super::quests`].
     #[serde(default)]
     pub quests: QuestSave,
+    /// The Darkmoon Faire's tickets, Favor, pity and recorded unlocks, defined and edited in
+    /// [`super::faire`].
+    #[serde(default)]
+    pub faire: FaireSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -107,6 +112,7 @@ impl Default for Profile {
             achievements: AchievementSave::default(),
             rewards: RewardsSave::default(),
             quests: QuestSave::default(),
+            faire: FaireSave::default(),
             writable: true,
             dirty: false,
         }

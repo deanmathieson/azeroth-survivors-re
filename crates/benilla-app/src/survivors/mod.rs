@@ -12,6 +12,7 @@ mod bonus;
 mod cards;
 mod data;
 mod enemies;
+mod faire;
 mod gear;
 mod grade;
 mod hand;
@@ -64,6 +65,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(achievements::plugin)
             .add_plugins(rewards::plugin)
             .add_plugins(quests::plugin)
+            .add_plugins(faire::plugin)
             .add_plugins(meta::plugin)
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)
@@ -154,15 +156,19 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    // The Armory and the Run Options panel, either open over the menu, take its
-                    // keys and clicks.
-                    hud::keys.run_if(armory::closed).run_if(run_options::closed),
+                    // The Armory, the Run Options panel and the Darkmoon Faire, any open over the
+                    // menu, take its keys and clicks.
+                    hud::keys
+                        .run_if(armory::closed)
+                        .run_if(run_options::closed)
+                        .run_if(faire::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
                     menu::menu_clicks
                         .run_if(armory::closed)
-                        .run_if(run_options::closed),
+                        .run_if(run_options::closed)
+                        .run_if(faire::closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
