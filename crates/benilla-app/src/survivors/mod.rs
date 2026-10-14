@@ -9,6 +9,7 @@ mod achievements;
 mod armory;
 mod auto;
 mod bonus;
+mod bossbar;
 mod cards;
 mod data;
 mod enemies;
@@ -26,6 +27,7 @@ mod profile;
 mod racials;
 mod rewards;
 mod run_options;
+mod sfx;
 mod talents;
 mod treasure;
 mod units;
@@ -67,6 +69,8 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(racials::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
+            .add_plugins(sfx::plugin)
+            .add_plugins(bossbar::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -79,6 +83,8 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<abilities::PendingHits>()
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
+            .init_resource::<hud::Replay>()
+            .init_resource::<treasure::BossRolls>()
             .init_resource::<cards::PendingPick>()
             .init_resource::<hand::HandMode>()
             .add_message::<abilities::Hit>()
@@ -109,6 +115,7 @@ impl Plugin for SurvivorsPlugin {
                     abilities::apply_hits,
                     enemies::tick_marks,
                     enemies::drop_loot,
+                    treasure::drop_boss_chests,
                     enemies::collect_gems,
                     hero::hero_vitals,
                 )
@@ -196,9 +203,17 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::Paused), pause)
             .add_systems(
                 OnEnter(Phase::GameOver),
-                (unpause, profile::record_finished).chain(),
+                (
+                    unpause,
+                    treasure::open_leftover_chests,
+                    profile::record_finished,
+                )
+                    .chain(),
             )
-            .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
+            .add_systems(
+                OnEnter(Phase::Menu),
+                (unpause, reset_run, hud::start_replay).chain(),
+            );
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
                 .add_systems(
@@ -577,7 +592,7 @@ fn unpause(mut time: ResMut<Time<Virtual>>) {
 /// Back at the menu: everything the last run spawned goes, and the run starts over.
 fn reset_run(
     mut commands: Commands,
-    spawned: Query<Entity, With<RunEntity>>,
+    spawned: Query<Entity, (With<RunEntity>, Without<LocalHero>)>,
     mut run: ResMut<Run>,
     mut pending: ResMut<abilities::PendingHits>,
     mut spawner: ResMut<enemies::Spawner>,

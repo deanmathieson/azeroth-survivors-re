@@ -1,6 +1,7 @@
-//! Gear in a run: a slain roster boss rolls its [`BossDrop`], new pieces go straight into the
-//! class's collection (worn if they beat what the slot wears), and each is announced on the
-//! run's banner in its rarity's colour and on the results screen. A piece already collected pays
+//! Gear in a run: a slain roster boss leaves a chest ([`treasure::drop_boss_chests`]), and its
+//! [`BossDrop`] rolls as the chest opens; new pieces go straight into the class's collection (worn
+//! if they beat what the slot wears), and each is announced over the chest and on the run's banner
+//! in its rarity's colour, and on the results screen. A piece already collected pays
 //! [`DUPLICATE_COINS`] coins of gold instead.
 
 use std::collections::VecDeque;
@@ -8,13 +9,14 @@ use std::collections::VecDeque;
 use benilla_protocol::messages::ObjectFields;
 use bevy::prelude::*;
 
-use super::super::data::{self, CLASSES};
-use super::super::enemies::Loot;
+use super::super::data::CLASSES;
 use super::super::hud::{BannerText, NoteKind, ResultsNotes, GOLD_TONE};
+use super::super::treasure::BossRolls;
 use super::super::{treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
 use super::save::Collected;
 use super::store::{GearRead, GearStore};
 use super::{drops_for, piece, BossDrop, Slot};
+use crate::combat_text::CombatTextSpawn;
 use crate::net::ObjectStore;
 
 /// A duplicate's worth: this many coins at what a coin is worth when it drops, under the gold
@@ -42,8 +44,12 @@ pub(super) fn roll(drop: &BossDrop, reward_mult: f32, luck: f32, rng: &mut Rng) 
 }
 
 /// Which of battleground `map`'s roster bosses is called `name`.
+#[cfg(test)]
 pub(super) fn boss_index(map: usize, name: &str) -> Option<usize> {
-    data::roster(map).bosses.iter().position(|b| b.name == name)
+    super::super::data::roster(map)
+        .bosses
+        .iter()
+        .position(|b| b.name == name)
 }
 
 /// The local hero's class, as the profile records it: the pick, else the hero's class by name.
@@ -63,11 +69,22 @@ pub(super) struct LootToasts {
     shown: Option<(String, Color)>,
 }
 
-/// A slain roster boss's drops, for the local player's class and profile, under its hero's luck:
-/// each new piece is collected (and maybe worn) at once, announced and noted for the results; each
-/// duplicate pays gold into the party's purse.
+/// `color` as combat text's 0xAARRGGBB.
+fn argb(color: Color) -> u32 {
+    let c = color.to_srgba();
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    byte(c.alpha) << 24 | byte(c.red) << 16 | byte(c.green) << 8 | byte(c.blue)
+}
+
+/// An opened boss chest's drop, for each hero it rolls for under that hero's luck: each new piece
+/// is collected (and maybe worn) at once, shown over the chest, announced and noted for the
+/// results; each duplicate pays gold into the party's purse. A chest opened in the run rolls for
+/// the heroes standing, and one the run's end opened for every hero.
+///
+/// The co-op seam: every such hero rolls its own class's pieces, but only the local player's hero
+/// keeps a collection (the profile is this machine's), so today it alone rolls.
 pub(super) fn roll_loot(
-    mut loot: MessageReader<Loot>,
+    mut rolls: ResMut<BossRolls>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     selection: Res<Selection>,
@@ -75,17 +92,21 @@ pub(super) fn roll_loot(
     mut store: GearStore,
     mut notes: ResMut<ResultsNotes>,
     mut toasts: ResMut<LootToasts>,
+    mut shown: MessageWriter<CombatTextSpawn>,
 ) {
-    for kill in loot.read() {
-        if !kill.boss {
-            continue;
-        }
-        let map = selection.map;
-        let Some(drop) = boss_index(map, kill.def.name).and_then(|b| drops_for(map, b)) else {
+    if rolls.0.is_empty() {
+        return;
+    }
+    for open in std::mem::take(&mut rolls.0) {
+        let Some(drop) = drops_for(open.map, open.boss) else {
             continue;
         };
-        let fallback = HeroState::default();
-        let me = local.single().unwrap_or(&fallback);
+        let Ok(me) = local.single() else {
+            continue;
+        };
+        if open.living_only && !me.alive() {
+            continue;
+        }
         let class = hero_class(&selection, me);
         let stats = me.stats();
         for slot in roll(drop, run.reward_mult, stats.luck, &mut rng) {
@@ -110,6 +131,12 @@ pub(super) fn roll_loot(
                         },
                         NoteKind::Loot,
                     );
+                    shown.write(CombatTextSpawn {
+                        anchor: open.chest,
+                        text: line.clone(),
+                        category: 0,
+                        color: Some(argb(p.rarity.color())),
+                    });
                     toasts.queue.push_back((line, p.rarity.color()));
                 }
                 Collected::Duplicate => {
@@ -196,6 +223,7 @@ pub(super) fn dress_hero(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::data;
     use super::super::super::profile::Profile;
     use super::super::{class_gear, Rarity};
     use super::*;
@@ -264,13 +292,15 @@ mod tests {
         assert_eq!(boss_index(0, "Nobody"), None);
     }
 
-    /// A boss kill through the systems: new pieces are collected, worn, noted and announced in
-    /// their colour; a repeat pays gold.
+    /// A boss chest through the systems: new pieces are collected, worn, noted and announced in
+    /// their colour over the chest; a repeat pays gold.
     #[test]
-    fn a_boss_kill_collects_and_announces() {
+    fn a_boss_chest_collects_and_announces() {
+        use super::super::super::treasure::BossChestOpened;
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
-        world.init_resource::<Messages<Loot>>();
+        world.init_resource::<BossRolls>();
+        world.init_resource::<Messages<CombatTextSpawn>>();
         world.init_resource::<ResultsNotes>();
         world.init_resource::<LootToasts>();
         world.insert_resource(Profile::default());
@@ -293,17 +323,17 @@ mod tests {
             ..default()
         });
         world.insert_resource(Rng(7));
+        world.spawn((HeroState::default(), LocalHero));
+        let chest = world.spawn_empty().id();
         let kill = |world: &mut World| {
-            world.write_message(Loot {
-                pos: Vec3::ZERO,
-                xp: 1,
-                boss: true,
-                elite: false,
-                def: &data::roster(map).bosses[last],
+            world.resource_mut::<BossRolls>().0.push(BossChestOpened {
+                map,
+                boss: last,
+                chest,
+                living_only: true,
             });
             world.run_system_once(roll_loot).unwrap();
-            // Each run is a fresh reader: the old kill must not be read again.
-            world.resource_mut::<Messages<Loot>>().clear();
+            assert!(world.resource::<BossRolls>().0.is_empty(), "rolled once");
         };
         kill(&mut world);
         let gear = class_gear(&world, 2);
@@ -321,6 +351,19 @@ mod tests {
         assert_eq!(toasts.queue.len(), drop.slots.len());
         assert!(toasts.queue.iter().all(|(_, c)| *c == drop.rarity.color()));
         assert_eq!(world.resource::<Run>().gold, 0);
+        // Each find floats over the chest in its colour.
+        let over: Vec<_> = world
+            .resource::<Messages<CombatTextSpawn>>()
+            .iter_current_update_messages()
+            .map(|t| (t.anchor, t.text.starts_with("Loot: "), t.color))
+            .collect();
+        assert_eq!(over.len(), drop.slots.len());
+        assert!(over
+            .iter()
+            .all(|&(a, l, c)| a == chest && l && c == Some(argb(drop.rarity.color()))));
+        // Nothing queued, nothing rolled.
+        world.run_system_once(roll_loot).unwrap();
+        assert_eq!(world.resource::<ResultsNotes>().0.len(), drop.slots.len());
 
         // The same kill again: duplicates, paid in gold, nothing new noted.
         kill(&mut world);
@@ -332,16 +375,5 @@ mod tests {
             drop.slots.len(),
             "nothing new"
         );
-
-        // A horde kill drops no gear.
-        world.write_message(Loot {
-            pos: Vec3::ZERO,
-            xp: 1,
-            boss: false,
-            elite: true,
-            def: &data::roster(map).bosses[0],
-        });
-        world.run_system_once(roll_loot).unwrap();
-        assert_eq!(class_gear(&world, 2).collected.len(), drop.slots.len());
     }
 }

@@ -70,25 +70,35 @@ pub(in crate::survivors) fn add_xp(save: &mut TalentSave, xp: u64) -> u32 {
     points_for_xp(save.xp) - before
 }
 
-/// `WOW_SURVIVORS_TALENT_XP=<n>`, a screenshot aid: `n` more talent XP for every class, so the
-/// Talents tab has points to spend. Never saved: it is counted where points are, not written to
-/// the profile (the ranks it buys are, like any others).
+/// `WOW_SURVIVORS_TALENT_XP=<n>|max`, a screenshot aid: `n` more talent XP for every class, or
+/// exactly what all [`MAX_POINTS`] cost, so the Talents tab has points to spend. Never saved: it
+/// is counted where points are, not written to the profile (the ranks it buys are, like any
+/// others).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::survivors) struct TalentDevXp(pub u64);
 
 impl TalentDevXp {
     pub(super) fn from_env() -> Option<Self> {
         let raw = crate::webenv::var("WOW_SURVIVORS_TALENT_XP")?;
-        match raw.trim().parse() {
-            Ok(xp) => {
-                info!("survivors talents: {xp} dev talent XP for every class");
-                Some(Self(xp))
+        match Self::parse(&raw) {
+            Some(dev) => {
+                info!("survivors talents: {} dev talent XP for every class", dev.0);
+                Some(dev)
             }
-            Err(_) => {
-                warn!("survivors talents: WOW_SURVIVORS_TALENT_XP={raw:?} is not a number");
+            None => {
+                warn!("survivors talents: WOW_SURVIVORS_TALENT_XP={raw:?} is not a number or max");
                 None
             }
         }
+    }
+
+    /// A whole number of XP, or `max` for every point.
+    fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("max") {
+            return Some(Self(xp_for_points(MAX_POINTS)));
+        }
+        raw.parse().ok().map(Self)
     }
 }
 
@@ -296,6 +306,21 @@ mod tests {
         world.run_system(award).unwrap();
         assert_eq!(world.resource::<Profile>().classes["mage"].talents.xp, 890);
         assert_eq!(world.resource::<ResultsNotes>().0.len(), 1);
+    }
+
+    #[test]
+    fn the_dev_xp_takes_a_number_or_max() {
+        assert_eq!(TalentDevXp::parse(" 1200 "), Some(TalentDevXp(1200)));
+        let max = TalentDevXp::parse("max").unwrap();
+        assert_eq!(TalentDevXp::parse("MAX"), Some(max));
+        assert!(max.0 >= xp_for_points(MAX_POINTS));
+        assert_eq!(
+            points_for_xp(max.0),
+            MAX_POINTS,
+            "all 51, where 100000 buys fewer"
+        );
+        assert!(points_for_xp(100_000) < MAX_POINTS);
+        assert_eq!(TalentDevXp::parse("lots"), None);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! shared [`Bonus`] vocabulary, scaled by rarity so a full Legendary set about doubles a hero's
 //! output.
 //!
-//! A slain roster boss rolls its drop ([`loot`]); new pieces join the class's collection in its
+//! A slain roster boss's chest rolls its drop as it opens ([`loot`]); new pieces join the class's collection in its
 //! profile record ([`save`], through [`store`]) and go on when they beat what the slot wears. What
 //! the picked class wears is its share of the meta bonuses ([`MetaParts::gear`]), and its main
 //! hand is the hero's weapon. The Armory's Collection, Drop Tables and Character tabs show it all
@@ -26,7 +26,7 @@ use bevy::prelude::*;
 use super::bonus::{Bonus, Bonuses};
 pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
-use super::{enemies, hud, Phase, Selection};
+use super::{enemies, hud, profile, treasure, Phase, Selection};
 pub(super) use save::GearSave;
 pub(super) use store::class_gear;
 pub(super) use ui::{GearAction, GearView, ItemIcon};
@@ -57,7 +57,14 @@ pub(super) fn plugin(app: &mut App) {
                 ui::fill_item_icons,
             ),
         )
-        .add_systems(OnEnter(Phase::Menu), loot::clear_toasts);
+        .add_systems(OnEnter(Phase::Menu), loot::clear_toasts)
+        // The chests the run's end opened roll ahead of its record, so their gold is in it.
+        .add_systems(
+            OnEnter(Phase::GameOver),
+            loot::roll_loot
+                .after(treasure::open_leftover_chests)
+                .before(profile::record_finished),
+        );
     let Some(text) = crate::webenv::var("WOW_SURVIVORS_GEAR") else {
         return;
     };

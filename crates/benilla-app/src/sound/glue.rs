@@ -201,14 +201,18 @@ fn hand_off_glue_music(
     state: Res<State<ClientState>>,
     mut music: NonSendMut<GlueMusic>,
     mut was_covered: Local<bool>,
+    mut was_menu: Local<bool>,
 ) {
     let covered = config.world_hold;
     let fell = std::mem::replace(&mut *was_covered, covered) && !covered;
-    if !fell || *state.get() != ClientState::InWorld {
+    // A mode's menu keeps the theme through its loads ([`SoundConfig::menu_music`]); leaving it
+    // is the theme's cue to go, as the world entry's drain is.
+    let left_menu = std::mem::replace(&mut *was_menu, config.menu_music) && !config.menu_music;
+    if config.menu_music || !(fell || left_menu) || *state.get() != ClientState::InWorld {
         return;
     }
     if let Some(h) = music.handle.as_mut() {
-        info!("glue music: the world's load drained — {GLUE_MUSIC_FADE_OUT_MS} ms fade");
+        info!("glue music: the world is up — {GLUE_MUSIC_FADE_OUT_MS} ms fade");
         h.stop(mixer::fade(GLUE_MUSIC_FADE_OUT_MS));
         music.fading = true;
     }
@@ -268,8 +272,12 @@ pub(super) fn plugin(app: &mut App) {
                 play_glue_sounds,
                 // The theme starts at the login screen (`AccountLogin_OnShow` sets the same
                 // `wow_main_theme`) and keeps across the glue screens.
-                start_glue_music
-                    .run_if(in_state(ClientState::Login).or(in_state(ClientState::CharSelect))),
+                // And over the world under a mode's menu ([`SoundConfig::menu_music`]).
+                start_glue_music.run_if(
+                    in_state(ClientState::Login)
+                        .or(in_state(ClientState::CharSelect))
+                        .or(|config: Res<SoundConfig>| config.menu_music),
+                ),
                 // No run condition: the theme plays into `InWorld`, and the entry load burst is
                 // the window the watch exists for.
                 hand_off_glue_music,

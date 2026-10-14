@@ -16,6 +16,7 @@ use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
 use super::party;
 use super::profile::LastRunNews;
+use super::units::Marks;
 use super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
@@ -29,6 +30,7 @@ const DIM: Color = Color::srgb(0.6, 0.6, 0.6);
 const NEWS_GREEN: Color = Color::srgb(0.25, 0.9, 0.35);
 pub(super) const DIM_GREY: Color = DIM;
 pub(super) const GOLD_TONE: Color = GOLD;
+pub(super) const EDGE_TONE: Color = EDGE;
 
 #[derive(Component)]
 pub(super) struct MenuRoot;
@@ -200,7 +202,7 @@ impl UiArt {
         }
     }
 
-    fn tinted(path: &'static str, tint: Color) -> Self {
+    pub(super) fn tinted(path: &'static str, tint: Color) -> Self {
         Self {
             path,
             coords: [0.0, 1.0, 0.0, 1.0],
@@ -229,9 +231,16 @@ pub(super) struct TipBody;
 #[derive(Component, Clone, Copy, PartialEq)]
 pub(super) enum UiAction {
     Resume,
+    /// From the results: the next run at once, on the same pick ([`Replay`]).
+    PlayAgain,
     MainMenu,
     Quit,
 }
+
+/// "Play again" on the results: the menu the run goes back through starts the next one at once, on
+/// the same pick, as Enter World would.
+#[derive(Resource, Default)]
+pub(super) struct Replay(pub(super) bool);
 
 /// The colour a button returns to when not hovered.
 #[derive(Component)]
@@ -952,7 +961,7 @@ pub(super) fn setup_hud(
             ));
             root.spawn((OverStats, centered(f, "", 15.0, DIM)));
             root.spawn((
-                edged_button(UiAction::MainMenu, BUTTON, GOLD),
+                edged_button(UiAction::PlayAgain, BUTTON, GOLD),
                 Node {
                     width: Val::Px(260.0),
                     justify_content: JustifyContent::Center,
@@ -972,6 +981,20 @@ pub(super) fn setup_hud(
             ))
             .with_children(|b| {
                 b.spawn(text(f, "Play again", 22.0, GOLD));
+            });
+            root.spawn((
+                button(UiAction::MainMenu, BUTTON),
+                Node {
+                    width: Val::Px(260.0),
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::axes(Val::Px(20.0), Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    ..default()
+                },
+            ))
+            .with_children(|b| {
+                b.spawn(text(f, "Main menu", 20.0, Color::WHITE));
             });
             root.spawn((
                 button(UiAction::Quit, Color::NONE),
@@ -994,16 +1017,24 @@ pub(super) fn menu_preview(
     selection: Res<Selection>,
     mut run: ResMut<Run>,
     heroes: Query<Entity, With<Hero>>,
+    next: Res<NextState<Phase>>,
     world: benilla_world::world_point::WorldPoint,
-    mut shown: Local<Option<(usize, u32, usize)>>,
+    mut shown: Local<Option<(usize, u32, usize, u32)>>,
 ) {
     if *phase.get() != Phase::Menu {
+        return;
+    }
+    // Replay has already reset the local hero and queued Playing on this entry frame.
+    if matches!(
+        *next,
+        NextState::Pending(Phase::Playing) | NextState::PendingIfNeq(Phase::Playing)
+    ) {
         return;
     }
     let want = selection
         .class
         .zip(selection.look.and_then(|i| selection.looks.get(i)).copied());
-    let key = want.map(|(c, l)| (c, l.0, selection.stage));
+    let key = want.map(|(c, l)| (c, l.0, selection.stage, selection.version));
     if key == *shown && (key.is_none() || !heroes.is_empty()) {
         return;
     }
@@ -1056,6 +1087,43 @@ pub(super) fn start_run(
     }
     run.version += 1;
     true
+}
+
+/// The local hero's parts a replay resets.
+type ReplayHero = (
+    &'static mut HeroState,
+    Option<&'static mut Hero>,
+    Option<&'static mut Marks>,
+);
+
+/// A results replay enters the menu only long enough to reset its run entities. The local hero
+/// stays through that reset, then becomes the same menu pick immediately, so the menu never
+/// presents a frame between results and the next run.
+pub(super) fn start_replay(
+    mut replay: ResMut<Replay>,
+    mut run: ResMut<Run>,
+    mut local: Query<ReplayHero, With<LocalHero>>,
+    mut selection: ResMut<Selection>,
+    meta: Res<MetaBonuses>,
+    unlocks: Res<super::zones::Unlocks>,
+    mut next: ResMut<NextState<Phase>>,
+) {
+    if !std::mem::take(&mut replay.0) {
+        return;
+    }
+    if unlocks.is_open(selection.map)
+        && local.single_mut().is_ok_and(|(mut hero, motion, marks)| {
+            if let Some(mut motion) = motion {
+                *motion = Hero { vy: 0.0, air: 0.0 };
+            }
+            if let Some(mut marks) = marks {
+                *marks = Marks::buffs();
+            }
+            start_run(&mut run, Some(&mut hero), &mut selection, &meta)
+        })
+    {
+        next.set(Phase::Playing);
+    }
 }
 
 /// Everything a hand can deal `hero` now, with its weight; its banished choices are gone for the
@@ -1221,6 +1289,7 @@ pub(super) fn buttons(
     mut next: ResMut<NextState<Phase>>,
     mut exit: MessageWriter<AppExit>,
     phase: Res<State<Phase>>,
+    mut replay: ResMut<Replay>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
@@ -1230,6 +1299,10 @@ pub(super) fn buttons(
                 bg.0 = BUTTON_HOT;
                 match (*action, *phase.get()) {
                     (UiAction::Resume, Phase::Paused) => next.set(Phase::Playing),
+                    (UiAction::PlayAgain, Phase::GameOver) => {
+                        replay.0 = true;
+                        next.set(Phase::Menu);
+                    }
                     (UiAction::MainMenu, Phase::Paused | Phase::GameOver) => next.set(Phase::Menu),
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
                         exit.write(AppExit::Success);
@@ -1250,9 +1323,18 @@ pub(super) fn keys(
     meta: Res<MetaBonuses>,
     unlocks: Res<super::zones::Unlocks>,
     mut next: ResMut<NextState<Phase>>,
+    mut replay: ResMut<Replay>,
 ) {
     match phase.get() {
         Phase::Menu => {
+            // `start_replay` has already made this run on the Menu entry frame. The Enter which
+            // requested it is still just pressed, but must not begin it a second time.
+            if matches!(
+                *next,
+                NextState::Pending(Phase::Playing) | NextState::PendingIfNeq(Phase::Playing)
+            ) {
+                return;
+            }
             // As Enter World, never into a zone not yet open.
             if keys.just_pressed(KeyCode::Enter)
                 && unlocks.is_open(selection.map)
@@ -1279,6 +1361,9 @@ pub(super) fn keys(
         Phase::LevelUp => {}
         Phase::GameOver => {
             if keys.just_pressed(KeyCode::Enter) {
+                replay.0 = true;
+                next.set(Phase::Menu);
+            } else if keys.just_pressed(KeyCode::Escape) {
                 next.set(Phase::Menu);
             }
         }
@@ -1503,7 +1588,7 @@ pub(super) fn refresh_hud(
         }
     };
     let summary = format!(
-        "{} {} in {}   —   press Enter to play again",
+        "{} {} in {}   —   Enter to play again · Esc for the main menu",
         crate::char_select::race_name(me.race),
         me.class.name,
         selection.map_def().name,
@@ -2482,8 +2567,19 @@ pub(super) fn show_panels(
         Query<(&mut Visibility, &mut Node), With<PauseRoot>>,
         Query<(&mut Visibility, &mut Node), With<OverRoot>>,
     )>,
+    next: Res<NextState<Phase>>,
 ) {
     let p = *phase.get();
+    // A run starting from the menu this frame: the screens hold until it is under way, so "Play
+    // again" keeps the results up through its one menu frame rather than flashing the menu.
+    if p == Phase::Menu
+        && matches!(
+            *next,
+            NextState::Pending(Phase::Playing) | NextState::PendingIfNeq(Phase::Playing)
+        )
+    {
+        return;
+    }
     // A hidden panel leaves the layout too: a merely invisible button still takes clicks.
     let set = |(mut v, mut node): (Mut<Visibility>, Mut<Node>), on: bool| {
         let want = if on {
@@ -2585,5 +2681,201 @@ mod tests {
                 assert_ne!(a.color(), b.color(), "{a:?} and {b:?}");
             }
         }
+    }
+
+    /// The results and their ways out: the keys and buttons, the record on GameOver and the reset
+    /// on Menu, with a local hero standing in for the menu's (`menu_preview` needs the world).
+    fn results_app() -> App {
+        use super::super::{abilities, enemies, profile, zones};
+        // Unsaved changes, so the record never reloads the save on disk.
+        let mut saved = profile::Profile::default();
+        saved.mark_dirty();
+        let mut app = App::new();
+        app.add_plugins((bevy::state::app::StatesPlugin, notes_plugin))
+            .init_state::<Phase>()
+            .insert_resource(saved)
+            .insert_resource(Selection {
+                class: Some(2),
+                looks: vec![(1, 1, 0)],
+                look: Some(0),
+                ..default()
+            })
+            .insert_resource(zones::Unlocks::from_profile(
+                &profile::Profile::default(),
+                true,
+            ))
+            .init_resource::<Run>()
+            .init_resource::<MetaBonuses>()
+            .init_resource::<Replay>()
+            .init_resource::<LastRunNews>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<abilities::PendingHits>()
+            .init_resource::<enemies::Spawner>()
+            .add_message::<profile::RunEnded>()
+            .add_message::<AppExit>()
+            .add_systems(Update, (buttons, keys).chain())
+            .add_systems(OnEnter(Phase::GameOver), profile::record_finished)
+            .add_systems(
+                OnEnter(Phase::Menu),
+                (super::super::reset_run, start_replay).chain(),
+            );
+        app.world_mut().spawn((HeroState::default(), LocalHero));
+        app.update();
+        app
+    }
+
+    fn press(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+    }
+
+    fn click(app: &mut App, action: UiAction) {
+        let button = app
+            .world_mut()
+            .spawn((
+                Interaction::Pressed,
+                action,
+                BaseColor(BUTTON),
+                BackgroundColor(BUTTON),
+            ))
+            .id();
+        app.update();
+        app.world_mut().despawn(button);
+    }
+
+    fn phase(app: &App) -> Phase {
+        *app.world().resource::<State<Phase>>().get()
+    }
+
+    fn local(world: &mut World) -> Entity {
+        world
+            .query_filtered::<Entity, With<LocalHero>>()
+            .single(world)
+            .unwrap()
+    }
+
+    fn hero(app: &mut App) -> &HeroState {
+        let e = local(app.world_mut());
+        app.world().get::<HeroState>(e).unwrap()
+    }
+
+    fn runs(app: &App) -> u32 {
+        app.world()
+            .resource::<super::super::profile::Profile>()
+            .account
+            .runs
+    }
+
+    /// From the menu, Enter World and a run lost: kills on the clock, the hero down, a note
+    /// pushed, and the results up.
+    fn lose_a_run(app: &mut App) {
+        assert_eq!(phase(app), Phase::Menu);
+        press(app, KeyCode::Enter);
+        app.update();
+        assert_eq!(phase(app), Phase::Playing);
+        let world = app.world_mut();
+        let mut run = world.resource_mut::<Run>();
+        (run.kills, run.elapsed) = (9, 100.0);
+        world
+            .resource_mut::<ResultsNotes>()
+            .push("Drop", NoteKind::Loot);
+        let e = local(world);
+        let mut me = world.get_mut::<HeroState>(e).unwrap();
+        (me.hp, me.dead_t, me.damage_done, me.rerolls) = (0.0, Some(3.5), 500.0, 0);
+        world
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::GameOver);
+        app.update();
+        assert_eq!(phase(app), Phase::GameOver);
+        assert!(app.world().resource::<Run>().recorded);
+    }
+
+    #[test]
+    fn play_again_starts_a_fresh_run_on_the_same_pick() {
+        let mut app = results_app();
+        lose_a_run(&mut app);
+        assert_eq!(runs(&app), 1);
+
+        // Enter on the results: its invisible Menu transition resets and begins the next run.
+        press(&mut app, KeyCode::Enter);
+        app.update();
+        assert_eq!(phase(&app), Phase::Menu);
+        assert!(
+            !app.world().resource::<Replay>().0,
+            "taken on the menu frame"
+        );
+        assert!(matches!(
+            *app.world().resource::<NextState<Phase>>(),
+            NextState::Pending(Phase::Playing)
+        ));
+        app.update();
+        assert_eq!(phase(&app), Phase::Playing);
+        assert_eq!(runs(&app), 1, "the lost run is recorded once");
+        let run = app.world().resource::<Run>();
+        assert_eq!((run.kills, run.elapsed, run.recorded), (0, 0.0, false));
+        assert_eq!(run.version, 1, "begun by start_run");
+        let selection = app.world().resource::<Selection>();
+        assert_eq!(
+            (selection.class, selection.look, selection.map),
+            (Some(2), Some(0), 0)
+        );
+        // Through the menu's own Menu → Playing transition, which clears the notes.
+        assert!(app.world().resource::<ResultsNotes>().0.is_empty());
+        let me = hero(&mut app);
+        assert_eq!((me.class.name, me.race), (data::CLASSES[2].name, 1));
+        assert_eq!(me.dead_t, None);
+        assert_eq!(me.hp, me.stats().max_hp);
+        assert_eq!((me.damage_done, me.rerolls), (0.0, hand_rerolls()));
+
+        // The play-again button does the same, and that run is recorded in its turn.
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::GameOver);
+        app.update();
+        assert_eq!(runs(&app), 2);
+        click(&mut app, UiAction::PlayAgain);
+        app.update();
+        app.update();
+        assert_eq!(phase(&app), Phase::Playing);
+        assert_eq!(runs(&app), 2);
+        assert_eq!(app.world().resource::<Run>().version, 1);
+    }
+
+    fn hand_rerolls() -> u32 {
+        HeroState::default().rerolls
+    }
+
+    #[test]
+    fn main_menu_returns_without_starting_a_run() {
+        let mut app = results_app();
+        lose_a_run(&mut app);
+        click(&mut app, UiAction::MainMenu);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(phase(&app), Phase::Menu);
+        assert_eq!(runs(&app), 1, "recorded once, on GameOver");
+        let run = app.world().resource::<Run>();
+        assert_eq!((run.kills, run.version), (0, 0), "reset, and no run begun");
+        assert!(!app.world().resource::<Replay>().0);
+        assert!(hero(&mut app).dead_t.is_some(), "no run began on the hero");
+        // The notes stay for the menu until a run begins.
+        assert!(!app.world().resource::<ResultsNotes>().0.is_empty());
+
+        // Esc on the results goes the same way.
+        lose_a_run(&mut app);
+        assert_eq!(runs(&app), 2);
+        press(&mut app, KeyCode::Escape);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(phase(&app), Phase::Menu);
+        assert_eq!(runs(&app), 2);
+        assert_eq!(app.world().resource::<Run>().version, 0);
     }
 }
