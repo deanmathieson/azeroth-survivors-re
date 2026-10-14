@@ -11,6 +11,7 @@ mod bonus;
 mod cards;
 mod data;
 mod enemies;
+mod gear;
 mod grade;
 mod hand;
 mod hero;
