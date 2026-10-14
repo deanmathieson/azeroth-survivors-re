@@ -25,6 +25,7 @@ mod units;
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
 
+use bonus::{Bonuses, School, StatKey, ARMOR_CAP};
 use data::{AbilityDef, ClassDef, PassiveDef, Stat};
 
 /// Set by [`crate::run_survivors`] before the app builds. wasm32 has no process environment, so
@@ -50,6 +51,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<Selection>()
             .init_resource::<Run>()
             .init_resource::<profile::LastRunNews>()
+            .init_resource::<MetaBonuses>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()
@@ -241,9 +243,10 @@ impl Owned {
         let base = self.def.cooldown * 0.93f32.powi(i32::from(self.level) - 1);
         (base * (1.0 - stats.haste).max(0.35)).max(0.2)
     }
-    pub fn count(&self) -> u32 {
+    /// Targets, projectiles or jumps, whichever the kind counts; the hero's extra targets add on.
+    pub fn count(&self, stats: &Stats) -> u32 {
         let extra = [3u8, 5, 7].iter().filter(|&&l| self.level >= l).count() as u32;
-        self.def.count + extra
+        self.def.count + extra + stats.targets
     }
     pub fn radius(&self, stats: &Stats) -> f32 {
         self.def.radius * (1.0 + 0.08 * f32::from(self.level - 1)) * stats.area
@@ -253,24 +256,96 @@ impl Owned {
     }
 }
 
-/// The hero's derived numbers, from the base and the passives.
+/// The hero's derived numbers: the base, the class, the level-up passives and the run's
+/// [`Bonuses`] ([`Run::stats`]). Within a stat a passive and a bonus add: +10% and +10% make
+/// +20%, not +21%. Flat bonuses (health, regen, targets, revives) land on the base before any
+/// percentage scales it.
 #[derive(Clone, Copy)]
 pub(super) struct Stats {
+    /// The damage multiplier.
     pub might: f32,
     pub max_hp: f32,
     pub speed: f32,
     pub regen: f32,
+    /// Fraction of cooldowns removed; [`Owned::cooldown`] keeps at least 35% of one.
     pub haste: f32,
     pub area: f32,
     pub magnet: f32,
     pub growth: f32,
+    /// Damage blocked per hit, flat, from the passive.
     pub armor: f32,
+    /// Fraction of each hit removed, from bonuses; see [`Stats::after_armor`] for the cap.
+    pub armor_frac: f32,
     pub crit: f32,
+    /// What a critical strike multiplies damage by.
+    pub crit_damage: f32,
+    /// Extra targets, projectiles or jumps for every ability that counts them.
+    pub targets: u32,
+    /// The gold multiplier. Unread until gold exists: its consumer is the per-coin value.
+    #[allow(dead_code)]
+    pub gold: f32,
+    /// The luck multiplier: each rarity tier up weighs this much more in level-up offers.
+    pub luck: f32,
+    /// Fraction of damage dealt returned as health.
+    pub lifesteal: f32,
+    /// Extra lives for the run.
+    pub revives: u32,
 }
 
 pub(super) const BASE_HP: f32 = 120.0;
 pub(super) const BASE_SPEED: f32 = 7.0;
 pub(super) const BASE_MAGNET: f32 = 4.5;
+/// A critical strike's multiplier before bonuses.
+pub(super) const BASE_CRIT_DAMAGE: f32 = 2.0;
+/// The share of max health an extra life comes back with.
+pub(super) const REVIVE_HP: f32 = 0.5;
+/// Seconds an extra life keeps the hero untouchable.
+pub(super) const REVIVE_IMMUNE_SECS: f32 = 2.0;
+
+impl Stats {
+    /// What gets through of a `raw` hit: the flat block and the fraction together remove at most
+    /// [`ARMOR_CAP`] of it, and at least 1 always lands.
+    pub fn after_armor(&self, raw: f32) -> f32 {
+        let blocked = (self.armor + raw * self.armor_frac).min(raw * ARMOR_CAP);
+        (raw - blocked).max(1.0)
+    }
+
+    /// Health after lifesteal returns its share of `dealt`, never above max health.
+    pub fn leech(&self, hp: f32, dealt: f32) -> f32 {
+        if self.lifesteal <= 0.0 || dealt <= 0.0 {
+            return hp;
+        }
+        (hp + dealt * self.lifesteal).min(self.max_hp).max(hp)
+    }
+
+    /// How much more an offer of rarity `tier` (0 common … 4 legendary) weighs under luck.
+    pub fn luck_weight(&self, tier: i32) -> f32 {
+        self.luck.max(0.0).powi(tier)
+    }
+}
+
+/// Bonuses from outside the run (talents, gear and perks, as they land), copied into each run
+/// as it starts.
+#[derive(Resource, Default)]
+struct MetaBonuses(pub Bonuses);
+
+/// `WOW_SURVIVORS_BONUSES`, a test aid: `damage=0.5,crit_chance=0.2,fire=0.3,targets=1` adds
+/// those bonuses to every run ([`bonus::parse`] reads it); a malformed entry is skipped.
+fn env_bonuses() -> Bonuses {
+    let Some(text) = crate::webenv::var("WOW_SURVIVORS_BONUSES") else {
+        return Bonuses::default();
+    };
+    let (bonuses, skipped) = bonus::parse(&text);
+    for entry in skipped {
+        warn!("survivors: WOW_SURVIVORS_BONUSES: skipping {entry:?} (want stat_or_school=number)");
+    }
+    bonuses
+}
+
+/// A whole count from a bonus total: never negative, rounded off float dust.
+fn whole(v: f32) -> u32 {
+    v.max(0.0).round() as u32
+}
 
 /// One run's state.
 #[derive(Resource)]
@@ -284,6 +359,10 @@ pub(super) struct Run {
     pub hp: f32,
     pub abilities: Vec<Owned>,
     pub passives: Vec<(&'static PassiveDef, u8)>,
+    /// The permanent bonuses this run started with: [`MetaBonuses`] and the env test aid.
+    bonuses: Bonuses,
+    /// Extra lives spent so far.
+    pub revives_used: u32,
     pub shield: f32,
     pub shield_t: f32,
     pub immune_t: f32,
@@ -335,6 +414,8 @@ impl Default for Run {
             hp: BASE_HP,
             abilities: Vec::new(),
             passives: Vec::new(),
+            bonuses: Bonuses::default(),
+            revives_used: 0,
             shield: 0.0,
             shield_t: 0.0,
             immune_t: 0.0,
@@ -367,19 +448,32 @@ impl Default for Run {
 }
 
 impl Run {
+    /// The base, the class, the passives and the bonuses folded together (see [`Stats`]).
     pub fn stats(&self) -> Stats {
+        let b = &self.bonuses;
         let mut s = Stats {
-            might: 1.0,
-            max_hp: BASE_HP,
+            might: 1.0 + b.get(StatKey::Damage),
+            max_hp: BASE_HP + b.get(StatKey::MaxHealth),
             speed: BASE_SPEED,
-            regen: 0.0,
-            haste: 0.0,
-            area: 1.0,
+            regen: b.get(StatKey::Regen),
+            haste: b.cooldown(),
+            area: 1.0 + b.get(StatKey::Area),
             magnet: BASE_MAGNET,
-            growth: 1.0,
+            growth: 1.0 + b.get(StatKey::Experience),
             armor: 0.0,
-            crit: 0.05,
+            armor_frac: b.armor(),
+            crit: 0.05 + b.get(StatKey::CritChance),
+            crit_damage: BASE_CRIT_DAMAGE + b.get(StatKey::CritDamage),
+            targets: whole(b.get(StatKey::Targets)),
+            gold: 1.0 + b.get(StatKey::Gold),
+            luck: 1.0 + b.get(StatKey::Luck),
+            lifesteal: b.get(StatKey::Lifesteal).max(0.0),
+            revives: whole(b.get(StatKey::Revives)),
         };
+        // Percentages that scale a base sum before they apply, so a passive and a bonus add.
+        let mut hp_pct = 0.0;
+        let mut speed_pct = b.get(StatKey::MoveSpeed);
+        let mut magnet_pct = b.get(StatKey::Pickup);
         // Tanky classes start tougher, cloth starts quicker.
         match self.class.id {
             1 | 2 => s.max_hp += 40.0,
@@ -390,18 +484,39 @@ impl Run {
             let v = p.per_level * f32::from(level);
             match p.stat {
                 Stat::Might => s.might += v,
-                Stat::MaxHp => s.max_hp *= 1.0 + v,
-                Stat::Speed => s.speed *= 1.0 + v,
+                Stat::MaxHp => hp_pct += v,
+                Stat::Speed => speed_pct += v,
                 Stat::Regen => s.regen += v,
                 Stat::Haste => s.haste += v,
                 Stat::Area => s.area += v,
-                Stat::Magnet => s.magnet *= 1.0 + v,
+                Stat::Magnet => magnet_pct += v,
                 Stat::Growth => s.growth += v,
                 Stat::Armor => s.armor += v,
                 Stat::Crit => s.crit += v,
             }
         }
+        s.max_hp *= 1.0 + hp_pct;
+        s.speed *= 1.0 + speed_pct;
+        s.magnet *= 1.0 + magnet_pct;
         s
+    }
+
+    /// The multiplier on top of might for damage of `school`.
+    fn school_mult(&self, school: School) -> f32 {
+        (1.0 + self.bonuses.school_damage(school)).max(0.0)
+    }
+
+    /// On lethal damage: spends an extra life if one is left, back up at [`REVIVE_HP`] of max
+    /// health and untouchable for [`REVIVE_IMMUNE_SECS`]. Whether the hero got up.
+    pub fn revive(&mut self) -> bool {
+        let stats = self.stats();
+        if self.revives_used >= stats.revives {
+            return false;
+        }
+        self.revives_used += 1;
+        self.hp = stats.max_hp * REVIVE_HP;
+        self.immune_t = self.immune_t.max(REVIVE_IMMUNE_SECS);
+        true
     }
 
     pub fn guid(&mut self) -> u64 {
@@ -475,4 +590,186 @@ fn reset_run(
     *spawner = enemies::Spawner::default();
     // The preview hero is respawned for the look still picked.
     selection.version += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bonus::{Bonus, COOLDOWN_CAP};
+    use super::*;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    fn run_with(bonuses: &[Bonus]) -> Run {
+        let mut run = Run::default();
+        run.bonuses.add_all(bonuses);
+        run
+    }
+
+    fn passive(key: &str) -> &'static PassiveDef {
+        data::PASSIVES.iter().find(|p| p.key == key).unwrap()
+    }
+
+    fn owned(key: &str, level: u8) -> Owned {
+        Owned {
+            def: data::ability(key),
+            level,
+            cd: 0.0,
+        }
+    }
+
+    #[test]
+    fn no_bonuses_leave_the_base() {
+        let s = Run::default().stats();
+        assert!(close(s.might, 1.0) && close(s.area, 1.0) && close(s.growth, 1.0));
+        assert!(close(s.haste, 0.0) && close(s.armor_frac, 0.0) && close(s.lifesteal, 0.0));
+        assert!(close(s.crit, 0.05) && close(s.crit_damage, BASE_CRIT_DAMAGE));
+        assert!(close(s.gold, 1.0) && close(s.luck, 1.0));
+        assert_eq!((s.targets, s.revives), (0, 0));
+    }
+
+    #[test]
+    fn each_stat_key_reaches_its_stat() {
+        let base = Run::default().stats();
+        let one = |stat, v| run_with(&[Bonus::new(stat, v)]).stats();
+        assert!(close(
+            one(StatKey::MaxHealth, 30.0).max_hp,
+            base.max_hp + 30.0
+        ));
+        assert!(close(one(StatKey::Damage, 0.5).might, 1.5));
+        assert!(close(one(StatKey::Cooldown, 0.2).haste, 0.2));
+        assert!(close(one(StatKey::CritChance, 0.2).crit, 0.25));
+        assert!(close(one(StatKey::CritDamage, 0.5).crit_damage, 2.5));
+        assert!(close(one(StatKey::Area, 0.3).area, 1.3));
+        assert_eq!(one(StatKey::Targets, 2.0).targets, 2);
+        assert!(close(one(StatKey::MoveSpeed, 0.1).speed, base.speed * 1.1));
+        assert!(close(one(StatKey::Regen, 1.5).regen, 1.5));
+        assert!(close(one(StatKey::Pickup, 0.5).magnet, BASE_MAGNET * 1.5));
+        assert!(close(one(StatKey::Armor, 0.2).armor_frac, 0.2));
+        assert!(close(one(StatKey::Experience, 0.25).growth, 1.25));
+        assert!(close(one(StatKey::Gold, 0.4).gold, 1.4));
+        assert!(close(one(StatKey::Luck, 0.5).luck, 1.5));
+        assert!(close(one(StatKey::Lifesteal, 0.05).lifesteal, 0.05));
+        assert_eq!(one(StatKey::Revives, 1.0).revives, 1);
+        // School damage stays off the unscoped multiplier.
+        let fire = run_with(&[Bonus::school(School::Fire, 0.3)]).stats();
+        assert!(close(fire.might, 1.0));
+    }
+
+    #[test]
+    fn passives_and_bonuses_add_within_a_stat() {
+        let mut run = run_with(&[
+            Bonus::new(StatKey::MoveSpeed, 0.1),
+            Bonus::new(StatKey::Damage, 0.1),
+            Bonus::new(StatKey::MaxHealth, 20.0),
+        ]);
+        run.passives = vec![
+            (passive("pack"), 1),
+            (passive("might"), 1),
+            (passive("fortitude"), 1),
+        ];
+        let base = Run::default().stats();
+        let s = run.stats();
+        assert!(close(s.speed, base.speed * 1.2));
+        assert!(close(s.might, 1.2));
+        // Flat health lands before the percentage scales it.
+        assert!(close(s.max_hp, (base.max_hp + 20.0) * 1.2));
+    }
+
+    #[test]
+    fn armor_is_capped_with_the_flat_block_counted() {
+        let s = run_with(&[Bonus::new(StatKey::Armor, 0.9)]).stats();
+        assert_eq!(s.armor_frac, ARMOR_CAP);
+        assert!(close(s.after_armor(100.0), 40.0));
+        let mut run = run_with(&[Bonus::new(StatKey::Armor, 0.5)]);
+        run.passives = vec![(passive("wild"), 5)];
+        let s = run.stats();
+        assert!(close(s.armor, 5.0));
+        // 5 flat and half of 100 remove 55.
+        assert!(close(s.after_armor(100.0), 45.0));
+        // 5 flat and half of 20 would remove 15; the cap allows 12.
+        assert!(close(s.after_armor(20.0), 8.0));
+        assert!(close(s.after_armor(1.5), 1.0));
+        // The flat block alone, under the cap, is unchanged.
+        run.bonuses = Bonuses::default();
+        assert!(close(run.stats().after_armor(20.0), 15.0));
+    }
+
+    #[test]
+    fn cooldown_bonus_is_capped_and_stacks_with_haste() {
+        let s = run_with(&[Bonus::new(StatKey::Cooldown, 0.8)]).stats();
+        assert_eq!(s.haste, COOLDOWN_CAP);
+        let mut run = run_with(&[Bonus::new(StatKey::Cooldown, 0.8)]);
+        run.passives = vec![(passive("intellect"), 5)];
+        let s = run.stats();
+        assert!(close(s.haste, COOLDOWN_CAP + 0.4));
+        // The ability floor still keeps 35% of a cooldown.
+        let o = owned("frostbolt", 1);
+        assert!(close(o.cooldown(&s), o.def.cooldown * 0.35));
+    }
+
+    #[test]
+    fn targets_add_to_ability_counts() {
+        let s = run_with(&[Bonus::new(StatKey::Targets, 2.0)]).stats();
+        // Three missiles, one more at rank 3, two from the bonus.
+        assert_eq!(owned("arcane_missiles", 3).count(&s), 6);
+        assert_eq!(
+            owned("arcane_missiles", 3).count(&Run::default().stats()),
+            4
+        );
+    }
+
+    #[test]
+    fn school_damage_multiplies_its_school_on_top_of_might() {
+        let run = run_with(&[
+            Bonus::school(School::Fire, 0.3),
+            Bonus::new(StatKey::Damage, 0.5),
+        ]);
+        assert!(close(run.school_mult(School::Fire), 1.3));
+        assert!(close(run.school_mult(School::Frost), 1.0));
+        assert!(close(
+            run.stats().might * run.school_mult(School::Fire),
+            1.95
+        ));
+    }
+
+    #[test]
+    fn lifesteal_heals_its_share_up_to_max_health() {
+        let mut s = run_with(&[Bonus::new(StatKey::Lifesteal, 0.1)]).stats();
+        let max = s.max_hp;
+        assert!(close(s.leech(50.0, 100.0), 60.0));
+        assert!(close(s.leech(max - 3.0, 100.0), max));
+        assert!(close(s.leech(50.0, 0.0), 50.0));
+        s.lifesteal = 0.0;
+        assert!(close(s.leech(50.0, 100.0), 50.0));
+    }
+
+    #[test]
+    fn revives_are_spent_one_at_a_time() {
+        let mut run = run_with(&[Bonus::new(StatKey::Revives, 1.0)]);
+        run.hp = -5.0;
+        assert!(run.revive());
+        assert_eq!(run.revives_used, 1);
+        assert!(close(run.hp, run.stats().max_hp * REVIVE_HP));
+        assert!(close(run.immune_t, REVIVE_IMMUNE_SECS));
+        // Untouchable while the revive's immunity lasts.
+        assert_eq!(hero::hurt_hero(&mut run, 500.0), 0.0);
+        run.hp = 0.0;
+        assert!(!run.revive());
+        assert_eq!(run.revives_used, 1);
+        assert!(!Run::default().revive());
+    }
+
+    #[test]
+    fn luck_weighs_rarer_tiers_up() {
+        let plain = Run::default().stats();
+        for tier in 0..5 {
+            assert_eq!(plain.luck_weight(tier), 1.0);
+        }
+        let lucky = run_with(&[Bonus::new(StatKey::Luck, 0.5)]).stats();
+        assert_eq!(lucky.luck_weight(0), 1.0);
+        assert!(close(lucky.luck_weight(2), 2.25));
+        assert!(lucky.luck_weight(4) > lucky.luck_weight(3));
+    }
 }

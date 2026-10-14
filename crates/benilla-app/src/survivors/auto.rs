@@ -12,7 +12,7 @@ use super::enemies::{Enemy, Gem};
 use super::hero::Hero;
 use super::hud::{self, Offer};
 use super::units::flat;
-use super::{data, Phase, Rng, Run, Selection};
+use super::{data, MetaBonuses, Phase, Rng, Run, Selection};
 
 #[derive(Resource)]
 pub(super) struct Auto {
@@ -154,6 +154,7 @@ pub(super) fn drive(
     mut next: ResMut<NextState<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    meta: Res<MetaBonuses>,
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     loading: Res<crate::loading_screen::LoadingScreen>,
@@ -179,7 +180,7 @@ pub(super) fn drive(
                 auto.wait = 0.0;
             } else if auto.wait > 2.0 && auto.wait < 3.0 {
                 auto.capture_once(&mut commands, "menu".into());
-            } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection) {
+            } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection, &meta) {
                 info!(
                     "survivors auto: run begins as {} at {}",
                     run.class.name,

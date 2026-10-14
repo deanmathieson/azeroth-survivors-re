@@ -309,7 +309,7 @@ fn details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::survivors::{data, hud, Selection};
+    use crate::survivors::{data, hud, MetaBonuses, Selection};
 
     fn numbers(s: &Stats) -> [f32; 10] {
         [
@@ -328,7 +328,11 @@ mod tests {
                 ..Default::default()
             };
             let mut run = Run::default();
-            assert!(hud::start_run(&mut run, &mut selection), "{}", class.name);
+            assert!(
+                hud::start_run(&mut run, &mut selection, &MetaBonuses::default()),
+                "{}",
+                class.name
+            );
             assert_eq!(
                 numbers(&starting_stats(class)),
                 numbers(&run.stats()),

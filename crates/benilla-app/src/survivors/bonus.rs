@@ -2,9 +2,6 @@
 //! meta-progression source grants ([`Bonus`]), and their summed totals ([`Bonuses`]). Sources are
 //! static slices built with the `const fn` constructors; the run folds the totals into its stats.
 
-// Consumers land in the stat-layer workstream; drop this once they do.
-#![allow(dead_code)]
-
 /// Most armor can remove of incoming damage.
 pub(super) const ARMOR_CAP: f32 = 0.60;
 /// Most cooldown reduction can remove of a cooldown.
@@ -52,6 +49,8 @@ impl StatKey {
     const COUNT: usize = StatKey::Revives as usize + 1;
 
     /// The stat's tooltip name, plural where it counts something.
+    // Tooltip text, for the talent and gear screens still to come.
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             StatKey::MaxHealth => "max health",
@@ -74,6 +73,7 @@ impl StatKey {
     }
 
     /// Whether the value is a flat amount rather than a fraction shown as a percentage.
+    #[allow(dead_code)]
     fn flat(self) -> bool {
         matches!(
             self,
@@ -99,6 +99,7 @@ impl School {
     const COUNT: usize = School::Arcane as usize + 1;
 
     /// The school's display name, capitalised as in tooltips.
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             School::Physical => "Physical",
@@ -145,6 +146,7 @@ impl Bonus {
     }
 
     /// Short tooltip text: "+10% damage", "+5% Fire damage", "+126 max health", "-9% cooldowns".
+    #[allow(dead_code)]
     pub fn describe(&self) -> String {
         // Cooldown reduction shortens cooldowns, so it reads as a minus.
         let shown = if self.stat == StatKey::Cooldown {
@@ -177,6 +179,7 @@ impl Bonus {
 }
 
 /// `v` to one decimal place, without the decimal when it rounds to a whole number.
+#[allow(dead_code)]
 fn tenths(v: f32) -> String {
     let t = (v * 10.0).round() / 10.0;
     if t.fract() == 0.0 {
@@ -201,6 +204,8 @@ impl Bonuses {
         }
     }
 
+    // For the static source slices still to come.
+    #[allow(dead_code)]
     pub fn add_all(&mut self, bonuses: &[Bonus]) {
         for bonus in bonuses {
             self.add(bonus);
@@ -235,6 +240,39 @@ impl Bonuses {
     pub fn cooldown(&self) -> f32 {
         self.get(StatKey::Cooldown).min(COOLDOWN_CAP)
     }
+}
+
+/// Reads comma-separated `name=value` entries, as the `WOW_SURVIVORS_BONUSES` test aid writes
+/// them: a stat by its [`StatKey`] name (`crit_chance=0.2`), or a school's name for that school's
+/// damage (`fire=0.3`). Returns the sum and the entries it could not read.
+pub(super) fn parse(text: &str) -> (Bonuses, Vec<&str>) {
+    let mut out = Bonuses::default();
+    let mut skipped = Vec::new();
+    for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        match parse_entry(entry) {
+            Some(bonus) => out.add(&bonus),
+            None => skipped.push(entry),
+        }
+    }
+    (out, skipped)
+}
+
+fn parse_entry(entry: &str) -> Option<Bonus> {
+    let (name, value) = entry.split_once('=')?;
+    let value = value.trim().parse::<f32>().ok().filter(|v| v.is_finite())?;
+    let name = name.trim();
+    match by_name::<StatKey>(name) {
+        Some(stat) => Some(Bonus::new(stat, value)),
+        None => by_name::<School>(name).map(|school| Bonus::school(school, value)),
+    }
+}
+
+/// A unit variant by its serde name, so the names read here are the ones saves store.
+fn by_name<'a, T: serde::Deserialize<'a>>(name: &'a str) -> Option<T> {
+    use serde::de::IntoDeserializer;
+    let de: serde::de::value::StrDeserializer<'a, serde::de::value::Error> =
+        name.into_deserializer();
+    T::deserialize(de).ok()
 }
 
 #[cfg(test)]
@@ -395,6 +433,39 @@ mod tests {
             }
         }
         assert_eq!(School::Fire.label(), "Fire");
+    }
+
+    #[test]
+    fn parse_reads_stats_and_schools() {
+        let (b, skipped) = parse("damage=0.5, crit_chance=0.2,fire=0.3,targets=1,revives=1");
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert!(close(b.get(StatKey::Damage), 0.5));
+        assert!(close(b.get(StatKey::CritChance), 0.2));
+        assert!(close(b.get(StatKey::Targets), 1.0));
+        assert!(close(b.get(StatKey::Revives), 1.0));
+        // A school's name is that school's damage, apart from unscoped damage.
+        assert!(close(b.school_damage(School::Fire), 0.3));
+        assert_eq!(b.school_damage(School::Frost), 0.0);
+        // Repeats sum, as two sources would.
+        let (twice, _) = parse("max_health=20,max_health=5,shadow=0.1,shadow=0.1");
+        assert!(close(twice.get(StatKey::MaxHealth), 25.0));
+        assert!(close(twice.school_damage(School::Shadow), 0.2));
+    }
+
+    #[test]
+    fn parse_skips_malformed_entries() {
+        let (b, skipped) = parse("bogus=1,damage,armor=lots,area=inf,MaxHealth=5,luck=0.25,,");
+        assert_eq!(
+            skipped,
+            ["bogus=1", "damage", "armor=lots", "area=inf", "MaxHealth=5"]
+        );
+        assert!(close(b.get(StatKey::Luck), 0.25));
+        assert_eq!(b, {
+            let mut only = Bonuses::default();
+            only.add(&Bonus::new(StatKey::Luck, 0.25));
+            only
+        });
+        assert_eq!(parse("").0, Bonuses::default());
     }
 
     #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
