@@ -189,7 +189,7 @@ fn reward(p: &mut ChildSpawnerCommands, ctx: &TabCtx, reward: Reward, earned: bo
         Reward::TalentXp(_) => ("XP", "Talent XP for the class that finishes the chain."),
         Reward::CompanionLook(_) => (
             "Pet",
-            "A new look for your companion, worn from the Rewards tab.",
+            "A new look for your companion, worn from the Companion tab.",
         ),
         Reward::Mount(_) => (
             "Mount",

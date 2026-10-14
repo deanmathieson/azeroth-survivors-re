@@ -403,8 +403,14 @@ pub(super) fn tick_quests(
 /// `hero`, who turned it in (its gold for the party's purse, and a hand that every hero is dealt),
 /// then [`BONUS_COINS`] coins more and [`BONUS_LEVEL_SHARE`] of a level's experience for the
 /// party's bar. Returns the gold paid.
+///
+/// A cache's worth, but no cache: the run's count of caches opened prices the next locked chest
+/// ([`treasure::chest_cost`]) and fills the results' Caches tile, and a turn-in is neither (the
+/// quests keep their own count, [`Run::quests`]), so the count is put back as it was.
 pub(in crate::survivors) fn pay_out(run: &mut Run, hero: &HeroState) -> u32 {
+    let caches = run.caches;
     let cache = treasure::open_cache(run, hero);
+    run.caches = caches;
     let bonus = treasure::worth(BONUS_COINS, run.elapsed, hero.stats().gold, 0.5);
     run.gold += bonus;
     run.xp += data::xp_to_next(run.level) * BONUS_LEVEL_SHARE;
@@ -968,8 +974,25 @@ mod tests {
             gold > treasure::cache_gold(300.0, 1.0),
             "more than a cache alone"
         );
-        assert_eq!((run.caches, run.pending_levels), (1, 1), "a cache's hand");
+        assert_eq!(run.pending_levels, 1, "a cache's hand");
         assert_eq!(run.xp, data::xp_to_next(1) * BONUS_LEVEL_SHARE);
+    }
+
+    #[test]
+    fn a_turn_in_neither_prices_chests_nor_counts_as_a_cache() {
+        let mut run = Run {
+            elapsed: 300.0,
+            caches: 2,
+            ..Run::default()
+        };
+        let price = treasure::chest_cost(run.caches);
+        let hero = HeroState::default();
+        for _ in 0..3 {
+            pay_out(&mut run, &hero);
+        }
+        assert_eq!(run.caches, 2, "the Caches tile counts caches opened");
+        assert_eq!(treasure::chest_cost(run.caches), price);
+        assert_eq!(run.pending_levels, 3, "each still deals its hand");
     }
 
     #[test]
