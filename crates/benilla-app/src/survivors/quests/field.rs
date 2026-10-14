@@ -5,7 +5,7 @@
 //! hero as gems do; a Defend marks a spot and sends the horde at it; a named foe's quest keeps a
 //! few of that foe walking in so the quest can always be done. Done, the giver wears a gold `?` and
 //! walking back to it turns the quest in for a cache's worth ([`treasure::open_cache`]: gold, and a
-//! hand for every hero) and a bonus. Failed or ignored, the giver walks off and fades.
+//! jewelry choice for every hero) and a bonus. Failed or ignored, the giver walks off and fades.
 
 use benilla_world::model_fade::DespawnFade;
 use benilla_world::world_point::WorldPoint;
@@ -400,7 +400,7 @@ pub(super) fn tick_quests(
 }
 
 /// What turning a quest in pays: a cache through [`treasure::open_cache`] under the gold of
-/// `hero`, who turned it in (its gold for the party's purse, and a hand that every hero is dealt),
+/// `hero`, who turned it in (its gold for the party's purse, and a jewelry choice for every hero),
 /// then [`BONUS_COINS`] coins more and [`BONUS_LEVEL_SHARE`] of a level's experience for the
 /// party's bar. Returns the gold paid.
 ///
@@ -974,7 +974,11 @@ mod tests {
             gold > treasure::cache_gold(300.0, 1.0),
             "more than a cache alone"
         );
-        assert_eq!(run.pending_levels, 1, "a cache's hand");
+        assert_eq!(
+            (run.caches, run.pending_jewelry),
+            (0, 1),
+            "a jewelry choice, but no cache counted"
+        );
         assert_eq!(run.xp, data::xp_to_next(1) * BONUS_LEVEL_SHARE);
     }
 

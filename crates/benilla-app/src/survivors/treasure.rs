@@ -1,6 +1,6 @@
 //! The run's spoils: the gold the dead drop, the elites that walk out of the horde from the second
 //! minute, the guardians holding posts around the battleground, and the treasure caches, each worth
-//! a burst of gold and a level-up hand that needs no experience. Elites and guardians leave theirs
+//! a burst of gold and a jewelry choice ([`super::jewelry`]). Elites and guardians leave theirs
 //! free; the chests set out at the start are locked, and cost more gold for every cache opened.
 
 use benilla_protocol::field::FIELD_GAMEOBJECT_STATE;
@@ -127,13 +127,14 @@ pub(super) fn coin_look(gold: u32) -> (u32, f32) {
 }
 
 /// What a cache holds: a burst of gold (under the gold multiplier of the hero who opened it, into
-/// the party's purse) and a level-up hand that needs no experience. The one place a cache's reward
-/// is decided. Returns the gold given.
+/// the party's purse) and a jewelry choice for every hero, banked until play allows
+/// ([`super::jewelry`]; a level-up hand when no jewelry is left to offer). The one place a cache's
+/// reward is decided. Returns the gold given.
 pub(super) fn open_cache(run: &mut Run, opener: &HeroState) -> u32 {
     let gold = cache_gold(run.elapsed, opener.stats().gold);
     run.gold += gold;
     run.caches += 1;
-    run.pending_levels += 1;
+    run.pending_jewelry += 1;
     gold
 }
 
@@ -436,14 +437,15 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_gives_gold_and_a_hand() {
+    fn a_cache_gives_gold_and_a_jewelry_choice() {
         let mut run = Run::default();
         let gold = open_cache(&mut run, &HeroState::default());
         assert_eq!(gold, cache_gold(0.0, 1.0));
         assert_eq!(run.gold, gold);
         assert_eq!(run.caches, 1);
-        assert_eq!(run.pending_levels, 1);
-        assert_eq!(run.level, 1, "a cache's hand needs no experience");
+        assert_eq!(run.pending_jewelry, 1);
+        assert_eq!(run.pending_levels, 0, "jewelry instead of the free hand");
+        assert_eq!(run.level, 1);
     }
 
     #[test]

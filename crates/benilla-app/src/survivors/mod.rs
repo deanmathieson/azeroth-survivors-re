@@ -12,6 +12,7 @@ mod auto;
 mod body;
 mod bonus;
 mod cards;
+mod charpanel;
 mod data;
 mod enemies;
 mod gear;
@@ -19,6 +20,7 @@ mod grade;
 mod hand;
 mod hero;
 mod hud;
+mod jewelry;
 mod menu;
 mod meta;
 mod minimap;
@@ -71,6 +73,8 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(meta::plugin)
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)
+            .add_plugins(jewelry::plugin)
+            .add_plugins(charpanel::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
             .init_state::<Phase>()
@@ -251,6 +255,10 @@ pub(super) enum Phase {
     LevelUp,
     Paused,
     GameOver,
+    /// The jewelry choice a cache or a quest turn-in opens, paused ([`jewelry`]).
+    Jewelry,
+    /// The Character panel over the paused run, opened by C ([`charpanel`]).
+    Character,
 }
 
 /// Everything spawned for a run, despawned when the next begins.
@@ -449,6 +457,9 @@ pub(super) struct Run {
     pub quests: u32,
     /// Whether the zone's last boss fell, for the quest chains' second step.
     pub final_boss: bool,
+    /// Jewelry choices banked by caches and quest turn-ins, not yet dealt: [`jewelry::deal`] gives
+    /// every hero one for each as the picker opens.
+    pub pending_jewelry: u32,
 }
 
 impl Default for Run {
@@ -475,6 +486,7 @@ impl Default for Run {
             reward_mult: 1.0,
             quests: 0,
             final_boss: false,
+            pending_jewelry: 0,
         }
     }
 }

@@ -987,7 +987,9 @@ pub(super) fn columns(
     });
 }
 
-/// A placeholder tab: the three columns, empty but for a centred "Coming soon".
+/// A placeholder tab: the three columns, empty but for a centred "Coming soon". Kept for the next
+/// new tab, though every tab has its content now.
+#[allow(dead_code)]
 pub(super) fn coming_soon(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
     columns(parent, ctx, None, false, |col, p| {
         if col != Column::Center {
