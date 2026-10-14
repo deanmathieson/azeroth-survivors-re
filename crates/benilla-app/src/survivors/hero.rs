@@ -41,6 +41,28 @@ const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
 const ZOOM_MIN: f32 = 1.5;
 const ZOOM_MAX: f32 = 70.0;
 
+// The camera's feel. Each ease closes `1 − e^(−dt/τ)` of its gap a frame, at any frame rate.
+/// Focus follow across the ground (s): a running hero leads the view by about speed × this.
+const FOCUS_TAU_XZ: f32 = 0.1;
+/// Focus follow in height (s): slower, so hops and small terrain bumps don't bob the view.
+const FOCUS_TAU_Y: f32 = 0.3;
+/// A focus further than this (yards) from the hero cuts straight to him instead of drifting in.
+const SNAP_GAP: f32 = 20.0;
+/// Zoom ease (s) toward the distance the wheel asked for.
+const ZOOM_TAU: f32 = 0.15;
+/// Orbit ease (s) toward the dragged yaw and pitch: light, so a drag still feels direct.
+const ORBIT_TAU: f32 = 0.05;
+/// The swing (s) back to the top-down view when `C` locks the camera again.
+const RELOCK_TAU: f32 = 0.2;
+/// The lens's hard floor over the terrain beneath it (yards).
+const GROUND_CLEARANCE: f32 = 0.6;
+/// How far over that floor the eased lift aims (yards), so a quick rise rarely meets the floor.
+const GROUND_CUSHION: f32 = 0.5;
+/// Lift ease (s) while the terrain pushes the lens up: quick.
+const LIFT_RISE_TAU: f32 = 0.05;
+/// Lift ease (s) once the terrain falls away: slow, so the view settles rather than drops.
+const LIFT_FALL_TAU: f32 = 0.4;
+
 /// Whether the camera is locked; `C` toggles it.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum CamMode {
@@ -51,8 +73,10 @@ pub(super) enum CamMode {
     Orbit,
 }
 
+/// The camera's targets, which input sets, and what it shows, eased toward them.
 #[derive(Resource)]
 pub(super) struct CamRig {
+    /// The zoom the wheel asked for, yards; the shown distance eases toward it.
     pub dist: f32,
     pub orbit: f32,
     /// Orbit azimuth (radians) around the hero; right-drag swings it during play.
@@ -60,6 +84,8 @@ pub(super) struct CamRig {
     /// Elevation above the horizon (radians), clamped so the camera never dives underground.
     pub pitch: f32,
     pub mode: CamMode,
+    /// Last frame's view; `None` cuts straight to the targets.
+    shown: Option<Shown>,
 }
 
 impl Default for CamRig {
@@ -70,8 +96,24 @@ impl Default for CamRig {
             yaw: 0.0,
             pitch: FIXED_PITCH,
             mode: CamMode::Fixed,
+            shown: None,
         }
     }
+}
+
+/// The view on screen, trailing the hero and the [`CamRig`] targets.
+#[derive(Clone, Copy)]
+struct Shown {
+    /// The eased hero position the view centres on.
+    focus: Vec3,
+    dist: f32,
+    yaw: f32,
+    pitch: f32,
+    /// Yards the lens rides above its orbit to clear the terrain.
+    lift: f32,
+    /// The view (the menu's or the run's) and the hero these were eased for: a change cuts.
+    menu: bool,
+    hero: Option<Entity>,
 }
 
 /// Where a battleground's runs start.
@@ -315,7 +357,15 @@ pub(super) fn drive_hero(
     player.pos = focus;
 }
 
-/// A slow orbit at the menu; in play, top-down until `C` unlocks it to swing and tilt.
+/// A slow orbit at the menu; in play, top-down until `C` unlocks it to swing and tilt. The view
+/// eases toward the hero, the zoom and the dragged angles, and cuts straight to them when a run
+/// starts or ends, the hero is respawned, a loading screen covers a worldport, or he is suddenly
+/// far away.
+///
+/// Chained after `drive_hero`, the last writer of the hero's transform in the frame, so the view
+/// is this frame's; nothing interpolates the hero (he has no rigid body, and avian's
+/// interpolation is off).
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
@@ -325,11 +375,13 @@ pub(super) fn place_camera(
     motion: Res<AccumulatedMouseMotion>,
     keys: Res<ButtonInput<KeyCode>>,
     player: Res<crate::player::Player>,
+    loading: Option<Res<crate::loading_screen::LoadingScreen>>,
     world: WorldPoint,
-    hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
+    hero: Query<(Entity, &Transform), (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
 ) {
-    // `C` unlocks the camera to swing and tilt; locking it again snaps back to the top-down view,
+    let dt = time.delta_secs();
+    // `C` unlocks the camera to swing and tilt; locking it again swings back to the top-down view,
     // so world-relative WASD lines up with the screen again.
     if keys.just_pressed(KeyCode::KeyC) {
         rig.mode = match rig.mode {
@@ -337,49 +389,144 @@ pub(super) fn place_camera(
             CamMode::Orbit => {
                 rig.yaw = 0.0;
                 rig.pitch = FIXED_PITCH;
+                // Home the short way round, however many turns the drags wound up.
+                if let Some(shown) = rig.shown.as_mut() {
+                    shown.yaw = wrap_angle(shown.yaw);
+                }
                 CamMode::Fixed
             }
         };
     }
     // With no hero yet, the focus `drive_hero` grounded.
-    let focus = hero.single().map_or(player.pos, |t| t.translation);
-    // Multiplicative, so a notch moves as far by eye close in as far out; all the way down to an
-    // over-the-shoulder view.
+    let (hero_id, focus) = hero
+        .single()
+        .map_or((None, player.pos), |(e, t)| (Some(e), t.translation));
     for w in wheel.read() {
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,
             MouseScrollUnit::Pixel => w.y * 0.02,
         };
-        rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(ZOOM_MIN, ZOOM_MAX);
+        rig.dist = zoom_notch(rig.dist, notches);
     }
-    let (eye, look) = if *phase.get() == Phase::Menu {
-        rig.orbit += time.delta_secs() * 0.2;
+    let menu = *phase.get() == Phase::Menu;
+    if menu {
+        rig.orbit += dt * 0.2;
+    } else if rig.mode == CamMode::Orbit
+        && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
+    {
+        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
+        rig.yaw -= motion.delta.x * ORBIT_RATE;
+        rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
+    }
+    let cut = loading.is_some_and(|l| l.covering())
+        || rig
+            .shown
+            .is_none_or(|s| s.menu != menu || s.hero != hero_id);
+    let angle_tau = match rig.mode {
+        CamMode::Fixed => RELOCK_TAU,
+        CamMode::Orbit => ORBIT_TAU,
+    };
+    let mut shown = match rig.shown.filter(|_| !cut) {
+        Some(s) => Shown {
+            focus: follow_focus(s.focus, focus, dt),
+            dist: ease_zoom(s.dist, rig.dist, dt),
+            yaw: ease(s.yaw, rig.yaw, dt, angle_tau),
+            pitch: ease(s.pitch, rig.pitch, dt, angle_tau),
+            ..s
+        },
+        None => Shown {
+            focus,
+            dist: rig.dist,
+            yaw: rig.yaw,
+            pitch: rig.pitch,
+            lift: 0.0,
+            menu,
+            hero: hero_id,
+        },
+    };
+    let (eye, look) = if menu {
         let d = 7.0;
         (
-            focus + Vec3::new(rig.orbit.sin() * d, 2.4, rig.orbit.cos() * d),
-            focus + Vec3::Y * 1.1,
+            shown.focus + Vec3::new(rig.orbit.sin() * d, 2.4, rig.orbit.cos() * d),
+            shown.focus + Vec3::Y * 1.1,
         )
     } else {
-        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
-        if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
-        {
-            rig.yaw -= motion.delta.x * ORBIT_RATE;
-            rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
-        }
-        let (sy, cy) = rig.yaw.sin_cos();
-        let (sp, cp) = rig.pitch.sin_cos();
-        let look = focus + Vec3::Y * 1.4;
-        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.dist;
-        // Never under the ground: a low tilt on a slope would bury the lens.
-        if let Some(h) = world.terrain_height_under(eye) {
-            eye.y = eye.y.max(h + 0.6);
-        }
+        let (sy, cy) = shown.yaw.sin_cos();
+        let (sp, cp) = shown.pitch.sin_cos();
+        let look = shown.focus + Vec3::Y * 1.4;
+        let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * shown.dist;
+        // Never under the ground: a low tilt on a slope would bury the lens. A cut lifts at once.
+        let ground = world.terrain_height_under(eye);
+        let step = if cut { f32::INFINITY } else { dt };
+        (shown.lift, eye.y) = clear_ground(shown.lift, eye.y, ground, step);
         (eye, look)
     };
+    rig.shown = Some(shown);
     let placed = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     for mut cam in &mut cams {
         *cam = placed;
     }
+}
+
+/// The share of the remaining gap an exponential follow with time constant `tau` closes in `dt`:
+/// `1 − e^(−dt/τ)`, so two half steps close exactly what one whole step does.
+fn ease_factor(dt: f32, tau: f32) -> f32 {
+    if tau <= 0.0 {
+        return 1.0;
+    }
+    1.0 - (-dt.max(0.0) / tau).exp()
+}
+
+/// `from` eased toward `to` over `dt`.
+fn ease(from: f32, to: f32, dt: f32, tau: f32) -> f32 {
+    from + (to - from) * ease_factor(dt, tau)
+}
+
+/// The focus eased toward the hero, quickly across the ground and slowly in height; a gap wider
+/// than [`SNAP_GAP`] cuts straight to him.
+fn follow_focus(from: Vec3, to: Vec3, dt: f32) -> Vec3 {
+    if from.distance(to) > SNAP_GAP {
+        return to;
+    }
+    let across = ease_factor(dt, FOCUS_TAU_XZ);
+    let up = ease_factor(dt, FOCUS_TAU_Y);
+    from + (to - from) * Vec3::new(across, up, across)
+}
+
+/// The wheel's zoom after `notches` (positive zooms in). Multiplicative, so a notch moves as far by
+/// eye close in as far out; all the way down to an over-the-shoulder view.
+fn zoom_notch(dist: f32, notches: f32) -> f32 {
+    (dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// The shown distance eased toward the wheel's, in log space so it glides alike at every zoom.
+fn ease_zoom(from: f32, to: f32, dt: f32) -> f32 {
+    let (a, b) = (from.ln(), to.ln());
+    (a + (b - a) * ease_factor(dt, ZOOM_TAU))
+        .exp()
+        .clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// The lens's lift over its orbit and its height after it, given the terrain beneath. The lift
+/// eases toward clearing the ground by the cushion, quickly up and slowly down; whatever it has
+/// reached, the eye is never below `ground + GROUND_CLEARANCE`.
+fn clear_ground(lift: f32, eye_y: f32, ground: Option<f32>, dt: f32) -> (f32, f32) {
+    let need = ground.map_or(0.0, |h| {
+        (h + GROUND_CLEARANCE + GROUND_CUSHION - eye_y).max(0.0)
+    });
+    let tau = if need > lift {
+        LIFT_RISE_TAU
+    } else {
+        LIFT_FALL_TAU
+    };
+    let lift = ease(lift, need, dt, tau);
+    let y = eye_y + lift;
+    (lift, ground.map_or(y, |h| y.max(h + GROUND_CLEARANCE)))
+}
+
+/// `a` brought into [−π, π), the same direction.
+fn wrap_angle(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 /// Damage the hero takes from one blow, after immunity, armour and the shield; returns what got
@@ -506,4 +653,162 @@ fn gait(look: Vec3, dir: Vec3) -> u32 {
 
 pub(super) fn reach(hero: Vec3, other: Vec3) -> f32 {
     flat(other - hero).length()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::{PI, TAU};
+
+    const FRAME: f32 = 1.0 / 60.0;
+
+    #[test]
+    fn one_long_frame_eases_as_far_as_two_short_ones() {
+        for tau in [FOCUS_TAU_XZ, FOCUS_TAU_Y, ZOOM_TAU, ORBIT_TAU, RELOCK_TAU] {
+            let once = ease(0.0, 10.0, 2.0 * FRAME, tau);
+            let twice = ease(ease(0.0, 10.0, FRAME, tau), 10.0, FRAME, tau);
+            assert!((once - twice).abs() < 1e-4, "τ {tau}: {once} vs {twice}");
+        }
+        let (from, to) = (Vec3::ZERO, Vec3::new(6.0, 2.0, -4.0));
+        let once = follow_focus(from, to, 2.0 * FRAME);
+        let twice = follow_focus(follow_focus(from, to, FRAME), to, FRAME);
+        assert!(once.distance(twice) < 1e-4, "{once} vs {twice}");
+        let once = ease_zoom(30.0, 10.0, 2.0 * FRAME);
+        let twice = ease_zoom(ease_zoom(30.0, 10.0, FRAME), 10.0, FRAME);
+        assert!((once - twice).abs() < 1e-3, "{once} vs {twice}");
+        let (once, _) = clear_ground(0.0, 0.0, Some(3.0), 2.0 * FRAME);
+        let (half, _) = clear_ground(0.0, 0.0, Some(3.0), FRAME);
+        let (twice, _) = clear_ground(half, 0.0, Some(3.0), FRAME);
+        assert!((once - twice).abs() < 1e-4, "{once} vs {twice}");
+    }
+
+    #[test]
+    fn the_focus_settles_on_the_hero_without_overshooting() {
+        let to = Vec3::new(8.0, 1.5, -3.0);
+        let mut at = Vec3::ZERO;
+        let mut gap = at.distance(to);
+        for _ in 0..120 {
+            at = follow_focus(at, to, FRAME);
+            let next = at.distance(to);
+            assert!(next <= gap, "the follow backed off: {next} > {gap}");
+            gap = next;
+        }
+        assert!(gap < 0.01, "still {gap} yd off after 2 s");
+        // Height trails: a hop lifts the view less than a step slides it.
+        let step = follow_focus(Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0), 0.1);
+        assert!(step.y < step.x, "{step}");
+        // A frame with no time moves nothing.
+        assert_eq!(follow_focus(Vec3::ZERO, to, 0.0), Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_far_hero_is_cut_to_rather_than_drifted_toward() {
+        let far = Vec3::new(SNAP_GAP + 5.0, 0.0, 0.0);
+        assert_eq!(follow_focus(Vec3::ZERO, far, FRAME), far);
+        // Straight down counts too: a hero settling from a stale height onto streamed ground.
+        let below = Vec3::new(0.0, -(SNAP_GAP + 1.0), 0.0);
+        assert_eq!(follow_focus(Vec3::ZERO, below, FRAME), below);
+        // A blink's worth is eased.
+        let near = Vec3::new(SNAP_GAP * 0.5, 0.0, 0.0);
+        let eased = follow_focus(Vec3::ZERO, near, FRAME);
+        assert!(eased.x > 0.0 && eased.x < near.x, "{eased}");
+    }
+
+    #[test]
+    fn the_zoom_eases_inside_its_range() {
+        let mut want = 30.0;
+        for _ in 0..40 {
+            want = zoom_notch(want, 3.0);
+        }
+        assert_eq!(want, ZOOM_MIN);
+        for _ in 0..40 {
+            want = zoom_notch(want, -3.0);
+        }
+        assert_eq!(want, ZOOM_MAX);
+        for (from, to) in [(ZOOM_MAX, ZOOM_MIN), (ZOOM_MIN, ZOOM_MAX), (30.0, 33.6)] {
+            let mut d = from;
+            for i in 0..240 {
+                // Uneven frames, a hitch among them.
+                let dt = [FRAME, 1.0 / 144.0, 0.25, 1.0 / 30.0][i % 4];
+                let next = ease_zoom(d, to, dt);
+                assert!((ZOOM_MIN..=ZOOM_MAX).contains(&next), "{next} out of range");
+                assert!(
+                    (next - to).abs() <= (d - to).abs() + 1e-4,
+                    "{d} -> {next} away"
+                );
+                d = next;
+            }
+            assert!((d - to).abs() < 1e-2 * to, "{from} -> {to} stuck at {d}");
+        }
+        // A frame goes part of the way: eased, not instant.
+        let one = ease_zoom(30.0, 15.0, FRAME);
+        assert!(one < 30.0 && one > 25.0, "{one}");
+    }
+
+    #[test]
+    fn the_lens_never_dips_under_the_ground() {
+        // The orbit holds the eye at 0 while the terrain under it ramps, jumps a cliff, holds,
+        // then falls away; frames come uneven.
+        let ground = |t: f32| match t {
+            t if t < 0.5 => -2.0 + 20.0 * t,
+            t if t < 1.0 => 8.0,
+            t if t < 1.5 => 11.0,
+            _ => -10.0,
+        };
+        let mut lift = 0.0;
+        let mut t = 0.0;
+        let mut i = 0;
+        while t < 3.0 {
+            let dt = [FRAME, 1.0 / 144.0, 0.1, 1.0 / 30.0][i % 4];
+            t += dt;
+            i += 1;
+            let h = ground(t);
+            let (next, y) = clear_ground(lift, 0.0, Some(h), dt);
+            assert!(
+                y >= h + GROUND_CLEARANCE - 1e-5,
+                "eye {y} under {h} at {t:.2}s"
+            );
+            assert!(next >= 0.0, "lift {next}");
+            lift = next;
+        }
+        // Up quickly: a steady need is met within a quarter second.
+        let mut lift = 0.0;
+        for _ in 0..15 {
+            lift = clear_ground(lift, 0.0, Some(2.0), FRAME).0;
+        }
+        let need = 2.0 + GROUND_CLEARANCE + GROUND_CUSHION;
+        assert!(
+            (lift - need).abs() < 0.01 * need,
+            "lift {lift} short of {need}"
+        );
+        // Down slowly: once the ground falls away a frame lets go of little.
+        let (after, y) = clear_ground(lift, 0.0, Some(-10.0), FRAME);
+        assert!(after > 0.9 * lift && after < lift, "{lift} -> {after}");
+        assert_eq!(y, after);
+        // No terrain streamed under the eye: the lift still eases down.
+        let (after, _) = clear_ground(lift, 0.0, None, FRAME);
+        assert!(after < lift);
+        // A cut seats the lift at once.
+        let (cut, y) = clear_ground(0.0, 0.0, Some(5.0), f32::INFINITY);
+        assert!((cut - (5.0 + GROUND_CLEARANCE + GROUND_CUSHION)).abs() < 1e-5);
+        assert!(y >= 5.0 + GROUND_CLEARANCE);
+    }
+
+    #[test]
+    fn relocking_swings_home_the_short_way() {
+        for wound in [4.0 * TAU + 0.3, -(4.0 * TAU + 0.3), 3.0, -3.0, PI] {
+            let w = wrap_angle(wound);
+            assert!((-PI..PI).contains(&w), "{wound} -> {w}");
+            assert!((w.sin() - wound.sin()).abs() < 1e-4, "{wound} -> {w}");
+            assert!((w.cos() - wound.cos()).abs() < 1e-4, "{wound} -> {w}");
+        }
+        // Eased home, the swing never passes through more than a half turn.
+        let mut yaw = wrap_angle(4.0 * TAU + 3.0);
+        for _ in 0..120 {
+            let next = ease(yaw, 0.0, FRAME, RELOCK_TAU);
+            assert!(next.abs() <= yaw.abs() && next.abs() <= PI);
+            yaw = next;
+        }
+        assert!(yaw.abs() < 1e-3, "{yaw}");
+    }
 }
