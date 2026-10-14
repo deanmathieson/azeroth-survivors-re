@@ -29,6 +29,7 @@ const COL_T_REQUIRED_SPELL: usize = 20;
 
 const TALENT_TAB_FIELDS: usize = 15;
 const COL_TT_NAME_ENUS: usize = 1;
+const COL_TT_SPELL_ICON: usize = 10;
 const COL_TT_RACE_MASK: usize = 11;
 const COL_TT_CLASS_MASK: usize = 12;
 const COL_TT_BACKGROUND: usize = 14;
@@ -70,6 +71,9 @@ impl Talent {
 pub struct TalentTabInfo {
     pub id: u32,
     pub name: String,
+    /// `SpellIconID` (column 10) through `SpellIcon.dbc`: the extensionless `Interface\Icons\…`
+    /// path, `None` for an id the icon table lacks.
+    pub icon: Option<String>,
     /// `raceMask` and `classMask`, bit `1 << (id − 1)`; the client admits a tab only when both
     /// match (511 is every race in the shipped data).
     pub race_mask: u32,
@@ -86,6 +90,11 @@ pub struct TalentCatalog {
 }
 
 impl TalentCatalog {
+    /// Every tab, in file order.
+    pub fn tabs(&self) -> &[TalentTabInfo] {
+        &self.tabs
+    }
+
     /// A race and class's tabs (unit bytes, 1-based) in file order, as `0x4f2e50` filters them.
     pub fn tabs_for_class(&self, race: u8, class: u8) -> Vec<&TalentTabInfo> {
         if !(1..=32).contains(&class) || !(1..=32).contains(&race) {
@@ -148,12 +157,14 @@ pub fn load_talent_catalog(chain: &mut Chain) -> Result<TalentCatalog> {
         .read_file(TALENT_TAB)
         .context("reading TalentTab.dbc")?;
     let tab_set = parse(&tab_bytes, talent_tab_schema(), "TalentTab.dbc")?;
+    let icons = crate::dbc::load_spell_icon_map(chain)?;
     let mut tabs = Vec::new();
     for r in tab_set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         tabs.push(TalentTabInfo {
             id,
             name: str_at(&tab_set, r, COL_TT_NAME_ENUS).unwrap_or_default(),
+            icon: u32_at(r, COL_TT_SPELL_ICON).and_then(|i| icons.get(&i).cloned()),
             race_mask: u32_at(r, COL_TT_RACE_MASK).unwrap_or(0),
             class_mask: u32_at(r, COL_TT_CLASS_MASK).unwrap_or(0),
             background: str_at(&tab_set, r, COL_TT_BACKGROUND).unwrap_or_default(),
@@ -215,6 +226,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["MageArcane", "MageFire", "MageFrost"]
         );
+        assert_eq!(
+            tabs.iter().map(|t| t.icon.as_deref()).collect::<Vec<_>>(),
+            vec![
+                Some("Interface\\Icons\\Spell_Nature_WispSplode"),
+                Some("Interface\\Icons\\Spell_Fire_Fire"),
+                Some("Interface\\Icons\\Spell_Frost_FreezingBreath"),
+            ]
+        );
+        assert_eq!(cat.tabs().len(), 27, "nine classes of three tabs");
         // Every shipped tab's raceMask is 511, so race 10 admits nothing.
         assert!(
             cat.tabs_for_class(10, MAGE).is_empty(),
