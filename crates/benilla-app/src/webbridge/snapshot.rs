@@ -32,6 +32,22 @@ use super::BridgeConfig;
 #[path = "nearby.rs"]
 mod nearby;
 
+/// The player's own row: its object fields, its movement, and whether it is mounted.
+type SelfRow = (
+    &'static ObjectStore,
+    Option<&'static MovementState>,
+    Has<MountChild>,
+);
+
+/// One unit's row, borrowed for `'a` (`'static` as the query's data).
+type UnitRow<'a> = (
+    &'a Guid,
+    &'a NetEntity,
+    &'a Transform,
+    Option<&'a ObjectStore>,
+    Option<&'a MovementState>,
+);
+
 /// Everything the snapshot reads, as one parameter (the `UnitStores` idiom: Bevy's tuple limit
 /// is sixteen, and the outbound system has its own parameters besides). Every resource is
 /// `Option` for the same reason the unit feed's are — a UI-only harness runs without the net
@@ -44,32 +60,12 @@ pub(crate) struct BridgeReadout<'w, 's> {
     map: Option<Res<'w, CurrentMap>>,
     player: Option<Res<'w, Player>>,
     self_guid: Option<Res<'w, SelfGuid>>,
-    self_q: Query<
-        'w,
-        's,
-        (
-            &'static ObjectStore,
-            Option<&'static MovementState>,
-            Has<MountChild>,
-        ),
-        With<SelfPlayer>,
-    >,
+    self_q: Query<'w, 's, SelfRow, With<SelfPlayer>>,
     selection: Option<Res<'w, Selection>>,
     hovered: Option<Res<'w, Hovered>>,
     pending_cast: Option<Res<'w, PendingCast>>,
     channel: Option<Res<'w, ActiveChannel>>,
-    units: Query<
-        'w,
-        's,
-        (
-            &'static Guid,
-            &'static NetEntity,
-            &'static Transform,
-            Option<&'static ObjectStore>,
-            Option<&'static MovementState>,
-        ),
-        Without<SelfPlayer>,
-    >,
+    units: Query<'w, 's, UnitRow<'static>, Without<SelfPlayer>>,
     names: Option<Res<'w, NameCache>>,
     factions: Option<Res<'w, Factions>>,
     reputations: Option<Res<'w, Reputations>>,
@@ -185,16 +181,7 @@ impl BridgeReadout<'_, '_> {
             cfg.radius * cfg.radius,
             cfg.max_units,
         );
-        let payload = |(d2, (guid, net, transform, store, motion)): (
-            f32,
-            (
-                &Guid,
-                &NetEntity,
-                &Transform,
-                Option<&ObjectStore>,
-                Option<&MovementState>,
-            ),
-        )| {
+        let payload = |(d2, (guid, net, transform, store, motion)): (f32, UnitRow<'_>)| {
             self.unit_row(
                 guid.0,
                 net,

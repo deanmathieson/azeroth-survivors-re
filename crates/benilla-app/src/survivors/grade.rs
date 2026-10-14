@@ -72,10 +72,10 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Update, (attach, toggle, drive).chain());
 }
 
-fn attach(
-    mut commands: Commands,
-    cams: Query<Entity, (With<WorldCamera>, With<Camera3d>, Without<Grade>)>,
-) {
+/// A world camera that has no grade yet.
+type Ungraded = (With<WorldCamera>, With<Camera3d>, Without<Grade>);
+
+fn attach(mut commands: Commands, cams: Query<Entity, Ungraded>) {
     for e in &cams {
         commands.entity(e).insert(Grade::default());
     }
