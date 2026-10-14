@@ -22,11 +22,13 @@ mod meta;
 mod minimap;
 mod mobility;
 mod profile;
+mod racials;
 mod rewards;
 mod run_options;
 mod talents;
 mod treasure;
 mod units;
+mod zones;
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
@@ -58,6 +60,9 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(achievements::plugin)
             .add_plugins(rewards::plugin)
             .add_plugins(meta::plugin)
+            .add_plugins(zones::plugin)
+            .add_plugins(racials::plugin)
+            .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()

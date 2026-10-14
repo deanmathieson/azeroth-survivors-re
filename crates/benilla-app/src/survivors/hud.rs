@@ -1217,11 +1217,16 @@ pub(super) fn keys(
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
     meta: Res<MetaBonuses>,
+    unlocks: Res<super::zones::Unlocks>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection, &meta) {
+            // As Enter World, never into a zone not yet open.
+            if keys.just_pressed(KeyCode::Enter)
+                && unlocks.is_open(selection.map)
+                && start_run(&mut run, &mut selection, &meta)
+            {
                 next.set(Phase::Playing);
             }
         }

@@ -59,6 +59,9 @@ pub(super) struct ZoneRecord {
     pub runs: u32,
     pub wins: u32,
     pub best_seconds: f32,
+    /// The highest rewards multiplier the zone was won under, raised by [`super::zones`] from
+    /// [`RunEnded`]; 0 before a win, and on saves from before it was kept.
+    pub best_win_mult: f32,
 }
 
 /// The persistent survivors account. Renaming a class or zone orphans its slugged record.
