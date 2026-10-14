@@ -1,7 +1,8 @@
 //! The Armory's Character tab: the stat sheet a fresh run of the picked class starts on, each row
 //! explained on hover, with the worn gear's summed bonuses under it; the pick's class, race and sex
 //! and what each slot wears under Details. The center is left clear, so the menu's own 3D hero
-//! stands in it.
+//! stands in it, with the hero's name under its feet and the Appearance panel beside it
+//! ([`crate::survivors::gear::looks_panel`]).
 
 use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
@@ -12,7 +13,9 @@ use crate::char_select::race_name;
 use crate::glue::art::{class_tc, tc_rect, DIM, GOLD};
 use crate::glue::widgets::{outlined_text, overlay, GlueText, Hilight};
 use crate::survivors::data::ClassDef;
-use crate::survivors::gear::{class_gear, summed, GearSave, Slot};
+use crate::survivors::gear::{
+    class_gear, hero_name as saved_name, looks_panel, summed, GearSave, HeroNameText, Slot,
+};
 use crate::survivors::hud::rgb;
 use crate::survivors::{HeroState, Stats, BASE_HP, BASE_SPEED};
 
@@ -32,7 +35,10 @@ pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
         true,
         |col, p| match col {
             Column::Left => stat_sheet(p, ctx, class),
-            Column::Center => hero_name(p, ctx, class, race_sex),
+            Column::Center => {
+                hero_name(p, ctx, class, race_sex);
+                looks_panel(p, ctx);
+            }
             Column::Details => details(p, ctx, class, race_sex),
         },
     );
@@ -253,7 +259,8 @@ fn stat_row(p: &mut ChildSpawnerCommands, ctx: &TabCtx, row: StatRow) {
     });
 }
 
-/// Under the hero's feet, the pick screen's name line: race and class in the class's colour.
+/// Under the hero's feet, the pick screen's name lines: the hero's name, then race and class in
+/// the class's colour.
 fn hero_name(
     p: &mut ChildSpawnerCommands,
     ctx: &TabCtx,
@@ -263,14 +270,34 @@ fn hero_name(
     let (Some(class), Some((race, _))) = (class, race_sex) else {
         return;
     };
+    let name = ctx
+        .selection
+        .class
+        .and_then(|c| saved_name(ctx.world, c))
+        .unwrap_or_default();
     p.spawn(Node {
         position_type: PositionType::Absolute,
         bottom: Val::Px(24.0),
         width: Val::Percent(100.0),
-        justify_content: JustifyContent::Center,
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
         ..default()
     })
     .with_children(|c| {
+        outlined_text(
+            c,
+            Node::default(),
+            (),
+            HeroNameText,
+            GlueText {
+                text: name,
+                size: 26.0,
+                color: Color::WHITE,
+                wrap: false,
+            },
+            ctx.font,
+            1.0,
+        );
         outlined_text(
             c,
             Node::default(),

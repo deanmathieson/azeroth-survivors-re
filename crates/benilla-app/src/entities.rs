@@ -247,6 +247,24 @@ impl Creatures {
         self.catalog.display_race_sex(display_id)
     }
 
+    /// A character-model display's whole `CreatureDisplayInfoExtra` row, `None` without one.
+    pub(crate) fn npc_appearance(&self, display_id: u32) -> Option<benilla_formats::NpcAppearance> {
+        self.catalog.model(display_id)?.npc_appearance
+    }
+
+    /// Register a dressed character display, [`CreatureCatalog::insert_dressed`], dropping any
+    /// model cached under the id so the next use builds it from the new row. Survivors dresses its
+    /// local heroes through this: no wire carries their look.
+    pub(crate) fn insert_dressed(
+        &mut self,
+        display_id: u32,
+        base: u32,
+        look: benilla_formats::NpcAppearance,
+    ) -> bool {
+        self.models.remove(&display_id);
+        self.catalog.insert_dressed(display_id, base, look)
+    }
+
     /// A display's collision height in raw model units; [`CollisionHeight`] is the world value.
     pub(crate) fn collision_height(&self, display_id: u32) -> Option<f32> {
         self.catalog.collision_height(display_id)
