@@ -10,11 +10,13 @@ mod cards;
 mod data;
 mod enemies;
 mod grade;
+mod hand;
 mod hero;
 mod hud;
 mod menu;
 mod minimap;
 mod mobility;
+mod treasure;
 mod units;
 
 use benilla_world::schedule::WorldStage;
@@ -49,6 +51,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
             .init_resource::<cards::PendingPick>()
+            .init_resource::<hand::HandMode>()
             .add_message::<abilities::Hit>()
             .add_message::<enemies::Loot>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
@@ -86,7 +89,31 @@ impl Plugin for SurvivorsPlugin {
             )
             .add_systems(
                 Update,
+                (
+                    (treasure::place_guardians, treasure::spawn_elites)
+                        .after(enemies::spawn_enemies)
+                        .before(enemies::move_enemies),
+                    treasure::open_caches
+                        .after(enemies::collect_gems)
+                        .before(hero::hero_vitals),
+                )
+                    .run_if(in_state(Phase::Playing))
+                    .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+            )
+            .add_systems(
+                Update,
                 (enemies::reap_dead, enemies::still_gems).after(WorldStage::Input),
+            )
+            .add_systems(
+                Update,
+                (
+                    hand::use_tools
+                        .after(cards::choose_card)
+                        .before(cards::animate_cards),
+                    (hand::refresh_tools, treasure::refresh_gold)
+                        .after(hud::refresh_hud)
+                        .before(hud::show_panels),
+                ),
             )
             .add_systems(
                 Update,
@@ -270,6 +297,19 @@ pub(super) struct Run {
     pub version: u32,
     /// A centre-screen announcement and its seconds left.
     pub banner: Option<(String, f32)>,
+    /// Gold picked up this run ([`treasure`]).
+    pub gold: u32,
+    /// Elites and guardians slain, and treasure caches opened.
+    pub elites: u32,
+    pub caches: u32,
+    /// When the next elite walks out of the horde, in run seconds.
+    pub next_elite: f32,
+    /// Whether this run's guardians stand at their posts yet.
+    pub guarded: bool,
+    /// The level-up hand's tools left, and the choices banished for the run ([`hand`]).
+    pub rerolls: u32,
+    pub banishes: u32,
+    pub banished: Vec<hand::Struck>,
 }
 
 impl Default for Run {
@@ -302,6 +342,14 @@ impl Default for Run {
             damage_done: 0.0,
             version: 0,
             banner: None,
+            gold: 0,
+            elites: 0,
+            caches: 0,
+            next_elite: treasure::ELITE_FIRST_SECS,
+            guarded: false,
+            rerolls: hand::REROLLS_PER_RUN,
+            banishes: hand::BANISHES_PER_RUN,
+            banished: Vec::new(),
         }
     }
 }

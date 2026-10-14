@@ -5,8 +5,9 @@
 //! Bevy UI clips only to rectangles, so the round map is composited here each frame: the ADT tiles
 //! through `md5translate.trs` (north up, 533.33 yd per 256-px tile), masked by `MinimapMask.blp`,
 //! then the player arrow, then the red `ObjectIcons` cell per live enemy, the dot the reference
-//! draws for a tracked creature. Sizes are the engine minimap's ([`crate::minimap`]), measured
-//! against its 140.8-px blip basis.
+//! draws for a tracked creature, ringed for an elite or a guardian, and a gold diamond per unopened
+//! treasure cache. Sizes are the engine minimap's ([`crate::minimap`]), measured against its
+//! 140.8-px blip basis.
 
 use std::collections::HashMap;
 
@@ -22,6 +23,7 @@ use benilla_world::world_point::WorldPoint;
 use super::enemies::Enemy;
 use super::hero::Hero;
 use super::hud::UiArt;
+use super::treasure::Cache;
 use super::Run;
 use crate::area::AreaTableRes;
 
@@ -42,6 +44,14 @@ const DOT_PX: f32 = 8.0;
 const TRACKED_UNIT_CELL: [f32; 4] = [0.25, 0.5, 0.0, 0.25];
 const ARROW_PX: f32 = 33.6;
 const ARROW_OFFSET_PX: Vec2 = Vec2::new(0.51, -1.73);
+/// An elite's dot is this much bigger, inside a ring this much wider still: gold for an elite,
+/// violet for a guardian, whose post stays pinned to the rim while out of view.
+const ELITE_DOT: f32 = 1.5;
+const ELITE_RING: f32 = 2.6;
+const ELITE_RING_COLOR: [f32; 3] = [255.0, 210.0, 0.0];
+const GUARDIAN_RING_COLOR: [f32; 3] = [200.0, 90.0, 255.0];
+/// A treasure cache not yet opened: a gold diamond this many dots across, rimmed dark.
+const CACHE_MARK: f32 = 1.4;
 
 /// `GAMETIME_DAWN` and `GAMETIME_DUSK`, minutes into the day.
 const DAWN: u32 = 5 * 60 + 30;
@@ -362,6 +372,7 @@ pub(super) fn compose(
     phase: Res<State<super::Phase>>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<(&Transform, &Enemy)>,
+    caches: Query<(&Transform, &Cache)>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if *phase.get() == super::Phase::Menu || !map.shown {
@@ -504,20 +515,66 @@ pub(super) fn compose(
     if let Some(icons) = &art.icons {
         let size = DOT_PX * scale;
         let [l, r, t, b] = TRACKED_UNIT_CELL;
-        for (tf, enemy) in &enemies {
-            if enemy.dead {
-                continue;
-            }
-            let off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
-            if off.length() > radius {
-                continue;
-            }
-            blit(buf, center + off / yd_per_px, size, |q| {
+        let dot = |buf: &mut [u8], at: Vec2, size: f32| {
+            blit(buf, at, size, |q| {
                 let f = q / size + 0.5;
                 let x = (l + (r - l) * f.x) * icons.w as f32;
                 let y = (t + (b - t) * f.y) * icons.h as f32;
                 Some(icons.sample(x, y))
             });
+        };
+        // The horde first, so the elites' markers sit on top.
+        let mut elites = Vec::new();
+        for (tf, enemy) in &enemies {
+            if enemy.dead {
+                continue;
+            }
+            let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+            if off.length() > radius {
+                if !enemy.guardian {
+                    continue;
+                }
+                off = off.normalize() * radius * 0.88;
+            }
+            let at = center + off / yd_per_px;
+            if enemy.elite {
+                elites.push((at, enemy.guardian));
+            } else {
+                dot(buf, at, size);
+            }
+        }
+        for (tf, cache) in &caches {
+            let off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+            if cache.is_open() || off.length() > radius {
+                continue;
+            }
+            let mark = size * CACHE_MARK;
+            blit(buf, center + off / yd_per_px, mark, |q| {
+                let d = (q.x.abs() + q.y.abs()) / (mark / 2.0);
+                let a = ((1.0 - d) * mark / 2.0).clamp(0.0, 1.0);
+                let rgb = if d < 0.6 {
+                    ELITE_RING_COLOR
+                } else {
+                    [60.0, 40.0, 0.0]
+                };
+                (a > 0.0).then_some([rgb[0], rgb[1], rgb[2], 255.0 * a])
+            });
+        }
+        for (at, guardian) in elites {
+            let ring = size * ELITE_RING;
+            let rgb = if guardian {
+                GUARDIAN_RING_COLOR
+            } else {
+                ELITE_RING_COLOR
+            };
+            blit(buf, at, ring, |q| {
+                // A ring a third of its radius thick, its edges softened over a pixel.
+                let d = q.length();
+                let outer = ring / 2.0;
+                let a = (outer - d).clamp(0.0, 1.0) * (d - outer * 0.62).clamp(0.0, 1.0);
+                (a > 0.0).then_some([rgb[0], rgb[1], rgb[2], 255.0 * a])
+            });
+            dot(buf, at, size * ELITE_DOT);
         }
     }
 

@@ -718,6 +718,7 @@ pub(super) fn apply_hits(
                 pos,
                 xp: en.xp,
                 boss: en.boss,
+                elite: en.elite,
             });
             run.kills += 1;
             if en.boss {
