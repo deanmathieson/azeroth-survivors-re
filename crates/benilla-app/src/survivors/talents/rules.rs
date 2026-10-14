@@ -25,7 +25,7 @@ pub(in crate::survivors) struct Allocation {
 pub(in crate::survivors) enum Why {
     /// No talent with that id in the catalog.
     Unknown,
-    /// All [`MAX_POINTS`] are spent.
+    /// All [`MAX_POINTS`] are spent; the Talents tab also says so when every earned point is.
     NoPoints,
     /// The talent is at its last rank.
     MaxRank,
@@ -85,6 +85,22 @@ impl Allocation {
                 self.ranks.remove(&talent);
             }
         }
+    }
+}
+
+/// Ranks by talent id as a save lists them, unchecked: a later pair for an id replaces an earlier
+/// one, and rank 0 is no rank.
+impl FromIterator<(u32, u8)> for Allocation {
+    fn from_iter<I: IntoIterator<Item = (u32, u8)>>(pairs: I) -> Self {
+        let mut ranks = BTreeMap::new();
+        for (id, rank) in pairs {
+            if rank == 0 {
+                ranks.remove(&id);
+            } else {
+                ranks.insert(id, rank);
+            }
+        }
+        Self { ranks }
     }
 }
 
