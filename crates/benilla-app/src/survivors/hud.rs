@@ -124,9 +124,10 @@ pub(super) const MAX_NOTES: usize = 4;
 
 /// How a results note reads, by its colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// The feature workstreams push these, still to land.
-#[allow(dead_code)]
 pub(super) enum NoteKind {
+    /// A plain line, in parchment.
+    // Nothing pushes a plain note yet: achievements and loot colour theirs.
+    #[allow(dead_code)]
     Info,
     /// Good news, green like the news line.
     Good,
@@ -153,8 +154,6 @@ impl NoteKind {
 pub(super) struct ResultsNotes(pub Vec<(String, NoteKind)>);
 
 impl ResultsNotes {
-    // The feature workstreams push these, still to land.
-    #[allow(dead_code)]
     pub(super) fn push(&mut self, text: impl Into<String>, kind: NoteKind) {
         self.0.push((text.into(), kind));
     }

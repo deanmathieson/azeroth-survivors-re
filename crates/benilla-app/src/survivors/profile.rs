@@ -12,8 +12,12 @@ use super::rewards::RewardsSave;
 use super::talents::TalentSave;
 use super::{data, Run, Selection};
 
-/// The newest profile shape this build knows how to write.
-pub(super) const PROFILE_VERSION: u32 = 1;
+/// The newest profile shape this build knows how to write. 1: the account, class and zone records,
+/// with the feature sections empty. 2: the talents, gear, achievements and rewards sections hold
+/// data, which a version 1 build would drop on its next save, so it opens a version 2 save
+/// read-only instead. Each version only adds fields, so an older save loads as it is and is written
+/// back as this version.
+pub(super) const PROFILE_VERSION: u32 = 2;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
 
@@ -113,8 +117,6 @@ pub(super) struct RunOutcome {
     pub damage: f64,
     pub gold: u32,
     /// The Run Options rewards multiplier the run was played under ([`Run::reward_mult`]).
-    // Read by the reward workstreams' RunEnded systems, still to land.
-    #[allow(dead_code)]
     pub reward_mult: f32,
 }
 
@@ -125,8 +127,6 @@ pub(super) struct RunOutcome {
 /// changes in one save that frame. None is sent for a run that goes unrecorded.
 #[derive(Message, Clone, Copy, Debug)]
 pub(super) struct RunEnded {
-    // Read by the feature workstreams' systems, still to land.
-    #[allow(dead_code)]
     pub outcome: RunOutcome,
 }
 
@@ -256,6 +256,10 @@ fn load_text(text: &str) -> LoadedProfile {
     match toml::from_str::<Profile>(text) {
         Ok(mut profile) => {
             profile.writable = profile.version <= PROFILE_VERSION;
+            if profile.writable {
+                // An older save is this shape less some fields; its next write is this version.
+                profile.version = PROFILE_VERSION;
+            }
             LoadedProfile {
                 profile,
                 corrupt_text: None,
@@ -542,6 +546,75 @@ mod tests {
     }
 
     #[test]
+    fn version_1_saves_load_writable_and_save_as_version_2() {
+        assert_eq!(PROFILE_VERSION, 2);
+        // What the flush hands the writer, as text.
+        let saved = |profile: &mut Profile| {
+            let mut text = None;
+            profile.mark_dirty();
+            assert!(profile.flush(|p| text = Some(toml::to_string_pretty(p).unwrap())));
+            text.unwrap()
+        };
+
+        // Before the features: no sections at all.
+        let bare = "version = 1\n\n[account]\nruns = 3\n\n[classes.mage]\nruns = 3\n";
+        let loaded = load_text(bare);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.version, PROFILE_VERSION);
+        assert_eq!((profile.account.runs, profile.classes["mage"].runs), (3, 3));
+        assert_eq!(profile.classes["mage"].talents, TalentSave::default());
+        assert_eq!(profile.rewards, RewardsSave::default());
+        let text = saved(&mut profile);
+        assert!(text.starts_with("version = 2\n"), "{text}");
+        assert_eq!(load_text(&text).profile, profile);
+
+        // With the feature sections: empty as the version 1 build wrote them, and holding data as
+        // the features wrote them before the bump. Nothing in them is dropped.
+        let sections = "version = 1\n\n[account]\nruns = 3\n\n\
+                        [classes.mage]\nruns = 3\n\n\
+                        [classes.mage.talents]\nxp = 12345\nranks = [[35, 2], [140, 5]]\n\n\
+                        [classes.mage.gear]\ncollected = [108, 118]\n\n\
+                        [classes.mage.gear.equipped]\nmain_hand = 118\n\n\
+                        [classes.warrior]\nruns = 1\n\n\
+                        [classes.warrior.talents]\n\n[classes.warrior.gear]\n\n\
+                        [achievements.earned]\nwin_elwynn_forest = 3\n\n\
+                        [rewards]\nspent = 10\nresets_left = 1\ncompanion = \"frog\"\n\n\
+                        [rewards.perks]\nhardy = 1\n";
+        let loaded = load_text(sections);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.version, PROFILE_VERSION);
+        let mage = &profile.classes["mage"];
+        assert_eq!(mage.talents.xp, 12_345);
+        assert_eq!(mage.talents.ranks, vec![(35, 2), (140, 5)]);
+        assert!(mage.gear.has(108) && mage.gear.has(118));
+        assert_eq!(mage.gear.equipped.get("main_hand"), Some(&118));
+        let warrior = &profile.classes["warrior"];
+        assert_eq!(warrior.talents, TalentSave::default());
+        assert_eq!(warrior.gear, GearSave::default());
+        assert_eq!(
+            profile.achievements.run_earned("win_elwynn_forest"),
+            Some(3)
+        );
+        assert_eq!(
+            (profile.rewards.spent, profile.rewards.resets_left),
+            (10, 1)
+        );
+        assert_eq!(profile.rewards.companion, "frog");
+        assert_eq!(profile.rewards.perks.get("hardy"), Some(&1));
+        let text = saved(&mut profile);
+        assert!(text.starts_with("version = 2\n"), "{text}");
+        let again = load_text(&text);
+        assert!(again.corrupt_text.is_none() && again.profile.writable);
+        assert_eq!(again.profile, profile);
+        // A reload ahead of recording a run upgrades it the same way.
+        assert_eq!(clean_profile_from_text(sections).unwrap(), profile);
+    }
+
+    #[test]
     fn a_dirty_writable_profile_is_written_once() {
         let mut written = Vec::new();
         let mut profile = Profile::default();
@@ -666,8 +739,9 @@ mod tests {
 
     #[test]
     fn newer_profile_is_read_only() {
-        let loaded = load_text("version = 2");
+        let loaded = load_text(&format!("version = {}", PROFILE_VERSION + 1));
         assert!(!loaded.profile.writable);
+        assert_eq!(loaded.profile.version, PROFILE_VERSION + 1);
     }
 
     #[test]
@@ -682,7 +756,8 @@ mod tests {
 
     #[test]
     fn newer_unparseable_version_is_read_only_without_quarantine() {
-        let text = "version = 2\nclasses = 1";
+        let text = format!("version = {}\nclasses = 1", PROFILE_VERSION + 1);
+        let text = text.as_str();
         let loaded = load_text(text);
         assert!(!loaded.profile.writable);
         assert!(loaded.corrupt_text.is_none());
@@ -697,7 +772,7 @@ mod tests {
     #[test]
     fn unclean_reloads_are_rejected() {
         assert!(clean_profile_from_text("this is not = toml").is_err());
-        assert!(clean_profile_from_text("version = 2").is_err());
+        assert!(clean_profile_from_text(&format!("version = {}", PROFILE_VERSION + 1)).is_err());
     }
 
     #[test]

@@ -205,7 +205,6 @@ impl ArmoryState {
     }
 
     /// Rebuild the open tab's content, for a tab whose data changed under it.
-    #[allow(dead_code)] // The hook for the tabs still to be filled.
     pub fn refresh(&mut self) {
         self.rebuilds = self.rebuilds.wrapping_add(1);
     }
@@ -244,7 +243,6 @@ impl TabCtx<'_> {
     }
 
     /// Any resource, `None` while it is not in the world.
-    #[allow(dead_code)] // The hook for the tabs still to be filled.
     pub fn res<T: Resource>(&self) -> Option<&T> {
         self.world.get_resource::<T>()
     }
