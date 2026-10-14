@@ -20,6 +20,7 @@ mod minimap;
 mod mobility;
 mod profile;
 mod run_options;
+mod talents;
 mod treasure;
 mod units;
 
@@ -48,6 +49,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(grade::plugin)
             .add_plugins(armory::plugin)
             .add_plugins(run_options::plugin)
+            .add_plugins(talents::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
