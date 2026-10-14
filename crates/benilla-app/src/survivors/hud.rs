@@ -1269,6 +1269,8 @@ pub(super) fn keys(
         Phase::Playing => {
             if keys.just_pressed(KeyCode::Escape) {
                 next.set(Phase::Paused);
+            } else if keys.just_pressed(super::charpanel::KEY) {
+                next.set(Phase::Character);
             }
         }
         Phase::Paused => {
@@ -1276,7 +1278,14 @@ pub(super) fn keys(
                 next.set(Phase::Playing);
             }
         }
-        Phase::LevelUp => {}
+        // The Character panel closes on its own key, or Esc.
+        Phase::Character => {
+            if keys.any_just_pressed([KeyCode::Escape, super::charpanel::KEY]) {
+                next.set(Phase::Playing);
+            }
+        }
+        // The jewelry choice takes its own keys ([`super::jewelry`]).
+        Phase::LevelUp | Phase::Jewelry => {}
         Phase::GameOver => {
             if keys.just_pressed(KeyCode::Enter) {
                 next.set(Phase::Menu);

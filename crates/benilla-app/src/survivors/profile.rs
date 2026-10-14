@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::achievements::AchievementSave;
 use super::gear::GearSave;
+use super::jewelry::CodexSave;
 use super::quests::QuestSave;
 use super::rewards::RewardsSave;
 use super::talents::TalentSave;
@@ -82,6 +83,9 @@ pub(super) struct Profile {
     /// [`super::quests`].
     #[serde(default)]
     pub quests: QuestSave,
+    /// Every piece of jewelry offered and taken, defined and edited in [`super::jewelry`].
+    #[serde(default)]
+    pub codex: CodexSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -107,6 +111,7 @@ impl Default for Profile {
             achievements: AchievementSave::default(),
             rewards: RewardsSave::default(),
             quests: QuestSave::default(),
+            codex: CodexSave::default(),
             writable: true,
             dirty: false,
         }

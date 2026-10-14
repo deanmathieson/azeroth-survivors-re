@@ -18,7 +18,7 @@ use super::bonus::Bonuses;
 use super::data::{self, ClassDef, PassiveDef};
 use super::hero::{self, Hero};
 use super::hud;
-use super::{hand, mobility, Owned, Rng, Run, Selection, BASE_HP};
+use super::{hand, jewelry, mobility, Owned, Rng, Run, Selection, BASE_HP};
 
 /// The player this machine drives: the only one until co-op.
 pub(super) const LOCAL_PLAYER: u8 = 0;
@@ -110,6 +110,9 @@ pub(super) struct HeroState {
     /// healthstone are no one's), and the damage that got through to its health.
     pub healing_done: f64,
     pub damage_taken: f64,
+    /// The rings, trinkets and necklace this hero found this run, and its jewelry choices left
+    /// ([`jewelry`]); what they grant is already in `bonuses`.
+    pub(super) jewelry: jewelry::Jewelry,
 }
 
 impl Default for HeroState {
@@ -141,6 +144,7 @@ impl Default for HeroState {
             damage_done: 0.0,
             healing_done: 0.0,
             damage_taken: 0.0,
+            jewelry: jewelry::Jewelry::default(),
         }
     }
 }
