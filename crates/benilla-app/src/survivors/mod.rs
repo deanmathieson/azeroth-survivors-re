@@ -16,6 +16,7 @@ mod hud;
 mod menu;
 mod minimap;
 mod mobility;
+mod run_options;
 mod units;
 
 use benilla_world::schedule::WorldStage;
@@ -40,6 +41,7 @@ impl Plugin for SurvivorsPlugin {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
         app.insert_resource(crate::run_mode::CaptureMode)
             .add_plugins(grade::plugin)
+            .add_plugins(run_options::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -95,11 +97,12 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    hud::keys,
+                    // The Run Options panel holds the menu's keys and clicks while it is open.
+                    hud::keys.run_if(run_options::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
-                    menu::menu_clicks,
+                    menu::menu_clicks.run_if(run_options::closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
@@ -271,6 +274,8 @@ pub(super) struct Run {
     pub version: u32,
     /// A centre-screen announcement and its seconds left.
     pub banner: Option<(String, f32)>,
+    /// The Run Options rewards multiplier the run began under, for whatever pays out.
+    pub reward_mult: f32,
 }
 
 impl Default for Run {
@@ -303,6 +308,7 @@ impl Default for Run {
             damage_done: 0.0,
             version: 0,
             banner: None,
+            reward_mult: 1.0,
         }
     }
 }

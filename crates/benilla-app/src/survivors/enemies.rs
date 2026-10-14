@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::run_options::{self, RunOptions, XpCarry};
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
@@ -50,6 +51,8 @@ pub(super) struct Dying(f32);
 #[derive(Resource, Default)]
 pub(super) struct Spawner {
     timer: f32,
+    /// What the Run Options density split owes the next spawns.
+    xp_carry: XpCarry,
 }
 
 /// An enemy died here, worth this much.
@@ -100,8 +103,11 @@ fn spawn_enemy(
     pos: Vec3,
     hero: Vec3,
     boss: bool,
+    opts: &RunOptions,
+    xp_carry: &mut XpCarry,
 ) {
     let scale = data::hp_scale(run.elapsed);
+    let tuned = run_options::scaled(def, opts, boss, xp_carry);
     let serial = run.guid();
     let e = units::spawn_unit(
         commands,
@@ -118,16 +124,16 @@ fn spawn_enemy(
         pos,
         yaw_toward(hero - pos),
     );
-    let hp = def.hp * scale;
+    let hp = tuned.hp * scale;
     commands.entity(e).insert((
         Enemy {
             def,
             hp,
             max_hp: hp,
-            speed: def.speed,
-            damage: def.damage * data::damage_scale(run.elapsed),
+            speed: tuned.speed,
+            damage: tuned.damage * data::damage_scale(run.elapsed),
             radius: radius_for(def),
-            xp: def.xp,
+            xp: tuned.xp,
             boss,
             attack_cd: 0.5,
             slow: 1.0,
@@ -158,6 +164,7 @@ pub(super) fn spawn_enemies(
     mut rng: ResMut<Rng>,
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
+    opts: Res<RunOptions>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<&Enemy>,
     world: WorldPoint,
@@ -180,7 +187,16 @@ pub(super) fn spawn_enemies(
             hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
             hpos.y,
         );
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, true);
+        spawn_enemy(
+            &mut commands,
+            &mut run,
+            def,
+            pos,
+            hpos,
+            true,
+            &opts,
+            &mut spawner.xp_carry,
+        );
         run.bosses += 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
     }
@@ -190,7 +206,7 @@ pub(super) fn spawn_enemies(
     if run.rings < due_rings {
         run.rings = due_rings;
         let def = &roster.enemies[pool[0]];
-        let n = 28 + (data::progress(elapsed) * 60.0) as usize;
+        let n = opts.crowd(28 + (data::progress(elapsed) * 60.0) as usize);
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
             let pos = ground(
@@ -198,7 +214,16 @@ pub(super) fn spawn_enemies(
                 hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
                 hpos.y,
             );
-            spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+            spawn_enemy(
+                &mut commands,
+                &mut run,
+                def,
+                pos,
+                hpos,
+                false,
+                &opts,
+                &mut spawner.xp_carry,
+            );
         }
         run.banner = Some(("They're surrounding you!".into(), 3.0));
     }
@@ -209,17 +234,28 @@ pub(super) fn spawn_enemies(
     }
     spawner.timer = 0.12;
     let alive = enemies.iter().filter(|e| !e.dead).count();
-    let target = data::target_alive(elapsed);
+    let target = opts.crowd(data::target_alive(elapsed));
     if alive >= target {
         return;
     }
-    let n = (((target - alive) as f32) / 6.0).ceil().min(4.0) as usize;
+    let n = (((target - alive) as f32) / 6.0)
+        .ceil()
+        .min(4.0 * opts.density) as usize;
     for _ in 0..n {
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
         let pos = ground(&world, hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r, hpos.y);
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+        spawn_enemy(
+            &mut commands,
+            &mut run,
+            def,
+            pos,
+            hpos,
+            false,
+            &opts,
+            &mut spawner.xp_carry,
+        );
     }
 }
 
@@ -424,6 +460,10 @@ pub(super) fn drop_loot(
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
+        }
+        // A Run Options density share can round to nothing: no empty wisp.
+        if d.xp == 0 {
+            continue;
         }
         if count >= MAX_GEMS && !d.boss {
             if let Some(mut g) = gems.iter_mut().find(|g| matches!(g.kind, GemKind::Xp(_))) {
