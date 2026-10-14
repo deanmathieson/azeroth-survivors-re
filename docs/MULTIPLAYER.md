@@ -68,6 +68,17 @@ Groundwork seams (milestone 1):
 3. **Online co-op on desktop.** Replicon and renet2, host/join, replicated world, client-owned hero movement.
 4. **Browser transport and polish.** Reconnect, a lobby showing who has joined, and ping display.
 
+## Milestone 2 checklist (from the groundwork review)
+
+The groundwork (495398f) leaves single-player unchanged. Fix these before a real second player plays:
+
+1. **Picks for real players:** `roll_offer` and `party::pick_at_random` draw every non-local hero's hands at random, and LevelUp closes when the local hero is done. Add a `Bot` marker that only `fill_party` sets, auto-pick only for bots, and keep LevelUp open until every non-bot hero has picked.
+2. **Heals on the downed:** `party::heal`, `heal_over_time`, `shield`, the drain heal and the Healthstone card have no `alive()` guard. Return 0 for downed targets.
+3. **Picks while downed:** `deal_hands` deals to fallen heroes. Decision: a downed hero banks its picks and gets them when revived. No pause is offered to a downed local player.
+4. **Spawn centre:** rings, elites and bosses centre on the party's average position, so spread-out players get spawns on top of them. Ring around one standing hero per spawn (round-robin) and reject points within ~25 yd of any hero.
+5. **Gold multiplier:** decision: every gold gain uses the collecting hero's multiplier, i.e. coins by whoever picks them up, Skip by the skipper and caches by the opener. The host computes it, so clients can't drift.
+6. **No-hero start:** make `start_run` return false when there is no hero.
+
 ## Risks
 
 - The `Run` split is a large mechanical refactor. Do it alone, with no other feature work in flight.
