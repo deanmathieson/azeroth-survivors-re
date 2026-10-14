@@ -6,6 +6,10 @@ use std::io::ErrorKind;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::achievements::AchievementSave;
+use super::gear::GearSave;
+use super::rewards::RewardsSave;
+use super::talents::TalentSave;
 use super::{data, Run, Selection};
 
 /// The newest profile shape this build knows how to write.
@@ -38,6 +42,10 @@ pub(super) struct ClassRecord {
     pub kills: u64,
     pub best_seconds: f32,
     pub best_level: u32,
+    /// The talents' section, defined and edited in [`super::talents`].
+    pub talents: TalentSave,
+    /// The gear's section, defined and edited in [`super::gear`].
+    pub gear: GearSave,
 }
 
 /// One zone's finished-run record.
@@ -58,8 +66,15 @@ pub(super) struct Profile {
     pub account: AccountRecord,
     pub classes: BTreeMap<String, ClassRecord>,
     pub zones: BTreeMap<String, ZoneRecord>,
+    /// The achievements' section, defined and edited in [`super::achievements`].
+    pub achievements: AchievementSave,
+    /// Perks, companions and reward points, defined and edited in [`super::rewards`].
+    pub rewards: RewardsSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
+    /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
+    #[serde(skip)]
+    dirty: bool,
 }
 
 fn default_version() -> u32 {
@@ -77,7 +92,10 @@ impl Default for Profile {
             account: AccountRecord::default(),
             classes: BTreeMap::new(),
             zones: BTreeMap::new(),
+            achievements: AchievementSave::default(),
+            rewards: RewardsSave::default(),
             writable: true,
+            dirty: false,
         }
     }
 }
@@ -94,6 +112,22 @@ pub(super) struct RunOutcome {
     pub level: u32,
     pub damage: f64,
     pub gold: u32,
+    /// The Run Options rewards multiplier the run was played under ([`Run::reward_mult`]).
+    // Read by the reward workstreams' RunEnded systems, still to land.
+    #[allow(dead_code)]
+    pub reward_mult: f32,
+}
+
+/// A run, recorded: [`record_finished`] writes exactly one per run, on the GameOver frame after
+/// [`Profile::record`], ahead of `Update`. A feature reads it from a system in its own plugin,
+/// changes `ResMut<Profile>`, calls [`Profile::mark_dirty`] and may push
+/// [`super::hud::ResultsNotes`]; [`save_if_dirty`] then writes the record and every feature's
+/// changes in one save that frame. None is sent for a run that goes unrecorded.
+#[derive(Message, Clone, Copy, Debug)]
+pub(super) struct RunEnded {
+    // Read by the feature workstreams' systems, still to land.
+    #[allow(dead_code)]
+    pub outcome: RunOutcome,
 }
 
 /// The profile changes a results screen can announce.
@@ -169,6 +203,22 @@ impl Profile {
             first_zone_win,
             first_class_win,
         }
+    }
+
+    /// Queue a save: [`save_if_dirty`] writes once this frame, after `Update`, however many
+    /// systems changed the profile.
+    pub(super) fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Hand the profile to `write` if it has unsaved changes and may be written, clearing the
+    /// flag either way (a read-only profile's changes stay in memory); whether `write` ran.
+    fn flush(&mut self, write: impl FnOnce(&Profile)) -> bool {
+        if !std::mem::take(&mut self.dirty) || !self.writable {
+            return false;
+        }
+        write(self);
+        true
     }
 }
 
@@ -353,12 +403,22 @@ fn save_at(path: &std::path::Path, profile: &Profile) -> bool {
     }
 }
 
-/// Turn the one GameOver transition into exactly one persistent run record.
+/// The profile's one writer: after `Update`, a profile marked dirty is saved once, so a run's
+/// record and every feature's [`RunEnded`] changes land in a single write. Never reloads: what is
+/// in memory is the newest, and a reload here would drop the changes systems made this frame.
+pub(super) fn save_if_dirty(mut profile: ResMut<Profile>) {
+    if profile.dirty {
+        profile.bypass_change_detection().flush(save);
+    }
+}
+
+/// Turn the one GameOver transition into exactly one persistent run record and one [`RunEnded`].
 pub(super) fn record_finished(
     mut run: ResMut<Run>,
     selection: Res<Selection>,
     mut profile: ResMut<Profile>,
     mut news: ResMut<LastRunNews>,
+    mut ended: MessageWriter<RunEnded>,
     auto: Option<Res<super::auto::Auto>>,
 ) {
     if run.recorded {
@@ -385,8 +445,12 @@ pub(super) fn record_finished(
         level: run.level,
         damage: run.damage_done,
         gold: run.gold,
+        reward_mult: run.reward_mult,
     };
-    if profile.writable {
+    // The save on disk may be newer (another copy of the game): this run is applied to it. The
+    // reload lives only here, where the change to reapply is known; a profile with unsaved changes
+    // keeps them instead, since the file has not seen them.
+    if profile.writable && !profile.dirty {
         match read_clean_profile() {
             Ok(Some(fresh)) => *profile = fresh,
             Ok(None) => {}
@@ -398,7 +462,8 @@ pub(super) fn record_finished(
         }
     }
     *news = profile.record(&outcome);
-    save(&profile);
+    profile.mark_dirty();
+    ended.write(RunEnded { outcome });
 }
 
 fn read_clean_profile() -> Result<Option<Profile>, String> {
@@ -455,6 +520,89 @@ mod tests {
     }
 
     #[test]
+    fn saves_without_feature_sections_load_and_round_trip() {
+        let text = "version = 1\n\n[account]\nruns = 3\nwins = 1\n\n\
+                    [classes.mage]\nruns = 3\nwins = 1\nbest_level = 9\n\n\
+                    [zones.elwynn]\nruns = 3\nbest_seconds = 250.0\n";
+        let loaded = load_text(text);
+        assert!(loaded.corrupt_text.is_none());
+        let profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.account.runs, 3);
+        let mage = &profile.classes["mage"];
+        assert_eq!((mage.runs, mage.wins, mage.best_level), (3, 1, 9));
+        assert_eq!(mage.talents, TalentSave::default());
+        assert_eq!(mage.gear, GearSave::default());
+        assert_eq!(profile.zones["elwynn"].best_seconds, 250.0);
+        assert_eq!(profile.achievements, AchievementSave::default());
+        assert_eq!(profile.rewards, RewardsSave::default());
+        let again = load_text(&toml::to_string_pretty(&profile).unwrap());
+        assert!(again.corrupt_text.is_none());
+        assert_eq!(again.profile, profile);
+    }
+
+    #[test]
+    fn a_dirty_writable_profile_is_written_once() {
+        let mut written = Vec::new();
+        let mut profile = Profile::default();
+        assert!(!profile.flush(|p| written.push(p.clone())));
+        profile.account.runs = 5;
+        profile.mark_dirty();
+        profile.mark_dirty();
+        assert!(profile.flush(|p| written.push(p.clone())));
+        assert!(!profile.dirty);
+        assert!(!profile.flush(|p| written.push(p.clone())));
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0].account.runs, 5);
+        // Read-only: never written, and the flag still clears.
+        let mut read_only = read_only_default();
+        read_only.mark_dirty();
+        assert!(!read_only.flush(|p| written.push(p.clone())));
+        assert!(!read_only.dirty);
+        assert_eq!(written.len(), 1);
+        // The flag is not part of the save.
+        profile.mark_dirty();
+        let text = toml::to_string_pretty(&profile).unwrap();
+        assert!(!toml::from_str::<Profile>(&text).unwrap().dirty);
+    }
+
+    #[test]
+    fn run_ended_is_sent_once_per_recorded_run() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Messages<RunEnded>>();
+        world.insert_resource(Run {
+            kills: 7,
+            reward_mult: 1.5,
+            ..default()
+        });
+        world.init_resource::<Selection>();
+        // Read-only, so the system neither reloads nor writes a save.
+        world.insert_resource(read_only_default());
+        world.init_resource::<LastRunNews>();
+        // A repeated GameOver transition for the same run.
+        for _ in 0..2 {
+            world.run_system_once(record_finished).unwrap();
+        }
+        let sent: Vec<RunEnded> = world
+            .resource::<Messages<RunEnded>>()
+            .iter_current_update_messages()
+            .copied()
+            .collect();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].outcome.kills, 7);
+        assert_eq!(sent[0].outcome.reward_mult, 1.5);
+        let profile = world.resource::<Profile>();
+        assert_eq!(profile.account.runs, 1);
+        assert!(profile.dirty, "the record waits for save_if_dirty");
+        // The next run is recorded and announced in its turn.
+        world.resource_mut::<Run>().recorded = false;
+        world.run_system_once(record_finished).unwrap();
+        assert_eq!(world.resource::<Messages<RunEnded>>().len(), 2);
+        assert_eq!(world.resource::<Profile>().account.runs, 2);
+    }
+
+    #[test]
     fn record_accumulates_records_and_news() {
         let mut profile = Profile::default();
         let death = RunOutcome {
@@ -467,6 +615,7 @@ mod tests {
             level: 2,
             damage: 5.0,
             gold: 40,
+            reward_mult: 1.0,
         };
         let first = profile.record(&death);
         assert!(!first.new_best_survival);
@@ -592,6 +741,7 @@ mod tests {
             level: 1,
             damage: 1.0,
             gold: u32::MAX,
+            reward_mult: 1.0,
         });
         assert_eq!(profile.account.runs, u32::MAX);
         assert_eq!(profile.account.wins, u32::MAX);

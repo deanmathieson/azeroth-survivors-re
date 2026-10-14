@@ -24,6 +24,8 @@ const EDGE: Color = Color::srgb(0.55, 0.45, 0.25);
 const BUTTON: Color = Color::srgba(0.18, 0.06, 0.04, 0.95);
 const BUTTON_HOT: Color = Color::srgba(0.36, 0.12, 0.06, 0.98);
 const DIM: Color = Color::srgb(0.6, 0.6, 0.6);
+/// The results screen's news line.
+const NEWS_GREEN: Color = Color::srgb(0.25, 0.9, 0.35);
 pub(super) const DIM_GREY: Color = DIM;
 pub(super) const GOLD_TONE: Color = GOLD;
 
@@ -109,8 +111,70 @@ pub(super) struct OverStats;
 pub(super) struct OverLine;
 #[derive(Component)]
 pub(super) struct OverNews;
+/// The results screen's column of [`ResultsNotes`] lines, and one line in it.
+#[derive(Component)]
+pub(super) struct OverNotes;
+#[derive(Component)]
+pub(super) struct OverNote(usize);
 #[derive(Component)]
 pub(super) struct OverStat(usize);
+
+/// The most [`ResultsNotes`] the results screen shows.
+pub(super) const MAX_NOTES: usize = 4;
+
+/// How a results note reads, by its colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// The feature workstreams push these, still to land.
+#[allow(dead_code)]
+pub(super) enum NoteKind {
+    Info,
+    /// Good news, green like the news line.
+    Good,
+    /// An item, in its quality's colour (Epic purple).
+    Loot,
+    Achievement,
+}
+
+impl NoteKind {
+    pub(super) fn color(self) -> Color {
+        match self {
+            Self::Info => Color::srgb(0.85, 0.78, 0.6),
+            Self::Good => NEWS_GREEN,
+            Self::Loot => super::cards::EPIC,
+            Self::Achievement => GOLD,
+        }
+    }
+}
+
+/// The run's lines for the results screen, in the order pushed: features push during the run (a
+/// drop) or on [`super::profile::RunEnded`] (an achievement). Cleared as each run starts; the
+/// first [`MAX_NOTES`] show, under the news line.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(super) struct ResultsNotes(pub Vec<(String, NoteKind)>);
+
+impl ResultsNotes {
+    // The feature workstreams push these, still to land.
+    #[allow(dead_code)]
+    pub(super) fn push(&mut self, text: impl Into<String>, kind: NoteKind) {
+        self.0.push((text.into(), kind));
+    }
+}
+
+/// [`ResultsNotes`], emptied as each run begins; [`refresh_notes`] shows them.
+pub(super) fn notes_plugin(app: &mut App) {
+    app.init_resource::<ResultsNotes>().add_systems(
+        OnTransition {
+            exited: Phase::Menu,
+            entered: Phase::Playing,
+        },
+        clear_notes,
+    );
+}
+
+/// A run begins: the last run's notes go.
+fn clear_notes(mut notes: ResMut<ResultsNotes>) {
+    notes.0.clear();
+}
 
 /// An icon slot filled from the spell's `SpellIcon` once the client data is up.
 #[derive(Component)]
@@ -822,10 +886,30 @@ pub(super) fn setup_hud(
                 OverLine,
                 centered(f, "", 18.0, Color::srgb(0.85, 0.78, 0.6)),
             ));
+            root.spawn((OverNews, centered(f, "", 18.0, NEWS_GREEN)));
+            // The run's notes, tight under the news; hidden lines leave the layout.
             root.spawn((
-                OverNews,
-                centered(f, "", 18.0, Color::srgb(0.25, 0.9, 0.35)),
-            ));
+                OverNotes,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(2.0),
+                    display: Display::None,
+                    ..default()
+                },
+            ))
+            .with_children(|notes| {
+                for i in 0..MAX_NOTES {
+                    notes.spawn((
+                        OverNote(i),
+                        centered(f, "", 16.0, Color::WHITE),
+                        Node {
+                            display: Display::None,
+                            ..default()
+                        },
+                    ));
+                }
+            });
             // The run in numbers, one tile each.
             root.spawn(Node {
                 column_gap: Val::Px(12.0),
@@ -1776,6 +1860,38 @@ pub(super) fn refresh_results(
     }
 }
 
+/// The results screen's [`ResultsNotes`] lines: the first [`MAX_NOTES`], each in its kind's
+/// colour; the column leaves the layout while there are none.
+#[allow(clippy::type_complexity)]
+pub(super) fn refresh_notes(
+    notes: Res<ResultsNotes>,
+    mut column: Query<&mut Node, (With<OverNotes>, Without<OverNote>)>,
+    mut lines: Query<(&OverNote, &mut Text, &mut TextColor, &mut Node), Without<OverNotes>>,
+) {
+    let display = |on: bool| if on { Display::Flex } else { Display::None };
+    for mut node in &mut column {
+        let want = display(!notes.0.is_empty());
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    for (line, mut text, mut color, mut node) in &mut lines {
+        let note = notes.0.get(line.0).filter(|_| line.0 < MAX_NOTES);
+        let want = display(note.is_some());
+        if node.display != want {
+            node.display = want;
+        }
+        let Some((s, kind)) = note else { continue };
+        if **text != *s {
+            **text = s.clone();
+        }
+        let want = kind.color();
+        if color.0 != want {
+            color.0 = want;
+        }
+    }
+}
+
 fn results_note(news: &LastRunNews) -> String {
     if news.first_zone_win {
         format!("First win in {}!", news.zone)
@@ -2359,5 +2475,57 @@ mod tests {
         };
 
         assert_eq!(results_note(&news), "First win in Elwynn!");
+    }
+
+    #[test]
+    fn results_notes_clear_when_a_run_starts() {
+        fn go(app: &mut App, phase: Phase) {
+            app.world_mut()
+                .resource_mut::<NextState<Phase>>()
+                .set(phase);
+            app.update();
+        }
+        let mut app = App::new();
+        app.add_plugins((bevy::state::app::StatesPlugin, notes_plugin))
+            .init_state::<Phase>();
+        app.update();
+        app.world_mut()
+            .resource_mut::<ResultsNotes>()
+            .push("Last run's drop", NoteKind::Loot);
+        go(&mut app, Phase::Playing);
+        assert!(app.world().resource::<ResultsNotes>().0.is_empty());
+        // Pushed during the run, kept through the results and back at the menu.
+        app.world_mut()
+            .resource_mut::<ResultsNotes>()
+            .push("Drop", NoteKind::Loot);
+        go(&mut app, Phase::GameOver);
+        app.world_mut()
+            .resource_mut::<ResultsNotes>()
+            .push("Achievement", NoteKind::Achievement);
+        go(&mut app, Phase::Menu);
+        assert_eq!(
+            app.world().resource::<ResultsNotes>().0,
+            [
+                ("Drop".to_string(), NoteKind::Loot),
+                ("Achievement".to_string(), NoteKind::Achievement),
+            ]
+        );
+        go(&mut app, Phase::Playing);
+        assert!(app.world().resource::<ResultsNotes>().0.is_empty());
+    }
+
+    #[test]
+    fn note_kinds_have_distinct_colours() {
+        let kinds = [
+            NoteKind::Info,
+            NoteKind::Good,
+            NoteKind::Loot,
+            NoteKind::Achievement,
+        ];
+        for (i, a) in kinds.iter().enumerate() {
+            for b in &kinds[i + 1..] {
+                assert_ne!(a.color(), b.color(), "{a:?} and {b:?}");
+            }
+        }
     }
 }

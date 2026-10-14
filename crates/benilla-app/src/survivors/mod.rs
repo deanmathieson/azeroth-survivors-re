@@ -5,6 +5,7 @@
 //! off ([`crate::run_mode::CaptureMode`]).
 
 mod abilities;
+mod achievements;
 mod armory;
 mod auto;
 mod bonus;
@@ -17,9 +18,11 @@ mod hand;
 mod hero;
 mod hud;
 mod menu;
+mod meta;
 mod minimap;
 mod mobility;
 mod profile;
+mod rewards;
 mod run_options;
 mod talents;
 mod treasure;
@@ -51,6 +54,11 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(armory::plugin)
             .add_plugins(run_options::plugin)
             .add_plugins(talents::plugin)
+            .add_plugins(gear::plugin)
+            .add_plugins(achievements::plugin)
+            .add_plugins(rewards::plugin)
+            .add_plugins(meta::plugin)
+            .add_plugins(hud::notes_plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -66,9 +74,11 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<hand::HandMode>()
             .add_message::<abilities::Hit>()
             .add_message::<enemies::Loot>()
+            .add_message::<profile::RunEnded>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_systems(Startup, (profile::load_profile, hud::setup_hud).chain())
             .add_systems(Update, hero::daylight)
+            .add_systems(PostUpdate, profile::save_if_dirty)
             .add_systems(
                 Update,
                 (
@@ -148,6 +158,7 @@ impl Plugin for SurvivorsPlugin {
                     cards::animate_cards,
                     hud::refresh_hud,
                     hud::refresh_results,
+                    hud::refresh_notes,
                     hud::fill_icons,
                     hud::update_cooldown_sweeps,
                     hud::refresh_mobility,
@@ -332,7 +343,7 @@ impl Stats {
 }
 
 /// Bonuses from outside the run (talents, gear and perks, as they land), copied into each run
-/// as it starts.
+/// as it starts. Written only by [`meta`], as the sum of its [`meta::MetaParts`].
 #[derive(Resource, Default)]
 struct MetaBonuses(pub Bonuses);
 

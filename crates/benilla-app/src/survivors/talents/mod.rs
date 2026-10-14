@@ -8,6 +8,7 @@
 
 mod effects;
 mod rules;
+mod save;
 
 use std::collections::HashMap;
 
@@ -20,6 +21,7 @@ use super::data;
 pub(super) use rules::{
     bonuses, can_learn, can_unlearn, Allocation, Why, MAX_POINTS, POINTS_PER_TIER,
 };
+pub(super) use save::TalentSave;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(

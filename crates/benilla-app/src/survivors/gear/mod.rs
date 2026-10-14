@@ -9,9 +9,16 @@
 
 mod catalog;
 mod drops;
+mod save;
+
+use bevy::prelude::App;
 
 use super::bonus::{Bonus, Bonuses};
 pub(super) use super::cards::Rarity;
+pub(super) use save::GearSave;
+
+/// This workstream's systems, registered by [`super::SurvivorsPlugin`].
+pub(super) fn plugin(_app: &mut App) {}
 
 /// Where a piece is worn: the nine slots the catalog fills for every class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
