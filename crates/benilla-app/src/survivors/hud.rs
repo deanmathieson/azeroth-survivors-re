@@ -987,7 +987,9 @@ pub(super) fn setup_hud(
         });
 }
 
-/// The menu's hero is the run's hero: respawned whenever the pick changes.
+/// The menu's hero is the run's hero: respawned whenever the pick changes, dressed in the class's
+/// gear and looks ([`super::gear::Dresser`]), which re-dress it in place as they change.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn menu_preview(
     mut commands: Commands,
     phase: Res<State<Phase>>,
@@ -995,6 +997,7 @@ pub(super) fn menu_preview(
     mut run: ResMut<Run>,
     heroes: Query<Entity, With<Hero>>,
     world: benilla_world::world_point::WorldPoint,
+    mut dresser: super::gear::Dresser,
     mut shown: Local<Option<(usize, u32, usize)>>,
 ) {
     if *phase.get() != Phase::Menu {
@@ -1011,9 +1014,10 @@ pub(super) fn menu_preview(
         commands.entity(e).despawn();
     }
     *shown = key;
-    let Some((class, (display, race, sex))) = want else {
+    let Some((class, (trainer, race, sex))) = want else {
         return;
     };
+    let display = dresser.display(class, (trainer, race, sex));
     let mut pos = hero::arena(selection.stage_def());
     if let Some(h) = world.terrain_height_under(pos) {
         pos.y = h;
@@ -1423,6 +1427,7 @@ pub(super) fn refresh_hud(
     mut run: ResMut<Run>,
     local: Query<&HeroState, With<LocalHero>>,
     selection: Res<Selection>,
+    names: super::gear::HeroNames,
     font: Res<HudFont>,
     mut texts: ParamSet<(
         Query<&mut Text, With<LevelText>>,
@@ -1502,11 +1507,15 @@ pub(super) fn refresh_hud(
             &fallback
         }
     };
+    // "Thrall the Orc Shaman in Durotar" once the hero has a name.
     let summary = format!(
-        "{} {} in {}   —   press Enter to play again",
-        crate::char_select::race_name(me.race),
-        me.class.name,
-        selection.map_def().name,
+        "{}   —   press Enter to play again",
+        super::gear::results_title(
+            selection.class.and_then(|c| names.name(c)),
+            crate::char_select::race_name(me.race),
+            me.class.name,
+            selection.map_def().name,
+        ),
     );
     if let Ok(mut t) = texts.p5().single_mut() {
         if **t != summary {

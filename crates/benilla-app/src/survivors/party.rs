@@ -271,6 +271,7 @@ pub(super) fn centre(positions: impl IntoIterator<Item = Vec3>) -> Option<Vec3> 
 /// The test aid's extras: once a run is under way, every player [`Party::size`] asks for and the
 /// run lacks joins it beside the local hero, in the same class and look. They stand still (no
 /// input reaches them yet) and fight, level and pick on their own [`HeroState`]s.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn fill_party(
     mut commands: Commands,
     party: Res<Party>,
@@ -279,11 +280,16 @@ pub(super) fn fill_party(
     local: Query<(&Transform, &HeroState), With<LocalHero>>,
     heroes: Query<&HeroState, With<Hero>>,
     world: benilla_world::world_point::WorldPoint,
+    mut dresser: super::gear::Dresser,
 ) {
     let Ok((tf, me)) = local.single() else { return };
-    let Some(&(display, _, sex)) = selection.look.and_then(|i| selection.looks.get(i)) else {
+    let (Some(class), Some(&look)) = (
+        selection.class,
+        selection.look.and_then(|i| selection.looks.get(i)),
+    ) else {
         return;
     };
+    let sex = look.2;
     let extras = party.size.saturating_sub(1).max(1);
     for player in 1..party.size {
         if heroes.iter().any(|h| h.player == player) {
@@ -294,6 +300,8 @@ pub(super) fn fill_party(
         let pos = super::enemies::ground(&world, at, tf.translation.y);
         let state = HeroState::new(player, me.class, me.race, super::env_bonuses());
         let serial = run.guid();
+        // The local hero's dress: the extras share its class and look.
+        let display = dresser.display(class, look);
         hero::spawn_hero(&mut commands, state, display, sex, serial, pos);
     }
 }

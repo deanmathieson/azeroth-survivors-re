@@ -165,9 +165,8 @@ pub(super) fn clear_toasts(mut toasts: ResMut<LootToasts>) {
 }
 
 /// The local hero holds its class's worn main-hand piece, else the class's own weapon: the
-/// creature weapon slot the attach already dresses from (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`). Armor
-/// is baked into the trainer display, so the other slots do not show. The gear is the local
-/// player's.
+/// creature weapon slot the attach already dresses from (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`). The
+/// armour slots are worn on the body itself ([`super::outfit`]). The gear is the local player's.
 pub(super) fn dress_hero(
     selection: Res<Selection>,
     gear: GearRead,
