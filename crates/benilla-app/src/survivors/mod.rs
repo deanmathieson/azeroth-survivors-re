@@ -5,6 +5,7 @@
 //! off ([`crate::run_mode::CaptureMode`]).
 
 mod abilities;
+mod armory;
 mod auto;
 mod bonus;
 mod cards;
@@ -43,6 +44,7 @@ impl Plugin for SurvivorsPlugin {
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
         app.insert_resource(crate::run_mode::CaptureMode)
             .add_plugins(grade::plugin)
+            .add_plugins(armory::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -124,11 +126,12 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    hud::keys,
+                    // The Armory over the menu takes the keys and clicks while it is open.
+                    hud::keys.run_if(armory::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
-                    menu::menu_clicks,
+                    menu::menu_clicks.run_if(armory::closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,

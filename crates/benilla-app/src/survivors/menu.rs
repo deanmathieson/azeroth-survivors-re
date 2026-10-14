@@ -149,6 +149,7 @@ pub(super) fn build_menu(
     let f = &font.0;
     commands.entity(root).insert(MenuBuilt).with_children(|ui| {
         tower(ui, &art, f);
+        super::armory::entry_button(ui, &art, f);
         // `CharacterCreateWoWLogo`, 256×128 at TOPLEFT (3,-7), after the tower so it draws over
         // the border art, as the create screen orders it.
         if let Some(logo) = &art.logo {
