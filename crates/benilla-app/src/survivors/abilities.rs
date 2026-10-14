@@ -3,11 +3,12 @@
 
 use bevy::prelude::*;
 
+use super::bonus::School;
 use super::data::{AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
 use super::hero::{self, Hero};
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
-use super::{Rng, Run, RunEntity};
+use super::{Rng, Run, RunEntity, Stats};
 use crate::net::{FieldChanged, Guid, ObjectStore};
 
 /// One blow landing on one enemy.
@@ -139,11 +140,25 @@ fn schedule(
     }
 }
 
-fn roll(rng: &mut Rng, crit: f32, dmg: f32) -> (f32, bool) {
-    if rng.f32() < crit {
-        (dmg * 2.0, true)
+fn roll(rng: &mut Rng, stats: &Stats, dmg: f32) -> (f32, bool) {
+    if rng.f32() < stats.crit {
+        (dmg * stats.crit_damage, true)
     } else {
         (dmg, false)
+    }
+}
+
+/// `Spell.dbc`'s `School` index (0 physical to 6 arcane) as a [`School`]; anything else is
+/// physical.
+fn dbc_school(index: u32) -> School {
+    match index {
+        1 => School::Holy,
+        2 => School::Fire,
+        3 => School::Nature,
+        4 => School::Frost,
+        5 => School::Shadow,
+        6 => School::Arcane,
+        _ => School::Physical,
     }
 }
 
@@ -231,6 +246,13 @@ pub(super) fn cast_abilities(
             .and_then(|s| s.catalog.get(spell))
             .map_or(0.0, |d| d.speed)
     };
+    // The spell's own school, so a school's damage bonus lands where its spells do.
+    let school_of = |spell: u32| {
+        spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell))
+            .map_or(School::Physical, |d| dbc_school(d.school))
+    };
 
     for i in 0..run.abilities.len() {
         run.abilities[i].cd -= dt;
@@ -239,11 +261,11 @@ pub(super) fn cast_abilities(
         }
         let o = &run.abilities[i];
         let def = o.def;
-        let mult = o.damage_mult() * stats.might;
+        let mult = o.damage_mult() * stats.might * run.school_mult(school_of(def.spell));
         let p = Params {
             dmg: def.damage * mult,
             dot: def.dot * mult,
-            count: o.count() as usize,
+            count: o.count(&stats) as usize,
             radius: o.radius(&stats),
             duration: o.duration(),
             cooldown: o.cooldown(&stats),
@@ -276,7 +298,7 @@ pub(super) fn cast_abilities(
                         fx.cast(me, def.spell, &entities(&targets), None);
                     }
                     for f in &targets {
-                        let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg);
+                        let (dmg, crit) = roll(&mut rng, &stats, p.dmg);
                         let delay = if speed > 0.0 { f.dist / speed } else { 0.0 };
                         schedule(
                             &mut pending,
@@ -305,7 +327,7 @@ pub(super) fn cast_abilities(
                 } else {
                     fx.cast(me, def.spell, &entities(&targets), None);
                     for f in &targets {
-                        let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg);
+                        let (dmg, crit) = roll(&mut rng, &stats, p.dmg);
                         let delay = if speed > 0.0 { f.dist / speed } else { 0.0 };
                         schedule(
                             &mut pending,
@@ -383,8 +405,7 @@ pub(super) fn cast_abilities(
                     }
                     fx.cast(me, def.spell, &entities(&chain), None);
                     for (k, f) in chain.iter().enumerate() {
-                        let (dmg, crit) =
-                            roll(&mut rng, stats.crit, p.dmg * 0.85f32.powi(k as i32));
+                        let (dmg, crit) = roll(&mut rng, &stats, p.dmg * 0.85f32.powi(k as i32));
                         schedule(
                             &mut pending,
                             &mut hits,
@@ -433,7 +454,7 @@ pub(super) fn cast_abilities(
                         fx.impact(f.e, def.spell);
                     }
                     for f in &targets {
-                        let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg);
+                        let (dmg, crit) = roll(&mut rng, &stats, p.dmg);
                         hits.write(hit_for(def, &p, f.e, dmg, crit));
                     }
                     true
@@ -446,7 +467,7 @@ pub(super) fn cast_abilities(
                 } else {
                     for f in &targets {
                         fx.impact(f.e, 403);
-                        let (dmg, crit) = roll(&mut rng, stats.crit, p.dmg);
+                        let (dmg, crit) = roll(&mut rng, &stats, p.dmg);
                         hits.write(hit_for(def, &p, f.e, dmg, crit));
                     }
                     true
@@ -577,7 +598,7 @@ pub(super) fn tick_areas(
                 if area.impact != 0 && i < 12 {
                     fx.impact(f.e, area.impact);
                 }
-                let (dmg, crit) = roll(&mut rng, stats.crit, area.damage);
+                let (dmg, crit) = roll(&mut rng, &stats, area.damage);
                 hits.write(Hit {
                     target: f.e,
                     damage: dmg,
@@ -619,7 +640,7 @@ pub(super) fn tick_areas(
             }
             fx.cast(e, totem.cast, &[], None);
             for f in &targets {
-                let (dmg, crit) = roll(&mut rng, stats.crit, totem.damage);
+                let (dmg, crit) = roll(&mut rng, &stats, totem.damage);
                 hits.write(Hit {
                     color: COLOR_SPELL,
                     ..Hit::direct(f.e, dmg, crit)
@@ -639,7 +660,7 @@ pub(super) fn tick_areas(
                 .and_then(|s| s.catalog.get(totem.cast))
                 .map_or(0.0, |d| d.speed);
             let delay = if speed > 0.0 { dist / speed } else { 0.0 };
-            let (dmg, crit) = roll(&mut rng, stats.crit, totem.damage);
+            let (dmg, crit) = roll(&mut rng, &stats, totem.damage);
             schedule(
                 &mut pending,
                 &mut hits,
@@ -676,6 +697,9 @@ pub(super) fn apply_hits(
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
+    let stats = run.stats();
+    // Everything dealt this frame, for lifesteal.
+    let mut leeched = 0.0;
     let mut due: Vec<Hit> = incoming.read().cloned().collect();
     pending.0.retain(|(t, h)| {
         if *t <= now {
@@ -741,6 +765,7 @@ pub(super) fn apply_hits(
         if dmg > 0.0 {
             en.hp -= dmg;
             run.damage_done += f64::from(dmg);
+            leeched += dmg;
             fx.number(e, dmg, h.crit, h.color);
             if let Effect::Drain(frac) = h.effect {
                 let max = run.stats().max_hp;
@@ -802,6 +827,7 @@ pub(super) fn apply_hits(
         if dealt > 0.0 {
             en.hp -= dealt;
             run.damage_done += f64::from(dealt);
+            leeched += dealt;
             fx.number(e, dealt, false, COLOR_SPELL);
             if en.hp <= 0.0 {
                 kill(&mut commands, &mut run, e, tf.translation, &mut en);
@@ -810,5 +836,41 @@ pub(super) fn apply_hits(
                 marks.flush(e, guid.0, &mut store, &mut fields);
             }
         }
+    }
+
+    // A fallen hero stays down.
+    if run.dead_t.is_none() {
+        run.hp = stats.leech(run.hp, leeched);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::bonus::{Bonus, StatKey};
+    use super::*;
+
+    #[test]
+    fn crits_use_the_crit_multiplier() {
+        let mut run = Run::default();
+        run.bonuses.add(&Bonus::new(StatKey::CritChance, 1.0));
+        run.bonuses.add(&Bonus::new(StatKey::CritDamage, 0.5));
+        assert_eq!(roll(&mut Rng::default(), &run.stats(), 10.0), (25.0, true));
+    }
+
+    #[test]
+    fn dbc_schools_map_in_order() {
+        let all = [
+            School::Physical,
+            School::Holy,
+            School::Fire,
+            School::Nature,
+            School::Frost,
+            School::Shadow,
+            School::Arcane,
+        ];
+        for (i, school) in all.into_iter().enumerate() {
+            assert_eq!(dbc_school(i as u32), school);
+        }
+        assert_eq!(dbc_school(99), School::Physical);
     }
 }

@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
 
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
-use super::{data, Phase, Rng, Run, Selection};
+use super::{data, MetaBonuses, Phase, Rng, Run, Selection};
 use crate::char_select::race_name;
 use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -526,6 +526,7 @@ pub(super) fn menu_clicks(
     creatures: Option<Res<crate::entities::Creatures>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    meta: Res<MetaBonuses>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
 ) {
@@ -556,7 +557,7 @@ pub(super) fn menu_clicks(
             }
         }
         MenuAction::Enter => {
-            if start_run(&mut run, &mut selection) {
+            if start_run(&mut run, &mut selection, &meta) {
                 next.set(Phase::Playing);
             }
         }

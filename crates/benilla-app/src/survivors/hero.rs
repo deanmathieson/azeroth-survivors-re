@@ -6,6 +6,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
 use super::data::{self, ClassDef};
+use super::enemies::Enemy;
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
 use super::{Phase, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
@@ -387,7 +388,7 @@ pub(super) fn hurt_hero(run: &mut Run, raw: f32) -> f32 {
     if run.immune_t > 0.0 || run.dead_t.is_some() {
         return 0.0;
     }
-    let mut dmg = (raw - run.stats().armor).max(1.0);
+    let mut dmg = run.stats().after_armor(raw);
     if run.shield_t > 0.0 && run.shield > 0.0 {
         let absorbed = dmg.min(run.shield);
         run.shield -= absorbed;
@@ -397,18 +398,22 @@ pub(super) fn hurt_hero(run: &mut Run, raw: f32) -> f32 {
     dmg
 }
 
-/// The clock, regeneration, the timed buffs and their visuals, death and victory.
+/// How far an extra life throws the crowd clear, in yards.
+const REVIVE_KNOCKBACK: f32 = 8.0;
+
+/// The clock, regeneration, the timed buffs and their visuals, extra lives, death and victory.
 pub(super) fn hero_vitals(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
-    mut hero: Query<(Entity, &Guid, &mut ObjectStore, &mut Marks), With<Hero>>,
+    mut hero: Query<(Entity, &Guid, &Transform, &mut ObjectStore, &mut Marks), With<Hero>>,
+    mut enemies: Query<(&mut Transform, &Enemy), Without<Hero>>,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
 ) {
     let dt = time.delta_secs();
     let stats = run.stats();
-    let Ok((entity, guid, mut store, mut marks)) = hero.single_mut() else {
+    let Ok((entity, guid, htf, mut store, mut marks)) = hero.single_mut() else {
         return;
     };
     if let Some(t) = run.dead_t.as_mut() {
@@ -455,7 +460,18 @@ pub(super) fn hero_vitals(
     marks.set(&shown);
     marks.flush(entity, guid.0, &mut store, &mut fields);
 
-    if run.hp <= 0.0 {
+    if run.hp <= 0.0 && run.revive() {
+        // Up again, with the crowd thrown clear; the immunity glow shows from the next frame.
+        fx.cast(entity, 642, &[entity], None);
+        let hpos = htf.translation;
+        for (mut tf, e) in &mut enemies {
+            let away = flat(tf.translation - hpos);
+            let dist = away.length();
+            if !e.dead && dist > 0.01 && dist < REVIVE_KNOCKBACK {
+                tf.translation += away / dist * (REVIVE_KNOCKBACK - dist);
+            }
+        }
+    } else if run.hp <= 0.0 {
         run.hp = 0.0;
         run.dead_t = Some(0.0);
         units::kill_unit(&mut store);

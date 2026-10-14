@@ -14,7 +14,7 @@ use bevy::window::PrimaryWindow;
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
-use super::{Owned, Phase, Rng, Run, Selection, Stats};
+use super::{MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 /// The mobility button's edge, an action button's 36 units.
@@ -900,7 +900,7 @@ pub(super) fn menu_preview(
     );
 }
 
-pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
+pub(super) fn start_run(run: &mut Run, selection: &mut Selection, meta: &MetaBonuses) -> bool {
     let (Some(class), Some(&(_, race, _))) = (
         selection.class_def(),
         selection.look.and_then(|i| selection.looks.get(i)),
@@ -914,8 +914,10 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
         class,
         race,
         next_guid,
+        bonuses: meta.0.clone(),
         ..Run::default()
     };
+    run.bonuses.merge(&super::env_bonuses());
     run.abilities.push(Owned {
         def: data::ability(class.start),
         level: 1,
@@ -951,6 +953,11 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
                 pool.push((Choice::NewPassive(p), 0.5));
             }
         }
+    }
+    // Luck tilts the draw toward the rarer cards.
+    let stats = run.stats();
+    for (choice, w) in &mut pool {
+        *w *= stats.luck_weight(super::cards::rarity(*choice, run) as i32);
     }
     let mut out = Vec::with_capacity(3);
     while out.len() < 3 && !pool.is_empty() {
@@ -1057,11 +1064,12 @@ pub(super) fn keys(
     phase: Res<State<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    meta: Res<MetaBonuses>,
     mut next: ResMut<NextState<Phase>>,
 ) {
     match phase.get() {
         Phase::Menu => {
-            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection) {
+            if keys.just_pressed(KeyCode::Enter) && start_run(&mut run, &mut selection, &meta) {
                 next.set(Phase::Playing);
             }
         }
@@ -1728,7 +1736,7 @@ fn cast_at(def: &'static AbilityDef, level: u8, stats: &Stats) -> Cast {
     Cast {
         dmg: def.damage * mult,
         dot: def.dot * mult,
-        count: o.count(),
+        count: o.count(stats),
         radius: o.radius(stats),
         duration: o.duration(),
         cooldown: o.cooldown(stats),
