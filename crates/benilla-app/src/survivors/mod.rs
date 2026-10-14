@@ -21,6 +21,7 @@ mod hand;
 mod hero;
 mod hud;
 mod jewelry;
+mod mechanics;
 mod menu;
 mod meta;
 mod minimap;
@@ -77,6 +78,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(charpanel::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
+            .add_plugins(mechanics::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()

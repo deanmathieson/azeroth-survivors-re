@@ -1,5 +1,9 @@
-//! The mode's tables: classes, abilities, passives, enemies and the wave clock. Spell ids name
-//! `Spell.dbc` rows only for their icon, name and visual chain; every number here is the mode's.
+//! The mode's tables: classes, abilities and their legendary transformations, passives, enemies
+//! and the wave clock. Spell ids name `Spell.dbc` rows only for their icon, name and visual chain;
+//! every number here is the mode's.
+
+use super::bonus::{Bonus, School, StatKey};
+use super::mechanics::{Aim, Cc, CcKind, Effect as Mech, MechanicSpec as M, Of, Trigger};
 
 /// A weapon on the hero's virtual item slots: `(slot, display, class, subclass, material, inv,
 /// sheath)`, the creature form of `UNIT_VIRTUAL_ITEM_SLOT_DISPLAY` and `_INFO`.
@@ -884,6 +888,1226 @@ pub(crate) fn ability(key: &str) -> &'static AbilityDef {
         .find(|a| a.key == key)
         .unwrap_or_else(|| panic!("survivors: no ability {key:?}"))
 }
+
+/// What an ability becomes at its top rank, the legendary card's transformation: its mechanics
+/// are granted on the hero for the rest of the run ([`super::mechanics::sync_legendaries`]).
+pub(crate) struct LegendaryDef {
+    /// The ability it transforms, by key.
+    pub ability: &'static str,
+    pub name: &'static str,
+    /// One line, for the card and the tooltip.
+    pub text: &'static str,
+    pub mechanics: &'static [M],
+    /// A real 1.12 spell: its icon on the card, its cast on the hero as the transformation takes,
+    /// and, when it and the ability both fly a missile, the missile every cast flies after.
+    pub visual_spell: u32,
+}
+
+/// The legendary of the ability `key`, if it has one (every ability does).
+pub(crate) fn legendary(key: &str) -> Option<&'static LegendaryDef> {
+    LEGENDARIES.iter().find(|l| l.ability == key)
+}
+
+const fn hit(key: &'static str) -> Trigger {
+    hit_by(key, 1.0)
+}
+
+const fn hit_by(key: &'static str, chance: f32) -> Trigger {
+    Trigger::OnHit {
+        of: Of::Ability(key),
+        chance,
+    }
+}
+
+const fn crit(key: &'static str) -> Trigger {
+    Trigger::OnCrit {
+        of: Of::Ability(key),
+        chance: 1.0,
+    }
+}
+
+const fn kill(key: &'static str) -> Trigger {
+    kill_by(key, 1.0)
+}
+
+const fn kill_by(key: &'static str, chance: f32) -> Trigger {
+    Trigger::OnKill {
+        of: Of::Ability(key),
+        chance,
+    }
+}
+
+const fn cast(key: &'static str) -> Trigger {
+    Trigger::OnCast(Of::Ability(key))
+}
+
+const fn nova(school: School, radius: f32, damage: f32, knockback: f32) -> Mech {
+    Mech::Nova {
+        school,
+        radius,
+        damage,
+        knockback,
+        cc: None,
+    }
+}
+
+const fn nova_cc(school: School, radius: f32, damage: f32, kind: CcKind, secs: f32) -> Mech {
+    Mech::Nova {
+        school,
+        radius,
+        damage,
+        knockback: 0.0,
+        cc: Some(Cc { kind, secs }),
+    }
+}
+
+const fn ground(school: School, radius: f32, dps: f32, duration: f32) -> Mech {
+    Mech::BurningGround {
+        school,
+        radius,
+        dps,
+        duration,
+    }
+}
+
+const fn dot(school: School, dps: f32, secs: f32) -> Mech {
+    Mech::Dot { school, dps, secs }
+}
+
+const fn cc(kind: CcKind, secs: f32) -> Mech {
+    Mech::ApplyCc { kind, secs }
+}
+
+const fn spread(radius: f32, n: u8) -> Aim {
+    Aim::Spread { radius, n }
+}
+
+/// Every ability's transformation, class by class as [`ABILITIES`] runs. Each is built from the
+/// shared [`super::mechanics`] effects, so none needs code of its own.
+pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
+    // --- Mage ---
+    LegendaryDef {
+        ability: "frostbolt",
+        name: "Shatterbolt",
+        text: "Bursts into three icy shards and a chilling nova where it hits.",
+        mechanics: &[
+            M::new(
+                hit("frostbolt"),
+                Mech::Split {
+                    count: 3,
+                    spread: 8.0,
+                },
+            )
+            .visual(116),
+            M::new(
+                hit("frostbolt"),
+                nova_cc(School::Frost, 3.5, 6.0, CcKind::Chill(0.5), 2.0),
+            )
+            .visual(122)
+            .cooldown(0.4),
+        ],
+        visual_spell: 122,
+    },
+    LegendaryDef {
+        ability: "fireball",
+        name: "Pyroblast",
+        text: "Swells into a Pyroblast that bursts wide and leaves the ground ablaze.",
+        mechanics: &[
+            M::new(hit("fireball"), nova(School::Fire, 4.5, 10.0, 1.5)).visual(2136),
+            M::new(hit("fireball"), ground(School::Fire, 4.0, 8.0, 4.0))
+                .visual(2120)
+                .cooldown(1.0),
+        ],
+        visual_spell: 11366,
+    },
+    LegendaryDef {
+        ability: "arcane_missiles",
+        name: "Arcane Cascade",
+        text: "Every missile arcs on to a second enemy, and kills may loose another volley.",
+        mechanics: &[
+            M::new(
+                hit("arcane_missiles"),
+                Mech::Chain {
+                    jumps: 1,
+                    falloff: 0.8,
+                },
+            )
+            .visual(7268),
+            M::new(
+                kill_by("arcane_missiles", 0.3),
+                Mech::Echo { extra_casts: 1 },
+            )
+            .cooldown(1.5),
+        ],
+        visual_spell: 12042,
+    },
+    LegendaryDef {
+        ability: "frost_nova",
+        name: "Deep Freeze",
+        text: "Pulses twice, and frozen enemies below a third of their health shatter.",
+        mechanics: &[
+            M::new(cast("frost_nova"), Mech::Echo { extra_casts: 1 }),
+            M::new(
+                hit("frost_nova"),
+                Mech::Execute {
+                    threshold: 0.33,
+                    mult: 3.0,
+                },
+            )
+            .visual(116),
+        ],
+        visual_spell: 12472,
+    },
+    LegendaryDef {
+        ability: "arcane_explosion",
+        name: "Arcane Shockwave",
+        text: "A second, wider ring of arcane force hurls the crowd back.",
+        mechanics: &[M::new(
+            cast("arcane_explosion"),
+            nova(School::Arcane, 11.0, 6.0, 4.0),
+        )
+        .at(Aim::Hero)
+        .visual(1449)],
+        visual_spell: 12043,
+    },
+    LegendaryDef {
+        ability: "blizzard",
+        name: "Endless Winter",
+        text: "A second storm follows you, freezing some of what it catches.",
+        mechanics: &[
+            M::new(cast("blizzard"), ground(School::Frost, 6.0, 6.0, 6.0))
+                .at(Aim::Follow)
+                .visual(10),
+            M::new(hit_by("blizzard", 0.1), cc(CcKind::Root, 1.5)).visual(116),
+        ],
+        visual_spell: 10,
+    },
+    LegendaryDef {
+        ability: "flamestrike",
+        name: "Twin Pillars",
+        text: "Strikes twice, and enemies it burns to death explode.",
+        mechanics: &[
+            M::new(cast("flamestrike"), Mech::Echo { extra_casts: 1 }),
+            M::new(kill("flamestrike"), nova(School::Fire, 4.0, 12.0, 1.0)).visual(2136),
+        ],
+        visual_spell: 2120,
+    },
+    LegendaryDef {
+        ability: "fire_blast",
+        name: "Combustion",
+        text: "Each blast erupts in a ring of fire; a critical blast readies all your spells.",
+        mechanics: &[
+            M::new(hit("fire_blast"), nova(School::Fire, 5.0, 12.0, 2.0)).visual(8349),
+            M::new(crit("fire_blast"), Mech::ResetCooldowns)
+                .visual(11129)
+                .cooldown(10.0),
+        ],
+        visual_spell: 11129,
+    },
+    LegendaryDef {
+        ability: "cone_of_cold",
+        name: "Polar Gale",
+        text: "Leaves a field of frost on the pack and freezes some of it solid.",
+        mechanics: &[
+            M::new(cast("cone_of_cold"), ground(School::Frost, 5.0, 5.0, 4.0))
+                .at(Aim::Densest { range: 11.0 })
+                .visual(10)
+                .cooldown(2.0),
+            M::new(hit_by("cone_of_cold", 0.3), cc(CcKind::Root, 2.0)).visual(116),
+        ],
+        visual_spell: 120,
+    },
+    LegendaryDef {
+        ability: "blast_wave",
+        name: "Firestorm",
+        text: "Hurls enemies far back and leaves a ring of flame around you.",
+        mechanics: &[
+            M::new(cast("blast_wave"), nova(School::Fire, 8.0, 0.0, 6.0)).at(Aim::Hero),
+            M::new(cast("blast_wave"), ground(School::Fire, 6.0, 7.0, 4.0))
+                .at(Aim::Hero)
+                .visual(2120),
+        ],
+        visual_spell: 8349,
+    },
+    LegendaryDef {
+        ability: "pyroblast",
+        name: "Meteor",
+        text: "Crashes down in a stunning blast and leaves the ground molten.",
+        mechanics: &[
+            M::new(
+                hit("pyroblast"),
+                nova_cc(School::Fire, 6.0, 24.0, CcKind::Stun, 1.0),
+            )
+            .visual(24340),
+            M::new(hit("pyroblast"), ground(School::Fire, 5.0, 10.0, 5.0)).visual(2120),
+        ],
+        visual_spell: 24340,
+    },
+    // --- Warrior ---
+    LegendaryDef {
+        ability: "cleave",
+        name: "Whirling Blades",
+        text: "Every few swings you whirl, cutting down everything around you.",
+        mechanics: &[
+            M::new(cast("cleave"), nova(School::Physical, 6.0, 12.0, 0.0))
+                .at(Aim::Hero)
+                .visual(1680)
+                .cooldown(1.5),
+        ],
+        visual_spell: 1680,
+    },
+    LegendaryDef {
+        ability: "heroic_strike",
+        name: "Shockwave",
+        text: "Each strike sends a shockwave through the enemies behind, and crits stun.",
+        mechanics: &[
+            M::new(hit("heroic_strike"), Mech::Pierce { n: 3 }).visual(6343),
+            M::new(crit("heroic_strike"), cc(CcKind::Stun, 1.5)).visual(12809),
+        ],
+        visual_spell: 12809,
+    },
+    LegendaryDef {
+        ability: "whirlwind",
+        name: "Bladestorm",
+        text: "You keep spinning: every Whirlwind turns three times.",
+        mechanics: &[M::new(cast("whirlwind"), Mech::Echo { extra_casts: 2 })],
+        visual_spell: 9632,
+    },
+    LegendaryDef {
+        ability: "thunder_clap",
+        name: "Earthshaker",
+        text: "An aftershock rolls out wider, and some are stunned where they stand.",
+        mechanics: &[
+            M::new(
+                cast("thunder_clap"),
+                nova_cc(School::Nature, 12.0, 6.0, CcKind::Chill(0.5), 3.0),
+            )
+            .at(Aim::Hero)
+            .visual(6343),
+            M::new(hit_by("thunder_clap", 0.25), cc(CcKind::Stun, 1.2)).visual(853),
+        ],
+        visual_spell: 19798,
+    },
+    LegendaryDef {
+        ability: "sweeping_strikes",
+        name: "Whirling Steel",
+        text: "Two blades circle you, slicing through all they cross.",
+        mechanics: &[M::new(
+            cast("sweeping_strikes"),
+            Mech::Orbit {
+                n: 2,
+                radius: 4.5,
+                duration: 4.0,
+            },
+        )
+        .visual(12292)
+        .cooldown(4.0)],
+        visual_spell: 12328,
+    },
+    LegendaryDef {
+        ability: "demoralizing_shout",
+        name: "Intimidating Roar",
+        text: "Sends some fleeing in terror and rallies you: +20% damage for 5 sec.",
+        mechanics: &[
+            M::new(hit_by("demoralizing_shout", 0.4), cc(CcKind::Fear, 2.5)).visual(1160),
+            M::new(
+                cast("demoralizing_shout"),
+                Mech::Burst {
+                    duration: 5.0,
+                    bonuses: &[Bonus::new(StatKey::Damage, 0.2)],
+                },
+            )
+            .visual(6673),
+        ],
+        visual_spell: 5246,
+    },
+    LegendaryDef {
+        ability: "execute",
+        name: "Sudden Death",
+        text: "A kill swings again at once, and wounded foes take double.",
+        mechanics: &[
+            M::new(kill("execute"), Mech::Echo { extra_casts: 1 }).cooldown(0.4),
+            M::new(
+                hit("execute"),
+                Mech::Execute {
+                    threshold: 0.5,
+                    mult: 2.0,
+                },
+            )
+            .visual(12809),
+        ],
+        visual_spell: 1719,
+    },
+    LegendaryDef {
+        ability: "mortal_strike",
+        name: "Colossus Smash",
+        text: "Splits into two more blows and leaves a deep, bleeding wound.",
+        mechanics: &[
+            M::new(
+                hit("mortal_strike"),
+                Mech::Split {
+                    count: 2,
+                    spread: 6.0,
+                },
+            )
+            .visual(12294),
+            M::new(hit("mortal_strike"), dot(School::Physical, 8.0, 6.0)).visual(772),
+        ],
+        visual_spell: 772,
+    },
+    LegendaryDef {
+        ability: "retaliation",
+        name: "Last Stand",
+        text: "Every 90 sec, a killing blow leaves you standing; each use raises a shield.",
+        mechanics: &[
+            M::new(
+                Trigger::OnLethal,
+                Mech::CheatDeath {
+                    immune: 2.0,
+                    heal_frac: 0.3,
+                },
+            )
+            .visual(12976)
+            .cooldown(90.0),
+            M::new(
+                cast("retaliation"),
+                Mech::Shield {
+                    amount: 40.0,
+                    duration: 8.0,
+                },
+            )
+            .visual(871),
+        ],
+        visual_spell: 12976,
+    },
+    // --- Rogue ---
+    LegendaryDef {
+        ability: "sinister_strike",
+        name: "Hemorrhage",
+        text: "Every strike opens a bleeding wound, and critical strikes swing again.",
+        mechanics: &[
+            M::new(hit("sinister_strike"), dot(School::Physical, 5.0, 6.0)).visual(16511),
+            M::new(crit("sinister_strike"), Mech::Echo { extra_casts: 1 }).cooldown(0.5),
+        ],
+        visual_spell: 16511,
+    },
+    LegendaryDef {
+        ability: "eviscerate",
+        name: "Coup de Grace",
+        text: "Wounded foes take it three times over, and kills hurl blades at two more.",
+        mechanics: &[
+            M::new(
+                hit("eviscerate"),
+                Mech::Execute {
+                    threshold: 0.35,
+                    mult: 3.0,
+                },
+            )
+            .visual(2098),
+            M::new(
+                kill("eviscerate"),
+                Mech::Split {
+                    count: 2,
+                    spread: 8.0,
+                },
+            )
+            .visual(2098),
+        ],
+        visual_spell: 14177,
+    },
+    LegendaryDef {
+        ability: "blade_flurry",
+        name: "Blade Dance",
+        text: "Three blades keep whirling around you after each flurry.",
+        mechanics: &[M::new(
+            cast("blade_flurry"),
+            Mech::Orbit {
+                n: 3,
+                radius: 5.0,
+                duration: 2.5,
+            },
+        )
+        .visual(13877)
+        .cooldown(2.5)],
+        visual_spell: 13750,
+    },
+    LegendaryDef {
+        ability: "rupture",
+        name: "Crimson Tempest",
+        text: "Each rupture tears open the two enemies nearest its victim too.",
+        mechanics: &[M::new(hit("rupture"), dot(School::Physical, 5.0, 6.0))
+            .at(spread(6.0, 2))
+            .visual(1943)],
+        visual_spell: 703,
+    },
+    LegendaryDef {
+        ability: "gouge",
+        name: "Blinding Powder",
+        text: "Gouged enemies, and the two beside them, stagger off blind.",
+        mechanics: &[
+            M::new(hit("gouge"), cc(CcKind::Fear, 3.0)).visual(1776),
+            M::new(hit("gouge"), cc(CcKind::Fear, 3.0))
+                .at(spread(5.0, 2))
+                .visual(1776),
+        ],
+        visual_spell: 2094,
+    },
+    LegendaryDef {
+        ability: "kidney_shot",
+        name: "Crippling Blow",
+        text: "The stun ripples out to everything around the target.",
+        mechanics: &[M::new(
+            hit("kidney_shot"),
+            nova_cc(School::Physical, 5.0, 8.0, CcKind::Stun, 1.5),
+        )
+        .visual(1833)],
+        visual_spell: 1833,
+    },
+    // --- Priest ---
+    LegendaryDef {
+        ability: "smite",
+        name: "Chastise",
+        text: "Holy light leaps on to two more enemies, and kills restore your health.",
+        mechanics: &[
+            M::new(
+                hit("smite"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.8,
+                },
+            )
+            .visual(585),
+            M::new(
+                kill("smite"),
+                Mech::HealPulse {
+                    radius: 10.0,
+                    amount: 4.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(635)
+            .cooldown(1.0),
+        ],
+        visual_spell: 10060,
+    },
+    LegendaryDef {
+        ability: "shadow_word_pain",
+        name: "Vampiric Plague",
+        text: "Pain spreads to the two nearest enemies, and its victims feed you.",
+        mechanics: &[
+            M::new(hit("shadow_word_pain"), dot(School::Shadow, 4.0, 9.0))
+                .at(spread(6.0, 2))
+                .visual(589),
+            M::new(
+                hit_by("shadow_word_pain", 0.25),
+                Mech::HealPulse {
+                    radius: 12.0,
+                    amount: 3.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(15286)
+            .cooldown(1.0),
+        ],
+        visual_spell: 15286,
+    },
+    LegendaryDef {
+        ability: "holy_fire",
+        name: "Searing Light",
+        text: "Sets the ground ablaze with holy fire where it strikes.",
+        mechanics: &[
+            M::new(hit("holy_fire"), ground(School::Holy, 4.0, 7.0, 4.0))
+                .visual(26573)
+                .cooldown(1.0),
+        ],
+        visual_spell: 14914,
+    },
+    LegendaryDef {
+        ability: "mind_blast",
+        name: "Mind Shatter",
+        text: "Shatters into three lesser blasts, and may send its victim fleeing.",
+        mechanics: &[
+            M::new(
+                hit("mind_blast"),
+                Mech::Split {
+                    count: 3,
+                    spread: 8.0,
+                },
+            )
+            .visual(8092),
+            M::new(hit_by("mind_blast", 0.5), cc(CcKind::Fear, 1.5)).visual(5782),
+        ],
+        visual_spell: 15473,
+    },
+    LegendaryDef {
+        ability: "holy_nova",
+        name: "Divine Hymn",
+        text: "Rings out twice, and heals your party as it does.",
+        mechanics: &[
+            M::new(cast("holy_nova"), Mech::Echo { extra_casts: 1 }),
+            M::new(
+                cast("holy_nova"),
+                Mech::HealPulse {
+                    radius: 15.0,
+                    amount: 5.0,
+                },
+            )
+            .at(Aim::Hero),
+        ],
+        visual_spell: 724,
+    },
+    LegendaryDef {
+        ability: "psychic_scream",
+        name: "Psychic Horror",
+        text: "The scream hurls enemies back and leaves their minds bleeding.",
+        mechanics: &[
+            M::new(cast("psychic_scream"), nova(School::Shadow, 8.0, 10.0, 4.0)).at(Aim::Hero),
+            M::new(hit("psychic_scream"), dot(School::Shadow, 5.0, 6.0)).visual(589),
+        ],
+        visual_spell: 15407,
+    },
+    LegendaryDef {
+        ability: "power_word_shield",
+        name: "Guardian Spirit",
+        text: "Every 2 min, a killing blow leaves you standing; each shield heals your party.",
+        mechanics: &[
+            M::new(
+                Trigger::OnLethal,
+                Mech::CheatDeath {
+                    immune: 3.0,
+                    heal_frac: 0.4,
+                },
+            )
+            .visual(6346)
+            .cooldown(120.0),
+            M::new(
+                cast("power_word_shield"),
+                Mech::HealPulse {
+                    radius: 15.0,
+                    amount: 10.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(635),
+        ],
+        visual_spell: 6346,
+    },
+    // --- Warlock ---
+    LegendaryDef {
+        ability: "shadow_bolt",
+        name: "Corrupting Bolt",
+        text: "Corrupts its victim and spreads Corruption to the three enemies nearest it.",
+        mechanics: &[
+            M::new(hit("shadow_bolt"), dot(School::Shadow, 4.0, 10.0)).visual(172),
+            M::new(hit("shadow_bolt"), dot(School::Shadow, 4.0, 10.0))
+                .at(spread(6.0, 3))
+                .visual(172),
+        ],
+        visual_spell: 172,
+    },
+    LegendaryDef {
+        ability: "corruption",
+        name: "Seed of Corruption",
+        text: "Some victims burst at once, blasting shadow into their neighbours.",
+        mechanics: &[M::new(
+            hit_by("corruption", 0.3),
+            nova(School::Shadow, 5.0, 12.0, 0.0),
+        )
+        .visual(17877)],
+        visual_spell: 18265,
+    },
+    LegendaryDef {
+        ability: "curse_of_agony",
+        name: "Curse of Doom",
+        text: "Some victims are marked for doom: a second, crushing curse.",
+        mechanics: &[M::new(
+            hit_by("curse_of_agony", 0.25),
+            dot(School::Shadow, 10.0, 6.0),
+        )
+        .visual(603)],
+        visual_spell: 603,
+    },
+    LegendaryDef {
+        ability: "immolate",
+        name: "Conflagrate",
+        text: "Leaves the ground burning, and critical hits detonate in a fiery blast.",
+        mechanics: &[
+            M::new(hit("immolate"), ground(School::Fire, 3.5, 6.0, 4.0))
+                .visual(5740)
+                .cooldown(1.0),
+            M::new(crit("immolate"), nova(School::Fire, 5.0, 16.0, 1.0)).visual(17962),
+        ],
+        visual_spell: 17962,
+    },
+    LegendaryDef {
+        ability: "rain_of_fire",
+        name: "Hellstorm",
+        text: "A second rain of fire follows you wherever you go.",
+        mechanics: &[
+            M::new(cast("rain_of_fire"), ground(School::Fire, 7.0, 7.0, 6.0))
+                .at(Aim::Follow)
+                .visual(5740),
+        ],
+        visual_spell: 1122,
+    },
+    LegendaryDef {
+        ability: "hellfire",
+        name: "Infernal Aura",
+        text: "Anything that dies in the flames explodes.",
+        mechanics: &[M::new(kill("hellfire"), nova(School::Fire, 4.0, 12.0, 1.5)).visual(5857)],
+        visual_spell: 706,
+    },
+    LegendaryDef {
+        ability: "death_coil",
+        name: "Soul Siphon",
+        text: "Bounces through three more enemies, draining each.",
+        mechanics: &[M::new(
+            hit("death_coil"),
+            Mech::Chain {
+                jumps: 3,
+                falloff: 0.85,
+            },
+        )
+        .visual(6789)],
+        visual_spell: 18708,
+    },
+    LegendaryDef {
+        ability: "searing_pain",
+        name: "Soul Fire",
+        text: "Burns straight through the two enemies behind its target.",
+        mechanics: &[M::new(hit("searing_pain"), Mech::Pierce { n: 2 }).visual(5676)],
+        visual_spell: 6353,
+    },
+    LegendaryDef {
+        ability: "shadowburn",
+        name: "Soul Harvest",
+        text: "Kills shatter into shards that seek out three more; the wounded take double.",
+        mechanics: &[
+            M::new(
+                kill("shadowburn"),
+                Mech::Split {
+                    count: 3,
+                    spread: 10.0,
+                },
+            )
+            .visual(17877),
+            M::new(
+                hit("shadowburn"),
+                Mech::Execute {
+                    threshold: 0.3,
+                    mult: 2.0,
+                },
+            )
+            .visual(17877),
+        ],
+        visual_spell: 1120,
+    },
+    // --- Hunter ---
+    LegendaryDef {
+        ability: "arcane_shot",
+        name: "Arcane Lance",
+        text: "Lances through up to three enemies behind its target.",
+        mechanics: &[M::new(hit("arcane_shot"), Mech::Pierce { n: 3 }).visual(3044)],
+        visual_spell: 19506,
+    },
+    LegendaryDef {
+        ability: "multi_shot",
+        name: "Volley",
+        text: "Arcane arrows, and every few seconds a volley rains on the thickest pack.",
+        mechanics: &[
+            M::new(cast("multi_shot"), ground(School::Arcane, 6.0, 8.0, 3.0))
+                .at(Aim::Densest { range: 26.0 })
+                .visual(1510)
+                .cooldown(4.0),
+        ],
+        visual_spell: 1510,
+    },
+    LegendaryDef {
+        ability: "serpent_sting",
+        name: "Wyvern Venom",
+        text: "Venom spreads to the two nearest enemies, and some victims fall asleep.",
+        mechanics: &[
+            M::new(hit("serpent_sting"), dot(School::Nature, 4.0, 9.0))
+                .at(spread(6.0, 2))
+                .visual(1978),
+            M::new(hit_by("serpent_sting", 0.2), cc(CcKind::Stun, 2.0)).visual(24131),
+        ],
+        visual_spell: 19386,
+    },
+    LegendaryDef {
+        ability: "volley",
+        name: "Arrow Storm",
+        text: "Rains twice, pinning some of what it strikes.",
+        mechanics: &[
+            M::new(cast("volley"), Mech::Echo { extra_casts: 1 }),
+            M::new(hit_by("volley", 0.08), cc(CcKind::Root, 1.5)).visual(1510),
+        ],
+        visual_spell: 3045,
+    },
+    LegendaryDef {
+        ability: "explosive_trap",
+        name: "Immolation Trap",
+        text: "Leaves the ground burning where it goes off.",
+        mechanics: &[
+            M::new(hit("explosive_trap"), ground(School::Fire, 5.0, 7.0, 5.0))
+                .visual(2120)
+                .cooldown(1.0),
+        ],
+        visual_spell: 13795,
+    },
+    LegendaryDef {
+        ability: "concussive_shot",
+        name: "Scatter Shot",
+        text: "Ricochets through two more enemies, and may daze its victim.",
+        mechanics: &[
+            M::new(
+                hit("concussive_shot"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.8,
+                },
+            )
+            .visual(5116),
+            M::new(hit_by("concussive_shot", 0.3), cc(CcKind::Stun, 1.0)).visual(19503),
+        ],
+        visual_spell: 19503,
+    },
+    LegendaryDef {
+        ability: "aimed_shot",
+        name: "Kill Shot",
+        text: "Punches through four behind, and wounded targets take it three times over.",
+        mechanics: &[
+            M::new(hit("aimed_shot"), Mech::Pierce { n: 4 }).visual(19434),
+            M::new(
+                hit("aimed_shot"),
+                Mech::Execute {
+                    threshold: 0.3,
+                    mult: 3.0,
+                },
+            )
+            .visual(19434),
+        ],
+        visual_spell: 19574,
+    },
+    // --- Shaman ---
+    LegendaryDef {
+        ability: "lightning_bolt",
+        name: "Elemental Overload",
+        text: "Bolts may strike twice, and critical bolts fork to two more enemies.",
+        mechanics: &[
+            M::new(
+                hit_by("lightning_bolt", 0.35),
+                Mech::Echo { extra_casts: 1 },
+            )
+            .cooldown(0.6),
+            M::new(
+                crit("lightning_bolt"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.75,
+                },
+            )
+            .visual(421),
+        ],
+        visual_spell: 16166,
+    },
+    LegendaryDef {
+        ability: "chain_lightning",
+        name: "Storm Lash",
+        text: "Every link sparks one more jump, and some of them stun.",
+        mechanics: &[
+            M::new(
+                hit("chain_lightning"),
+                Mech::Chain {
+                    jumps: 1,
+                    falloff: 0.8,
+                },
+            )
+            .visual(421),
+            M::new(hit_by("chain_lightning", 0.25), cc(CcKind::Stun, 1.2)).visual(853),
+        ],
+        visual_spell: 17364,
+    },
+    LegendaryDef {
+        ability: "earth_shock",
+        name: "Earthquake",
+        text: "Each shock cracks the ground, briefly stunning everything around.",
+        mechanics: &[M::new(
+            hit("earth_shock"),
+            nova_cc(School::Nature, 5.0, 10.0, CcKind::Stun, 0.8),
+        )
+        .visual(8042)],
+        visual_spell: 19798,
+    },
+    LegendaryDef {
+        ability: "flame_shock",
+        name: "Lava Burst",
+        text: "Leaves pools of lava where it strikes, and critical shocks erupt.",
+        mechanics: &[
+            M::new(hit("flame_shock"), ground(School::Fire, 3.5, 7.0, 4.0))
+                .visual(5740)
+                .cooldown(1.0),
+            M::new(crit("flame_shock"), nova(School::Fire, 4.0, 14.0, 1.0)).visual(8349),
+        ],
+        visual_spell: 8050,
+    },
+    LegendaryDef {
+        ability: "frost_shock",
+        name: "Glacial Shock",
+        text: "Splits into two icy shards and may freeze its victim solid.",
+        mechanics: &[
+            M::new(
+                hit("frost_shock"),
+                Mech::Split {
+                    count: 2,
+                    spread: 8.0,
+                },
+            )
+            .visual(8056),
+            M::new(hit_by("frost_shock", 0.3), cc(CcKind::Root, 2.0)).visual(8056),
+        ],
+        visual_spell: 8056,
+    },
+    LegendaryDef {
+        ability: "searing_totem",
+        name: "Totemic Fury",
+        text: "The totem's bolts split on impact into two more.",
+        mechanics: &[M::new(
+            hit("searing_totem"),
+            Mech::Split {
+                count: 2,
+                spread: 6.0,
+            },
+        )
+        .visual(3606)],
+        visual_spell: 1535,
+    },
+    LegendaryDef {
+        ability: "magma_totem",
+        name: "Molten Core",
+        text: "Its pulses leave pools of lava and set some enemies burning.",
+        mechanics: &[
+            M::new(hit("magma_totem"), ground(School::Fire, 4.0, 6.0, 4.0))
+                .visual(5740)
+                .cooldown(2.0),
+            M::new(hit_by("magma_totem", 0.3), dot(School::Fire, 4.0, 4.0)).visual(348),
+        ],
+        visual_spell: 8187,
+    },
+    LegendaryDef {
+        ability: "lightning_shield",
+        name: "Static Charge",
+        text: "Each zap arcs to two more, and falling low unleashes a stunning discharge.",
+        mechanics: &[
+            M::new(
+                hit("lightning_shield"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.75,
+                },
+            )
+            .visual(403),
+            M::new(
+                Trigger::OnLowHealth { threshold: 0.35 },
+                Mech::Nova {
+                    school: School::Nature,
+                    radius: 8.0,
+                    damage: 20.0,
+                    knockback: 6.0,
+                    cc: Some(Cc {
+                        kind: CcKind::Stun,
+                        secs: 1.5,
+                    }),
+                },
+            )
+            .at(Aim::Hero)
+            .visual(421)
+            .cooldown(20.0),
+        ],
+        visual_spell: 324,
+    },
+    // --- Paladin ---
+    LegendaryDef {
+        ability: "hammer_of_wrath",
+        name: "Avenger's Hammer",
+        text: "Hammers fly back to you, striking everything on the way.",
+        mechanics: &[M::new(hit("hammer_of_wrath"), Mech::Boomerang).visual(24275)],
+        visual_spell: 1022,
+    },
+    LegendaryDef {
+        ability: "consecration",
+        name: "Hallowed Ground",
+        text: "A second consecration moves with you, burning wherever you walk.",
+        mechanics: &[
+            M::new(cast("consecration"), ground(School::Holy, 7.0, 6.0, 8.0))
+                .at(Aim::Follow)
+                .visual(26573),
+        ],
+        visual_spell: 26573,
+    },
+    LegendaryDef {
+        ability: "holy_shock",
+        name: "Radiant Shock",
+        text: "Arcs on to another enemy, and every shock heals your party.",
+        mechanics: &[
+            M::new(
+                hit("holy_shock"),
+                Mech::Chain {
+                    jumps: 1,
+                    falloff: 0.8,
+                },
+            )
+            .visual(25912),
+            M::new(
+                cast("holy_shock"),
+                Mech::HealPulse {
+                    radius: 15.0,
+                    amount: 6.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(635),
+        ],
+        visual_spell: 635,
+    },
+    LegendaryDef {
+        ability: "exorcism",
+        name: "Purifying Light",
+        text: "Detonates in a holy blast that stuns everything near the target.",
+        mechanics: &[M::new(
+            hit("exorcism"),
+            nova_cc(School::Holy, 6.0, 16.0, CcKind::Stun, 1.0),
+        )
+        .visual(2812)],
+        visual_spell: 2878,
+    },
+    LegendaryDef {
+        ability: "holy_wrath",
+        name: "Avenging Wrath",
+        text: "Each wrath fills you with fury, +25% damage for 5 sec, and may stun.",
+        mechanics: &[
+            M::new(
+                cast("holy_wrath"),
+                Mech::Burst {
+                    duration: 5.0,
+                    bonuses: &[Bonus::new(StatKey::Damage, 0.25)],
+                },
+            )
+            .visual(20216),
+            M::new(hit_by("holy_wrath", 0.15), cc(CcKind::Stun, 1.0)).visual(853),
+        ],
+        visual_spell: 20216,
+    },
+    LegendaryDef {
+        ability: "hammer_of_justice",
+        name: "Righteous Hammers",
+        text: "Splits into three more hammers, each one stunning.",
+        mechanics: &[M::new(
+            hit("hammer_of_justice"),
+            Mech::Split {
+                count: 3,
+                spread: 8.0,
+            },
+        )
+        .visual(853)],
+        visual_spell: 853,
+    },
+    LegendaryDef {
+        ability: "divine_shield",
+        name: "Divine Intervention",
+        text: "Every 90 sec, a killing blow leaves you standing; each shield heals you.",
+        mechanics: &[
+            M::new(
+                Trigger::OnLethal,
+                Mech::CheatDeath {
+                    immune: 3.0,
+                    heal_frac: 0.5,
+                },
+            )
+            .visual(642)
+            .cooldown(90.0),
+            M::new(
+                cast("divine_shield"),
+                Mech::HealPulse {
+                    radius: 12.0,
+                    amount: 25.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(635),
+        ],
+        visual_spell: 19752,
+    },
+    LegendaryDef {
+        ability: "judgement",
+        name: "Judgement of Command",
+        text: "Arcs on to two more enemies, and wounded foes take double.",
+        mechanics: &[
+            M::new(
+                hit("judgement"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.85,
+                },
+            )
+            .visual(20271),
+            M::new(
+                hit("judgement"),
+                Mech::Execute {
+                    threshold: 0.3,
+                    mult: 2.0,
+                },
+            )
+            .visual(20271),
+        ],
+        visual_spell: 20375,
+    },
+    // --- Druid ---
+    LegendaryDef {
+        ability: "wrath",
+        name: "Wrath of Cenarius",
+        text: "Bursts into three motes of nature on impact.",
+        mechanics: &[M::new(
+            hit("wrath"),
+            Mech::Split {
+                count: 3,
+                spread: 8.0,
+            },
+        )
+        .visual(5176)],
+        visual_spell: 29166,
+    },
+    LegendaryDef {
+        ability: "moonfire",
+        name: "Starfall",
+        text: "Stars rain down around you wherever you go, and moonfire calls more down.",
+        mechanics: &[
+            M::new(
+                Trigger::Periodic { every: 8.0 },
+                ground(School::Arcane, 8.0, 8.0, 7.0),
+            )
+            .at(Aim::Follow)
+            .visual(20687),
+            M::new(hit_by("moonfire", 0.3), nova(School::Arcane, 3.0, 8.0, 0.0))
+                .at(Aim::Random { range: 14.0 })
+                .visual(2912),
+        ],
+        visual_spell: 20687,
+    },
+    LegendaryDef {
+        ability: "starfire",
+        name: "Eclipse",
+        text: "Explodes in a stunning starburst; critical hits empower you, +30% damage for 6 sec.",
+        mechanics: &[
+            M::new(
+                hit("starfire"),
+                Mech::Nova {
+                    school: School::Arcane,
+                    radius: 5.0,
+                    damage: 14.0,
+                    knockback: 2.0,
+                    cc: Some(Cc {
+                        kind: CcKind::Stun,
+                        secs: 1.0,
+                    }),
+                },
+            )
+            .visual(2912),
+            M::new(
+                crit("starfire"),
+                Mech::Burst {
+                    duration: 6.0,
+                    bonuses: &[Bonus::new(StatKey::Damage, 0.3)],
+                },
+            )
+            .visual(24858),
+        ],
+        visual_spell: 24858,
+    },
+    LegendaryDef {
+        ability: "hurricane",
+        name: "Tempest",
+        text: "Whirls up a second storm, and its gusts may stun what they catch.",
+        mechanics: &[
+            M::new(cast("hurricane"), Mech::Echo { extra_casts: 1 }),
+            M::new(hit_by("hurricane", 0.1), cc(CcKind::Stun, 1.0)).visual(16914),
+        ],
+        visual_spell: 16914,
+    },
+    LegendaryDef {
+        ability: "insect_swarm",
+        name: "Locust Swarm",
+        text: "Each swarm spreads to the three enemies nearest its victim.",
+        mechanics: &[M::new(hit("insect_swarm"), dot(School::Nature, 4.0, 10.0))
+            .at(spread(6.0, 3))
+            .visual(5570)],
+        visual_spell: 5570,
+    },
+    LegendaryDef {
+        ability: "entangling_roots",
+        name: "Nature's Grasp",
+        text: "Roots spread to the two beside each victim and crush all they hold.",
+        mechanics: &[
+            M::new(hit("entangling_roots"), cc(CcKind::Root, 3.0))
+                .at(spread(5.0, 2))
+                .visual(16689),
+            M::new(hit("entangling_roots"), dot(School::Nature, 5.0, 5.0)).visual(16689),
+        ],
+        visual_spell: 16689,
+    },
+    LegendaryDef {
+        ability: "thorns",
+        name: "Barkskin",
+        text: "Thorns also shields you, and falling low hardens your skin.",
+        mechanics: &[
+            M::new(
+                cast("thorns"),
+                Mech::Shield {
+                    amount: 30.0,
+                    duration: 15.0,
+                },
+            )
+            .visual(22812),
+            M::new(
+                Trigger::OnLowHealth { threshold: 0.4 },
+                Mech::Burst {
+                    duration: 6.0,
+                    bonuses: &[Bonus::new(StatKey::Armor, 0.3)],
+                },
+            )
+            .visual(20655)
+            .cooldown(20.0),
+        ],
+        visual_spell: 22812,
+    },
+    LegendaryDef {
+        ability: "rejuvenation",
+        name: "Tranquility",
+        text: "Heals your whole party, and falling low calls a great surge of healing.",
+        mechanics: &[
+            M::new(
+                cast("rejuvenation"),
+                Mech::HealPulse {
+                    radius: 20.0,
+                    amount: 15.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(774),
+            M::new(
+                Trigger::OnLowHealth { threshold: 0.3 },
+                Mech::HealPulse {
+                    radius: 20.0,
+                    amount: 40.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(740)
+            .cooldown(45.0),
+        ],
+        visual_spell: 740,
+    },
+];
 
 pub(crate) const MAX_ABILITY_LEVEL: u8 = 8;
 pub(crate) const MAX_PASSIVE_LEVEL: u8 = 5;

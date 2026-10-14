@@ -113,6 +113,8 @@ pub(super) struct HeroState {
     /// The rings, trinkets and necklace this hero found this run, and its jewelry choices left
     /// ([`jewelry`]); what they grant is already in `bonuses`.
     pub(super) jewelry: jewelry::Jewelry,
+    /// What legendaries, talents and jewelry have granted this hero ([`super::mechanics`]).
+    pub mechanics: super::mechanics::Mechanics,
 }
 
 impl Default for HeroState {
@@ -145,6 +147,7 @@ impl Default for HeroState {
             healing_done: 0.0,
             damage_taken: 0.0,
             jewelry: jewelry::Jewelry::default(),
+            mechanics: Default::default(),
         }
     }
 }
