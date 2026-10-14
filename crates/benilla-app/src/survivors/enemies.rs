@@ -90,8 +90,10 @@ pub(super) enum GemKind {
 
 #[derive(Component)]
 pub(super) struct Gem {
-    kind: GemKind,
-    pulled: bool,
+    /// Read by the rewards companion, which fetches only experience and coins.
+    pub(super) kind: GemKind,
+    /// Flying to the hero; the companion sets it to send a fetched pickup on its way.
+    pub(super) pulled: bool,
     speed: f32,
 }
 
