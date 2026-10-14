@@ -19,6 +19,32 @@ Status: planned. It starts after wave 3 (talents, gear, achievements and rewards
 - **Enemies** chase the nearest living hero. Enemy count and health scale with party size (×1.0 / 1.6 / 2.2 / 2.8 health and density for 1–4 players).
 - **Rewards:** each player's own profile records the run (talent XP, achievements, loot drops for their own class).
 
+## Roles: tanks, healers and damage
+
+Co-op should support real party roles, chosen through class and build:
+
+- **Healers** (Priest, Paladin, Druid, Shaman):
+  - Heal spells and shields go to an ally, aimed at the most-injured hero in range. Examples: Renew, Power Word: Shield, Prayer of Healing, Holy Light, Rejuvenation, Chain Heal.
+  - Healing totems and auras heal every hero inside their area.
+  - A downed ally can be revived faster by a healer.
+  - Healing done earns XP and shows on the results screen.
+- **Tanks** (Warrior, Paladin, Druid):
+  - Enemies pick their target by threat, not just distance. A hero's threat score is its threat multiplier divided by the distance.
+  - Stances and forms raise the multiplier (Defensive Stance, Righteous Fury, Bear Form).
+  - Taunts force nearby enemies onto the tank for a few seconds (Taunt, Growl, Righteous Defense).
+  - Tank builds lean on armor, health and damage reduction.
+  - Damage taken shows on the results screen.
+- **Damage:** every class, and the default for solo play.
+- **Cards and talents:**
+  - In co-op, role cards join the level-up pool. Examples: "your heals also hit the lowest-health ally", "+threat, +armor", "taunt on your mobility spell".
+  - Solo play never offers ally-only cards.
+- **Results:** each player's damage done, healing done and damage taken.
+
+Groundwork seams (milestone 1):
+- Heals and shields go through `party::heal`/`party::shield` with a target-selection fn. In solo, that target is the caster.
+- Enemy targeting goes through `party::pick_target` with a per-hero `threat` field and an optional forced target. In solo, that's the nearest hero.
+- Each hero tracks `healing_done` and `damage_taken`.
+
 ## Architecture
 
 1. **Split `Run`.**
