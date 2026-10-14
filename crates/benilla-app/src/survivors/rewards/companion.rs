@@ -15,6 +15,7 @@ use super::super::profile::Profile;
 use super::super::units::{self, flat, yaw_toward, UnitSpec};
 use super::super::{HeroState, LocalHero, Phase, Run};
 use super::perks;
+use super::save::RewardsSave;
 use crate::creature_anim::{move_flags, MovementState};
 
 /// One look the companion can wear.
@@ -69,9 +70,51 @@ pub(in crate::survivors) static LOOKS: &[Look] = &[
     },
 ];
 
+/// Looks earned elsewhere, offered once their display is in [`RewardsSave::unlocked_looks`]: the
+/// quest chains' rewards ([`crate::survivors::quests`]). Checked as [`LOOKS`] are.
+pub(in crate::survivors) static EARNED_LOOKS: &[Look] = &[
+    // `Creature\snake\snake.mdx`, black, the Black Kingsnake's.
+    Look {
+        key: "black_kingsnake",
+        name: "Black Kingsnake",
+        display: 1206,
+        scale: 1.8,
+    },
+    // `Creature\cockroach\Cockroach.mdx`.
+    Look {
+        key: "undercity_cockroach",
+        name: "Undercity Cockroach",
+        display: 2177,
+        scale: 2.4,
+    },
+    // `Creature\DragonWhelp\DragonWhelp.mdx`, green, display scale 0.5.
+    Look {
+        key: "emerald_whelpling",
+        name: "Emerald Whelpling",
+        display: 6291,
+        scale: 0.9,
+    },
+];
+
+/// Every look, [`LOOKS`] then [`EARNED_LOOKS`]: what [`super::RewardsAction::Look`] indexes.
+pub(in crate::survivors) fn all_looks() -> impl Iterator<Item = &'static Look> {
+    LOOKS.iter().chain(EARNED_LOOKS)
+}
+
+/// Whether `save` may dress the companion in `look`: a starting look always, an earned one once
+/// unlocked.
+pub(in crate::survivors) fn offered(look: &Look, save: &RewardsSave) -> bool {
+    LOOKS.iter().any(|l| l.key == look.key) || save.unlocked_looks.contains(&look.display)
+}
+
+/// The earned look wearing `display`.
+pub(in crate::survivors) fn earned_look(display: u32) -> Option<&'static Look> {
+    EARNED_LOOKS.iter().find(|l| l.display == display)
+}
+
 /// The look `key` names; empty or unknown is the first.
 pub(in crate::survivors) fn look_for(key: &str) -> &'static Look {
-    LOOKS.iter().find(|l| l.key == key).unwrap_or(&LOOKS[0])
+    all_looks().find(|l| l.key == key).unwrap_or(&LOOKS[0])
 }
 
 /// Seconds between fetches.

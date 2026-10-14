@@ -19,7 +19,7 @@ use super::profile::Profile;
 use super::{HeroState, LocalHero, Phase};
 use crate::glue::GlueClicks;
 
-pub(super) use companion::{look_for, FETCH_EVERY, FETCH_REACH, LOOKS};
+pub(super) use companion::{all_looks, earned_look, look_for, offered, FETCH_EVERY, FETCH_REACH};
 pub(super) use perks::{companion_unlocked, Perk, PerkSession, PERKS};
 pub(super) use save::RewardsSave;
 
@@ -85,7 +85,7 @@ pub(super) enum RewardsAction {
     Refund(usize),
     /// Refund every rank.
     Reset,
-    /// Dress the companion in [`LOOKS`]`[i]`.
+    /// Dress the companion in the `i`th of [`all_looks`], if it is offered.
     Look(usize),
 }
 
@@ -153,8 +153,12 @@ fn act(
             .get(i)
             .is_some_and(|perk| session.refund(save, perk).is_some()),
         RewardsAction::Reset => session.reset(save).is_some(),
-        RewardsAction::Look(i) => match LOOKS.get(i) {
-            Some(look) if companion_unlocked(save) && look_for(&save.companion).key != look.key => {
+        RewardsAction::Look(i) => match all_looks().nth(i) {
+            Some(look)
+                if companion_unlocked(save)
+                    && offered(look, save)
+                    && look_for(&save.companion).key != look.key =>
+            {
                 save.companion = look.key.into();
                 true
             }
@@ -208,12 +212,20 @@ mod tests {
             25
         ));
         assert!(act(RewardsAction::Look(2), &mut save, &mut session, 0));
-        assert_eq!(save.companion, LOOKS[2].key);
+        assert_eq!(save.companion, super::companion::LOOKS[2].key);
         assert!(
             !act(RewardsAction::Look(2), &mut save, &mut session, 0),
             "already worn"
         );
         assert!(!act(RewardsAction::Look(99), &mut save, &mut session, 0));
+        // A quest chain's look is offered once its chain unlocked it.
+        let snake = all_looks()
+            .position(|l| l.key == "black_kingsnake")
+            .unwrap();
+        assert!(!act(RewardsAction::Look(snake), &mut save, &mut session, 0));
+        save.unlocked_looks.insert(1206);
+        assert!(act(RewardsAction::Look(snake), &mut save, &mut session, 0));
+        assert_eq!(look_for(&save.companion).display, 1206);
         assert!(act(
             RewardsAction::Refund(companion),
             &mut save,

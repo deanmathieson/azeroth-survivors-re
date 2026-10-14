@@ -351,6 +351,8 @@ mod tests {
             damage: 1.0,
             gold: 0,
             reward_mult,
+            quests: 0,
+            final_boss: false,
         }
     }
 

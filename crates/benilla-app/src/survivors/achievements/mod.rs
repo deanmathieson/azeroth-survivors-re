@@ -100,6 +100,8 @@ mod tests {
             damage: 2_000_000.0,
             gold: 200,
             reward_mult: 1.0,
+            quests: 0,
+            final_boss: false,
         };
         let mut profile = Profile::default();
         profile.account.runs = 6;

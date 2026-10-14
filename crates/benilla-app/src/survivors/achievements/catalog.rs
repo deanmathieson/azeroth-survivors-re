@@ -510,6 +510,8 @@ mod tests {
             damage: 1_000.0,
             gold: 20,
             reward_mult: 1.0,
+            quests: 0,
+            final_boss: false,
         }
     }
 
