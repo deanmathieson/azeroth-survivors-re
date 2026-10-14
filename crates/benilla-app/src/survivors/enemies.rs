@@ -68,6 +68,8 @@ pub(super) struct Loot {
     pub xp: u32,
     pub boss: bool,
     pub elite: bool,
+    /// What died: a boss's name is its place in the roster, which gear drops by.
+    pub def: &'static EnemyDef,
 }
 
 /// What a spawn walks out as.
