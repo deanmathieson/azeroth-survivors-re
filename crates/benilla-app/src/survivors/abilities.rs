@@ -5,9 +5,10 @@
 use bevy::prelude::*;
 
 use super::bonus::School;
-use super::data::{AbilityDef, Effect, Kind};
+use super::data::{self, AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
 use super::hero::{self, Hero};
+use super::mechanics::{Proc, ProcKind, Procs};
 use super::party;
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{HeroState, Rng, Run, RunEntity, Stats};
@@ -29,6 +30,18 @@ pub(super) struct Hit {
     pub color: u32,
     /// The hero it comes from: its damage, lifesteal and drain are that hero's.
     pub source: Entity,
+    /// What dealt it, for the mechanics it may set off.
+    pub origin: Origin,
+}
+
+/// What dealt a blow. Only an ability's own blows set off its hero's mechanics
+/// ([`super::mechanics`]): a splash, a mechanic's blow or anything else sets off nothing, so
+/// procs never cascade.
+#[derive(Clone, Copy)]
+pub(super) enum Origin {
+    Ability(&'static AbilityDef),
+    Mechanic,
+    Other,
 }
 
 impl Hit {
@@ -45,6 +58,7 @@ impl Hit {
             crit,
             color: COLOR_MELEE,
             source,
+            origin: Origin::Other,
         }
     }
 }
@@ -69,6 +83,28 @@ pub(super) struct GroundArea {
     impact: u32,
     /// The hero who cast it, whose crits and credit its ticks are.
     owner: Entity,
+    origin: Origin,
+}
+
+impl GroundArea {
+    /// Ground a mechanic leaves burning: `dps` a second to whatever stands within `radius`, for
+    /// `secs`, the first tick at once.
+    pub(super) fn burning(owner: Entity, dps: f32, radius: f32, secs: f32) -> Self {
+        Self {
+            damage: dps,
+            dot: 0.0,
+            dot_dur: 0.0,
+            radius,
+            left: secs,
+            every: 1.0,
+            next_tick: 0.0,
+            effect: Effect::None,
+            mark: 0,
+            impact: 0,
+            owner,
+            origin: Origin::Mechanic,
+        }
+    }
 }
 
 #[derive(Component)]
@@ -82,6 +118,7 @@ pub(super) struct Totem {
     pulse: bool,
     /// The hero who set it down, whose crits and credit its blows are.
     owner: Entity,
+    ability: &'static AbilityDef,
 }
 
 #[derive(Clone, Copy)]
@@ -120,7 +157,7 @@ fn mark_secs(def: &AbilityDef, duration: f32) -> f32 {
 }
 
 fn hit_for(
-    def: &AbilityDef,
+    def: &'static AbilityDef,
     p: &Params,
     source: Entity,
     target: Entity,
@@ -147,6 +184,7 @@ fn hit_for(
             COLOR_SPELL
         },
         source,
+        origin: Origin::Ability(def),
     }
 }
 
@@ -164,7 +202,7 @@ fn schedule(
     }
 }
 
-fn roll(rng: &mut Rng, stats: &Stats, dmg: f32) -> (f32, bool) {
+pub(super) fn roll(rng: &mut Rng, stats: &Stats, dmg: f32) -> (f32, bool) {
     if rng.f32() < stats.crit {
         (dmg * stats.crit_damage, true)
     } else {
@@ -245,6 +283,7 @@ pub(super) fn cast_abilities(
     mut fx: Fx,
     mut pending: ResMut<PendingHits>,
     mut hits: MessageWriter<Hit>,
+    mut procs: ResMut<Procs>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -273,6 +312,7 @@ pub(super) fn cast_abilities(
                 &mut fx,
                 &mut pending,
                 &mut hits,
+                &mut procs,
             );
         }
     }
@@ -291,6 +331,8 @@ pub(super) fn cast_abilities(
 
 /// One hero's casts this frame: `me` at `hpos`, with its own abilities and stats. Its heals and
 /// shields join `supports` for whom they land on; `healths` is every hero's health and max health.
+/// An echo a mechanic queued casts at once, cooldown or not; every other cast is recorded in
+/// `procs` for the hero's mechanics. A transformed ability flies its legendary's missile.
 fn cast_for(
     me: Entity,
     hpos: Vec3,
@@ -306,6 +348,7 @@ fn cast_for(
     fx: &mut Fx,
     pending: &mut PendingHits,
     hits: &mut MessageWriter<Hit>,
+    procs: &mut Procs,
 ) {
     let stats = hero.stats();
     let now = run.elapsed;
@@ -334,12 +377,15 @@ fn cast_for(
     };
 
     for i in 0..hero.abilities.len() {
+        let def = hero.abilities[i].def;
+        // An echo leaves the cooldown to run as it was.
+        let echo = hero.mechanics.take_echo(def.key, now);
         hero.abilities[i].cd -= dt;
-        if hero.abilities[i].cd > 0.0 {
+        if hero.abilities[i].cd > 0.0 && !echo {
             continue;
         }
         let o = &hero.abilities[i];
-        let def = o.def;
+        let look = look(def, o.level, &speed_of);
         let mult = o.damage_mult() * stats.might * hero.school_mult(school_of(def.spell));
         let p = Params {
             dmg: def.damage * mult,
@@ -349,7 +395,7 @@ fn cast_for(
             duration: o.duration(),
             cooldown: o.cooldown(&stats),
         };
-        let speed = speed_of(def.spell);
+        let speed = speed_of(look);
         let fired = match def.kind {
             Kind::Bolt | Kind::Strike | Kind::Melee => {
                 let reach = if def.kind == Kind::Melee {
@@ -374,7 +420,7 @@ fn cast_for(
                             fx.impact(f.e, def.spell);
                         }
                     } else {
-                        fx.cast(me, def.spell, &entities(&targets), None);
+                        fx.cast(me, look, &entities(&targets), None);
                     }
                     for f in &targets {
                         let (dmg, crit) = roll(rng, &stats, p.dmg);
@@ -452,6 +498,7 @@ fn cast_for(
                             mark: def.mark,
                             impact: if def.overhead { def.spell } else { 0 },
                             owner: me,
+                            origin: Origin::Ability(def),
                         });
                         true
                     }
@@ -629,6 +676,7 @@ fn cast_for(
                         tick: 0.3,
                         pulse: def.key == "magma_totem",
                         owner: me,
+                        ability: def,
                     });
                     true
                 } else {
@@ -636,7 +684,32 @@ fn cast_for(
                 }
             }
         };
-        hero.abilities[i].cd = if fired { p.cooldown } else { 0.2 };
+        if !echo {
+            hero.abilities[i].cd = if fired { p.cooldown } else { 0.2 };
+            if fired {
+                procs.0.push(Proc {
+                    owner: me,
+                    ability: def,
+                    kind: ProcKind::Cast,
+                    target: None,
+                    pos: hpos,
+                    damage: p.dmg,
+                    effect: def.effect,
+                });
+            }
+        }
+    }
+}
+
+/// The spell a cast of `def` at `level` shows: once transformed, its legendary's missile when the
+/// legendary's spell and its own both fly one (Fireball's Pyroblast), else its own.
+fn look(def: &AbilityDef, level: u8, speed_of: &dyn Fn(u32) -> f32) -> u32 {
+    if level < data::MAX_ABILITY_LEVEL || speed_of(def.spell) <= 0.0 {
+        return def.spell;
+    }
+    match data::legendary(def.key) {
+        Some(l) if speed_of(l.visual_spell) > 0.0 => l.visual_spell,
+        _ => def.spell,
     }
 }
 
@@ -707,6 +780,7 @@ pub(super) fn tick_areas(
                     crit,
                     color: COLOR_SPELL,
                     source: area.owner,
+                    origin: area.origin,
                 });
             }
         }
@@ -741,6 +815,7 @@ pub(super) fn tick_areas(
                 let (dmg, crit) = roll(&mut rng, &stats, totem.damage);
                 hits.write(Hit {
                     color: COLOR_SPELL,
+                    origin: Origin::Ability(totem.ability),
                     ..Hit::direct(totem.owner, f.e, dmg, crit)
                 });
             }
@@ -766,6 +841,7 @@ pub(super) fn tick_areas(
                 delay,
                 Hit {
                     color: COLOR_SPELL,
+                    origin: Origin::Ability(totem.ability),
                     ..Hit::direct(totem.owner, f.e, dmg, crit)
                 },
             );
@@ -783,6 +859,7 @@ fn credit(dealt: &mut Vec<(Entity, f32)>, hero: Entity, amount: f32) {
 
 /// Land every hit due: damage and its number, the over-time part, crowd control, the marks, and
 /// death with its loot. Each hero is credited with its own damage, and drains and leeches for it.
+/// An ability's own blows are recorded in [`Procs`] for its hero's mechanics.
 pub(super) fn apply_hits(
     mut commands: Commands,
     time: Res<Time>,
@@ -801,6 +878,7 @@ pub(super) fn apply_hits(
     mut fx: Fx,
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
+    mut procs: ResMut<Procs>,
 ) {
     let dt = time.delta_secs();
     let now = run.elapsed;
@@ -829,6 +907,7 @@ pub(super) fn apply_hits(
                             damage: h.damage * 0.7,
                             splash: 0.0,
                             mark: 0,
+                            origin: Origin::Other,
                             ..h.clone()
                         });
                     }
@@ -914,6 +993,25 @@ pub(super) fn apply_hits(
         if h.mark != 0 {
             marks.add(h.mark, h.mark_dur);
         }
+        if let Origin::Ability(def) = h.origin {
+            if heroes
+                .get(h.source)
+                .is_ok_and(|hero| hero.mechanics.listens())
+            {
+                procs.0.push(Proc {
+                    owner: h.source,
+                    ability: def,
+                    kind: ProcKind::Hit {
+                        crit: h.crit,
+                        killed: en.hp <= 0.0,
+                    },
+                    target: Some(e),
+                    pos: tf.translation,
+                    damage: dmg,
+                    effect: h.effect,
+                });
+            }
+        }
         if en.hp <= 0.0 {
             kill(&mut commands, &mut run, e, tf.translation, &mut en);
             units::kill_unit(&mut store);
@@ -991,6 +1089,7 @@ mod tests {
         world.insert_resource(time);
         world.init_resource::<Run>();
         world.init_resource::<PendingHits>();
+        world.init_resource::<Procs>();
         world.init_resource::<Messages<Hit>>();
         world.init_resource::<Messages<Loot>>();
         world.init_resource::<Messages<FieldChanged>>();

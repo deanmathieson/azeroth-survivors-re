@@ -1147,7 +1147,7 @@ pub(super) fn roll_offer(
     }
 }
 
-/// `choice` joins `hero`'s build.
+/// `choice` joins `hero`'s build; a top rank transforms its ability for the rest of the run.
 pub(super) fn take(hero: &mut HeroState, choice: Choice) {
     match choice {
         Choice::NewAbility(def) => hero.abilities.push(Owned {
@@ -1155,7 +1155,10 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
             level: 1,
             cd: 0.3,
         }),
-        Choice::Upgrade(k) => hero.abilities[k].level += 1,
+        Choice::Upgrade(k) => {
+            hero.abilities[k].level += 1;
+            super::mechanics::sync_legendaries(hero);
+        }
         Choice::NewPassive(p) => hero.passives.push((p, 1)),
         Choice::UpPassive(k) => hero.passives[k].1 += 1,
         Choice::Heal => hero.hp = hero.stats().max_hp,
@@ -1312,6 +1315,8 @@ pub(super) struct CardText {
     pub desc: String,
     /// `(rank now, top rank)`, for the pips; `None` for the healthstone.
     pub ranks: Option<(u8, u8)>,
+    /// What the pick transforms its ability into: the top rank's legendary.
+    pub legendary: Option<&'static data::LegendaryDef>,
 }
 
 pub(super) fn describe_card(
@@ -1331,6 +1336,7 @@ pub(super) fn describe_card(
                 tag_color: new,
                 desc: format!("{}.", ability_body(def, &c)),
                 ranks: Some((0, data::MAX_ABILITY_LEVEL)),
+                legendary: None,
             }
         }
         Choice::Upgrade(k) => {
@@ -1374,6 +1380,7 @@ pub(super) fn describe_card(
                 tag_color: Color::WHITE,
                 desc: lines.join("\n"),
                 ranks: Some((o.level, data::MAX_ABILITY_LEVEL)),
+                legendary: data::legendary(o.def.key).filter(|_| next == data::MAX_ABILITY_LEVEL),
             }
         }
         Choice::NewPassive(p) => CardText {
@@ -1383,6 +1390,7 @@ pub(super) fn describe_card(
             tag_color: new,
             desc: passive_text(p.stat, p.per_level),
             ranks: Some((0, data::MAX_PASSIVE_LEVEL)),
+            legendary: None,
         },
         Choice::UpPassive(k) => {
             let (p, level) = hero.passives[k];
@@ -1402,6 +1410,7 @@ pub(super) fn describe_card(
                     fmt(p.per_level * f32::from(level + 1)),
                 ),
                 ranks: Some((level, data::MAX_PASSIVE_LEVEL)),
+                legendary: None,
             }
         }
         Choice::Heal => CardText {
@@ -1411,6 +1420,7 @@ pub(super) fn describe_card(
             tag_color: Color::WHITE,
             desc: "Everything is mastered. Restores all health.".into(),
             ranks: None,
+            legendary: None,
         },
     }
 }
@@ -1541,19 +1551,29 @@ pub(super) fn refresh_hud(
                     TipFor::Ability(i) => Some(*i),
                     _ => None,
                 };
+                // A transformed ability wears the legendary rim for the rest of the run.
+                let legendary = ability.is_some() && level >= data::MAX_ABILITY_LEVEL;
+                let (rim, edge) = if legendary {
+                    (2.0, super::cards::LEGENDARY)
+                } else {
+                    (1.0, EDGE)
+                };
                 row.spawn((
                     Node {
                         width: Val::Px(size),
                         height: Val::Px(size),
-                        border: UiRect::all(Val::Px(1.0)),
+                        border: UiRect::all(Val::Px(rim)),
                         ..default()
                     },
-                    BorderColor::all(EDGE),
+                    BorderColor::all(edge),
                     Interaction::default(),
                     tip,
                 ))
                 .with_children(|slot| {
-                    slot.spawn(icon(spell, size - 2.0));
+                    slot.spawn(icon(spell, size - 2.0 * rim));
+                    if legendary {
+                        slot.spawn(legendary_corner());
+                    }
                     // The cooldown sweep sits over the icon, under the level text.
                     if let Some(i) = ability {
                         let handle = sweeps.add(SweepUiMaterial { sweep: 0.0 });
@@ -1581,6 +1601,26 @@ pub(super) fn refresh_hud(
             }
         });
     }
+}
+
+/// The gold corner on a transformed ability's icon, over its top left.
+fn legendary_corner() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Px(14.0),
+            height: Val::Px(14.0),
+            ..default()
+        },
+        BackgroundGradient::from(LinearGradient::to_bottom_right(vec![
+            ColorStop::percent(GOLD, 0.0),
+            ColorStop::percent(super::cards::LEGENDARY, 48.0),
+            ColorStop::percent(super::cards::LEGENDARY.with_alpha(0.0), 52.0),
+        ])),
+        bevy::ui::FocusPolicy::Pass,
+    )
 }
 
 /// Fill icon slots from `SpellIcon.dbc` once the client data and the asset reader are up.
@@ -2211,6 +2251,20 @@ fn ability_tip(
         let next = cast_at(def, o.level + 1, stats);
         lines.push(TipLine::new("Next rank:", Color::WHITE));
         lines.push(TipLine::new(next_rank(def, &now, &next), GOLD));
+        if o.level + 1 == data::MAX_ABILITY_LEVEL {
+            if let Some(l) = data::legendary(def.key) {
+                lines.push(TipLine::new(
+                    format!("Transforms: {}", l.name),
+                    super::cards::LEGENDARY,
+                ));
+            }
+        }
+    } else if let Some(l) = data::legendary(def.key) {
+        lines.push(TipLine::new(
+            format!("Legendary: {}", l.name),
+            super::cards::LEGENDARY,
+        ));
+        lines.push(TipLine::new(l.text, GOLD));
     } else {
         lines.push(TipLine::new("Highest rank", DIM));
     }

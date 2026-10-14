@@ -17,6 +17,7 @@ mod grade;
 mod hand;
 mod hero;
 mod hud;
+mod mechanics;
 mod menu;
 mod meta;
 mod minimap;
@@ -69,6 +70,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(racials::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
+            .add_plugins(mechanics::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()

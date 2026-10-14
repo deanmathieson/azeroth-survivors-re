@@ -110,6 +110,8 @@ pub(super) struct HeroState {
     /// healthstone are no one's), and the damage that got through to its health.
     pub healing_done: f64,
     pub damage_taken: f64,
+    /// What legendaries, talents and jewelry have granted this hero ([`super::mechanics`]).
+    pub mechanics: super::mechanics::Mechanics,
 }
 
 impl Default for HeroState {
@@ -141,6 +143,7 @@ impl Default for HeroState {
             damage_done: 0.0,
             healing_done: 0.0,
             damage_taken: 0.0,
+            mechanics: Default::default(),
         }
     }
 }

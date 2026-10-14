@@ -1,7 +1,9 @@
 //! The level-up picker, as a survivors game deals it: three tall cards that flip up out of the
 //! deck one after another, tilt toward the cursor, lift under it and burst on the pick. Each card
 //! wears its rarity in WoW's item-quality colours, so what is better reads at a glance: a fresh
-//! spell is Rare, a rank up Uncommon, a rank that adds a target or reaches the top Epic.
+//! spell is Rare, a rank up Uncommon, a rank that adds a target Epic. The top rank is Legendary:
+//! it transforms the spell ([`data::LEGENDARIES`]), and its card burns gold-orange and says into
+//! what.
 
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
@@ -157,6 +159,15 @@ pub(super) struct CardGlow;
 #[derive(Component)]
 pub(super) struct CardShine(usize);
 
+/// The flame licking up a transforming card's foot.
+#[derive(Component)]
+pub(super) struct CardFlame(usize);
+
+/// A transformation's gold-orange: the legendary colour warmed toward gold.
+fn flame_color() -> Color {
+    LEGENDARY.mix(&hud::GOLD_TONE, 0.35)
+}
+
 /// The radiant burst behind the row, turning slowly.
 #[derive(Component)]
 pub(super) struct Rays;
@@ -195,13 +206,14 @@ pub(super) fn deal_cards(
             let card = hud::describe_card(choice, me, spells.as_deref());
             let rarity = rarity(choice, me);
             let rc = rarity.color();
+            let legend = card.legendary;
             // After a banish only its slot is dealt again; the rest lie where they landed.
             let t = match offer.redealt() {
                 Some(r) if r != i => DEAL_SECS + 1.0,
                 Some(_) => 0.0,
                 None => -(i as f32) * DEAL_STAGGER,
             };
-            row.spawn((
+            let mut face = row.spawn((
                 Card {
                     index: i,
                     t,
@@ -215,7 +227,8 @@ pub(super) fn deal_cards(
                 RelativeCursorPosition::default(),
                 Node {
                     width: Val::Px(CARD_W),
-                    height: Val::Px(CARD_H),
+                    // A transformation's lines may stretch it; the row stretches the rest to match.
+                    min_height: Val::Px(CARD_H),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     padding: UiRect::new(
@@ -249,8 +262,16 @@ pub(super) fn deal_cards(
                     rotation: Rot2::degrees(-14.0),
                 },
                 Visibility::Hidden,
-            ))
-            .with_children(|c| {
+            ));
+            // The transformation's gold rim, pulsing in `animate_cards`.
+            if legend.is_some() {
+                face.insert(Outline::new(
+                    Val::Px(2.0),
+                    Val::Px(2.0),
+                    flame_color().with_alpha(0.6),
+                ));
+            }
+            face.with_children(|c| {
                 c.spawn((
                     CardGlow,
                     Node {
@@ -271,6 +292,26 @@ pub(super) fn deal_cards(
                     )),
                     bevy::ui::FocusPolicy::Pass,
                 ));
+                if legend.is_some() {
+                    c.spawn((
+                        CardFlame(i),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            right: Val::Px(0.0),
+                            bottom: Val::Px(0.0),
+                            height: Val::Px(90.0),
+                            border_radius: BorderRadius::bottom(Val::Px(10.0)),
+                            ..default()
+                        },
+                        BackgroundGradient::from(LinearGradient::to_top(vec![
+                            ColorStop::percent(flame_color().with_alpha(0.55), 0.0),
+                            ColorStop::percent(LEGENDARY.with_alpha(0.22), 45.0),
+                            ColorStop::percent(LEGENDARY.with_alpha(0.0), 100.0),
+                        ])),
+                        bevy::ui::FocusPolicy::Pass,
+                    ));
+                }
                 // The key and the rarity on one line along the top.
                 c.spawn(Node {
                     width: Val::Percent(100.0),
@@ -374,6 +415,9 @@ pub(super) fn deal_cards(
                     14.0,
                     Color::srgb(0.92, 0.9, 0.84),
                 ));
+                if let Some(l) = legend {
+                    transforms(c, f, l);
+                }
                 // The landing shine, a bright band that crosses once.
                 c.spawn((
                     CardShine(i),
@@ -398,6 +442,61 @@ pub(super) fn deal_cards(
     });
 }
 
+/// The "Transforms:" panel under a legendary card's stats: the transformation's icon and name,
+/// and its line.
+fn transforms(c: &mut ChildSpawnerCommands, f: &Handle<Font>, l: &data::LegendaryDef) {
+    let hot = flame_color();
+    c.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(3.0),
+            margin: UiRect::top(Val::Px(4.0)),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(6.0)),
+            ..default()
+        },
+        BorderColor::all(hot.with_alpha(0.7)),
+        BackgroundColor(LEGENDARY.with_alpha(0.12)),
+    ))
+    .with_children(|t| {
+        t.spawn(Node {
+            column_gap: Val::Px(6.0),
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|head| {
+            head.spawn((
+                Node {
+                    width: Val::Px(20.0),
+                    height: Val::Px(20.0),
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    ..default()
+                },
+                ImageNode {
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.6),
+                    ..default()
+                },
+                SpellIcon(l.visual_spell),
+            ));
+            head.spawn(hud::text_bundle(
+                f,
+                format!("Transforms: {}", l.name),
+                15.0,
+                hot.mix(&Color::WHITE, 0.15),
+            ));
+        });
+        t.spawn(hud::centered_bundle(
+            f,
+            l.text,
+            13.0,
+            Color::srgb(1.0, 0.86, 0.6),
+        ));
+    });
+}
+
 fn ease_out_back(t: f32) -> f32 {
     let c1 = 1.70158;
     let c3 = c1 + 1.0;
@@ -416,8 +515,10 @@ pub(super) fn animate_cards(
         &mut UiTransform,
         &mut BoxShadow,
         &mut Visibility,
+        Option<&mut Outline>,
     )>,
     mut shines: Query<(&CardShine, &mut Node)>,
+    mut flames: Query<(&CardFlame, &mut Node), Without<CardShine>>,
     mut rays: Query<&mut UiTransform, (With<Rays>, Without<Card>)>,
     mut pending: ResMut<PendingPick>,
     mut run: ResMut<Run>,
@@ -439,7 +540,7 @@ pub(super) fn animate_cards(
     }
     let chosen = pending.0.map(|(i, _)| i);
     let mut shine_at = [None::<f32>; 4];
-    for (mut card, interaction, cursor, mut tf, mut shadow, mut vis) in &mut cards {
+    for (mut card, interaction, cursor, mut tf, mut shadow, mut vis, outline) in &mut cards {
         let card = &mut *card;
         card.t += dt;
         if card.t < 0.0 {
@@ -503,12 +604,23 @@ pub(super) fn animate_cards(
             sh.spread_radius = Val::Px(2.0 + 4.0 * h);
             sh.y_offset = Val::Px(6.0 + 10.0 * h);
         }
+        // A transformation's rim breathes.
+        if let Some(mut outline) = outline {
+            let glow = 0.45 + 0.4 * (now * 3.1 + card.index as f32).sin().abs();
+            outline.color = flame_color().with_alpha(glow * (1.0 - pick_fade));
+        }
         if pick_fade >= 1.0 {
             *vis = Visibility::Hidden;
         }
         if card.index < shine_at.len() {
             shine_at[card.index] = Some(card.t);
         }
+    }
+    // The flame flickers on two beats.
+    for (flame, mut node) in &mut flames {
+        let k = flame.0 as f32;
+        node.height =
+            Val::Px(84.0 + 9.0 * (now * 6.3 + k).sin() + 5.0 * (now * 11.7 + 2.0 * k).sin());
     }
     for (shine, mut node) in &mut shines {
         let Some(t) = shine_at.get(shine.0).copied().flatten() else {
