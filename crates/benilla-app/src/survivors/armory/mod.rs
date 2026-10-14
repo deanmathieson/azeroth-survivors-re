@@ -13,7 +13,8 @@
 //! # Adding content to a tab
 //!
 //! Each tab lives in its own file (`character.rs`, `collection.rs`, `drop_tables.rs`, `codex.rs`,
-//! `talents.rs`, `achievements.rs`, `rewards.rs`, `quests.rs`) behind one entry point:
+//! `talents.rs`, `achievements.rs`, `rewards.rs`, `companion.rs`, `quests.rs`) behind one entry
+//! point:
 //!
 //! ```ignore
 //! pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx)
@@ -39,6 +40,7 @@ mod achievements;
 mod character;
 mod codex;
 mod collection;
+mod companion;
 mod drop_tables;
 mod quests;
 mod rewards;
@@ -106,11 +108,12 @@ pub(super) enum ArmoryTab {
     Talents,
     Achievements,
     Rewards,
+    Companion,
     Quests,
 }
 
 impl ArmoryTab {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::Character,
         Self::Collection,
         Self::DropTables,
@@ -118,6 +121,7 @@ impl ArmoryTab {
         Self::Talents,
         Self::Achievements,
         Self::Rewards,
+        Self::Companion,
         Self::Quests,
     ];
 
@@ -131,6 +135,7 @@ impl ArmoryTab {
             Self::Talents => "Talents",
             Self::Achievements => "Achievements",
             Self::Rewards => "Rewards",
+            Self::Companion => "Companion",
             Self::Quests => "Quests",
         }
     }
@@ -145,6 +150,7 @@ impl ArmoryTab {
             Self::Talents => "talents",
             Self::Achievements => "achievements",
             Self::Rewards => "rewards",
+            Self::Companion => "companion",
             Self::Quests => "quests",
         }
     }
@@ -171,6 +177,7 @@ impl ArmoryTab {
             Self::Talents => talents::build(parent, ctx),
             Self::Achievements => achievements::build(parent, ctx),
             Self::Rewards => rewards::build(parent, ctx),
+            Self::Companion => companion::build(parent, ctx),
             Self::Quests => quests::build(parent, ctx),
         }
     }

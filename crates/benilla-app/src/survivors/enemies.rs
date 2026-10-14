@@ -614,7 +614,7 @@ pub(super) fn drop_loot(
     }
 }
 
-fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
+pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     let (display, scale) = look_for(kind);
     let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * 0.5);
     commands.entity(e).insert(Gem {
