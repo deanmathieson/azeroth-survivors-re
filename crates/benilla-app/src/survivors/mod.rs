@@ -15,6 +15,7 @@ mod hud;
 mod menu;
 mod minimap;
 mod mobility;
+mod profile;
 mod units;
 
 use benilla_world::schedule::WorldStage;
@@ -43,6 +44,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<Rng>()
             .init_resource::<Selection>()
             .init_resource::<Run>()
+            .init_resource::<profile::LastRunNews>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()
@@ -52,7 +54,7 @@ impl Plugin for SurvivorsPlugin {
             .add_message::<abilities::Hit>()
             .add_message::<enemies::Loot>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
-            .add_systems(Startup, hud::setup_hud)
+            .add_systems(Startup, (profile::load_profile, hud::setup_hud).chain())
             .add_systems(Update, hero::daylight)
             .add_systems(
                 Update,
@@ -131,7 +133,10 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::Playing), unpause)
             .add_systems(OnEnter(Phase::LevelUp), (pause, hud::roll_offer))
             .add_systems(OnEnter(Phase::Paused), pause)
-            .add_systems(OnEnter(Phase::GameOver), unpause)
+            .add_systems(
+                OnEnter(Phase::GameOver),
+                (unpause, profile::record_finished).chain(),
+            )
             .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
@@ -262,6 +267,8 @@ pub(super) struct Run {
     pub bosses: u32,
     pub rings: u32,
     pub won: bool,
+    /// A GameOver transition records this run once, even if a later transition repeats it.
+    pub recorded: bool,
     /// Seconds since the hero fell, while the death plays out.
     pub dead_t: Option<f32>,
     pub next_guid: u64,
@@ -297,6 +304,7 @@ impl Default for Run {
             bosses: 0,
             rings: 0,
             won: false,
+            recorded: false,
             dead_t: None,
             next_guid: 1,
             damage_done: 0.0,

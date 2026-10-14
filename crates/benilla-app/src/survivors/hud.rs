@@ -14,6 +14,7 @@ use bevy::window::PrimaryWindow;
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
+use super::profile::LastRunNews;
 use super::{Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
@@ -106,6 +107,8 @@ pub(super) struct OverTitle;
 pub(super) struct OverStats;
 #[derive(Component)]
 pub(super) struct OverLine;
+#[derive(Component)]
+pub(super) struct OverNews;
 #[derive(Component)]
 pub(super) struct OverStat(usize);
 
@@ -785,6 +788,10 @@ pub(super) fn setup_hud(
             root.spawn((
                 OverLine,
                 centered(f, "", 18.0, Color::srgb(0.85, 0.78, 0.6)),
+            ));
+            root.spawn((
+                OverNews,
+                centered(f, "", 18.0, Color::srgb(0.25, 0.9, 0.35)),
             ));
             // The run in numbers, one tile each.
             root.spawn(Node {
@@ -1645,16 +1652,16 @@ impl TipLine {
     }
 }
 
-/// A number as the tooltips print it: whole when near enough, else to one decimal.
-
 /// The results screen's tiles and its line under the title.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_results(
     run: Res<Run>,
     selection: Res<Selection>,
+    news: Res<LastRunNews>,
     mut over_texts: ParamSet<(
         Query<(&OverStat, &mut Text)>,
         Query<&mut Text, With<OverLine>>,
+        Query<&mut Text, With<OverNews>>,
     )>,
 ) {
     let secs = run.elapsed as u32;
@@ -1678,10 +1685,39 @@ pub(super) fn refresh_results(
         }
     }
     if let Ok(mut t) = over_texts.p1().single_mut() {
-        if **t != stats_line {
-            **t = stats_line.to_string();
+        let summary = format!(
+            "{stats_line}  ·  Run {} in {} · best {}",
+            news.zone_runs,
+            selection.map_def().name,
+            clock(news.best_seconds),
+        );
+        if **t != summary {
+            **t = summary;
         }
     }
+    if let Ok(mut t) = over_texts.p2().single_mut() {
+        let note = results_note(&news);
+        if **t != note {
+            **t = note;
+        }
+    }
+}
+
+fn results_note(news: &LastRunNews) -> String {
+    if news.first_zone_win {
+        format!("First win in {}!", news.zone)
+    } else if news.first_class_win {
+        format!("First win as a {}!", news.class)
+    } else if news.new_best_survival {
+        "New best time!".to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn clock(seconds: f32) -> String {
+    let seconds = seconds as u32;
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
 /// 12.3k, 4.5M.
@@ -1695,6 +1731,7 @@ fn compact(v: f64) -> String {
     }
 }
 
+/// A number as the tooltips print it: whole when near enough, else to one decimal.
 fn num(v: f32) -> String {
     if (v - v.round()).abs() < 0.05 {
         format!("{}", v.round() as i64)
@@ -2228,5 +2265,24 @@ pub(super) fn show_panels(
     }
     for root in &mut roots.p4() {
         set(root, p == Phase::GameOver);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn results_note_prioritizes_first_zone_win() {
+        let news = LastRunNews {
+            zone: "Elwynn".to_string(),
+            class: "Warrior".to_string(),
+            first_zone_win: true,
+            first_class_win: true,
+            new_best_survival: true,
+            ..default()
+        };
+
+        assert_eq!(results_note(&news), "First win in Elwynn!");
     }
 }
