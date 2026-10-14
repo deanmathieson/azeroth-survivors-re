@@ -2,12 +2,14 @@
 //! [`crate::run_survivors`]. There is no server: the hero, the enemies and the spells are local
 //! entities dressed by the same attach, animation and spell-visual systems a streamed unit gets,
 //! on a battleground picked at the menu ([`data::MAPS`]), with the player controller and FrameXML
-//! off ([`crate::run_mode::CaptureMode`]).
+//! off ([`crate::run_mode::CaptureMode`]). The local hero walks through the world's collision
+//! ([`body`]) and, by default, under WoW's own camera and controls ([`wowcam`], [`view`]).
 
 mod abilities;
 mod achievements;
 mod armory;
 mod auto;
+mod body;
 mod bonus;
 mod cards;
 mod data;
@@ -30,6 +32,8 @@ mod run_options;
 mod talents;
 mod treasure;
 mod units;
+mod view;
+mod wowcam;
 mod zones;
 
 use benilla_world::schedule::WorldStage;
@@ -78,6 +82,8 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<MetaBonuses>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
+            .init_resource::<view::View>()
+            .init_resource::<wowcam::WowFrame>()
             .init_resource::<abilities::PendingHits>()
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
@@ -88,18 +94,32 @@ impl Plugin for SurvivorsPlugin {
             .add_message::<profile::RunEnded>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_systems(Startup, (profile::load_profile, hud::setup_hud).chain())
+            .add_systems(Startup, view::load_view)
             .add_systems(Update, hero::daylight)
             .add_systems(PostUpdate, profile::save_if_dirty)
+            // The HUD's hover reaches the world-mouse latch as UI, so a click on it starts no
+            // mouselook.
+            .add_systems(
+                Update,
+                wowcam::hud_takes_pointer
+                    .in_set(WorldStage::Input)
+                    .before(crate::player::camera::latch_world_mouse),
+            )
+            // After the latch: the look session reads which buttons the world owns.
             .add_systems(
                 Update,
                 (
+                    view::toggle_view,
                     hero::aim_cursor,
+                    wowcam::wow_look,
                     mobility::cast_mobility,
                     hero::drive_hero,
                     hero::place_camera,
+                    wowcam::wow_camera,
                 )
                     .chain()
-                    .in_set(WorldStage::Input),
+                    .in_set(WorldStage::Input)
+                    .after(crate::player::camera::latch_world_mouse),
             )
             .add_systems(
                 Update,

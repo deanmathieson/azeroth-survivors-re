@@ -32,7 +32,7 @@ const CLICK_PITCH_TRAVEL: f32 = 2.0 * std::f32::consts::PI / 180.0;
 /// An undecided primary press: the reference's world-input state (`[0xbe1148]`), press time at
 /// `+0x14`, accumulators zeroed at `0x514910`/`0x514913`; ours are radians of camera rotation.
 #[derive(Clone, Copy)]
-pub(super) struct PressGesture {
+pub(crate) struct PressGesture {
     /// Seconds on the app clock when the button went down.
     at: f32,
     /// Accumulated |Δyaw| and |Δpitch| this press has asked the camera for, radians.
@@ -250,17 +250,17 @@ pub(super) enum FollowState {
 
 /// The camera's input command word, 1.12's `[InputControl+0x4]` bit for bit. PitchUp and
 /// PitchDown are not built, so their bits are never set.
-pub(super) mod follow_cmd {
+pub(crate) mod follow_cmd {
     /// `TurnOrAction`: right mouse, mouselook.
-    pub(in crate::player) const RIGHT_MOUSE: u32 = 0x1;
+    pub(crate) const RIGHT_MOUSE: u32 = 0x1;
     /// `CameraOrSelectOrMove`: left mouse.
-    pub(in crate::player) const LEFT_MOUSE: u32 = 0x2;
-    pub(in crate::player) const FORWARD: u32 = 0x10;
-    pub(in crate::player) const BACKWARD: u32 = 0x20;
-    pub(in crate::player) const STRAFE_LEFT: u32 = 0x40;
-    pub(in crate::player) const STRAFE_RIGHT: u32 = 0x80;
-    pub(in crate::player) const TURN_LEFT: u32 = 0x100;
-    pub(in crate::player) const TURN_RIGHT: u32 = 0x200;
+    pub(crate) const LEFT_MOUSE: u32 = 0x2;
+    pub(crate) const FORWARD: u32 = 0x10;
+    pub(crate) const BACKWARD: u32 = 0x20;
+    pub(crate) const STRAFE_LEFT: u32 = 0x40;
+    pub(crate) const STRAFE_RIGHT: u32 = 0x80;
+    pub(crate) const TURN_LEFT: u32 = 0x100;
+    pub(crate) const TURN_RIGHT: u32 = 0x200;
     pub(in crate::player) const AUTORUN: u32 = 0x1000;
     /// The union of bits 20, 21 and 23, which the reference folds into the camera's `Track` flag.
     pub(in crate::player) const TRACK: u32 = 0x100000;
@@ -296,12 +296,12 @@ impl Default for FollowConfig {
 }
 
 /// What [`seat_camera`] needs for the auto-follow: the knobs, the facing, and the input word.
-pub(super) struct FollowInput {
-    pub(super) cfg: FollowConfig,
+pub(crate) struct FollowInput {
+    pub(crate) cfg: FollowConfig,
     /// The character's facing ([`FlyCam::yaw`]'s convention); the offset is `cam.yaw − face_yaw`.
-    pub(super) face_yaw: f32,
+    pub(crate) face_yaw: f32,
     /// This frame's [`follow_cmd`] word.
-    pub(super) command: u32,
+    pub(crate) command: u32,
 }
 
 impl FollowInput {
@@ -540,9 +540,9 @@ pub(crate) struct CameraControl {
     pub(super) look: Option<LookButton>,
     /// Mouse-look is on: the reference's `[cam+0x90] & 1` (set `0x50fe41`, cleared `0x50fddd`).
     /// Written by [`run_look_session`], read the same frame for `cameraTerrainTilt`'s hand-off.
-    pub(super) freelook: bool,
+    pub(crate) freelook: bool,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
-    pub(super) world_mouse: WorldMouse,
+    pub(crate) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
     pub(super) cursor_stash: Option<Vec2>,
     /// A look session is running with the OS cursor handed back: the window is unfocused.
@@ -596,7 +596,7 @@ impl CameraControl {
 
 /// The mouse-look mode: `Right` turns the character with the camera, `Left` orbits around it.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(super) enum LookButton {
+pub(crate) enum LookButton {
     Right,
     Left,
 }
@@ -616,7 +616,7 @@ impl LookButton {
 /// The world's down sets the bit and that button's up clears it, so a frame appearing under the
 /// locked cursor cannot steal it. `MouselookStart` sets the TurnOrAction bit with no button.
 #[derive(Default)]
-pub(super) struct WorldMouse {
+pub(crate) struct WorldMouse {
     /// Held by the world right now, indexed by [`LookButton`].
     held: [bool; 2],
     /// Took its down edge from the world this frame, same index.
@@ -630,7 +630,7 @@ pub(super) struct WorldMouse {
 }
 
 impl WorldMouse {
-    pub(super) fn held(&self, b: LookButton) -> bool {
+    pub(crate) fn held(&self, b: LookButton) -> bool {
         self.held[b as usize]
     }
 
@@ -640,7 +640,7 @@ impl WorldMouse {
 
     /// The TurnOrAction channel, `[InputControl+4] & 1`: the world's right button, or a
     /// `MouselookStart` with none.
-    pub(super) fn turn(&self) -> bool {
+    pub(crate) fn turn(&self) -> bool {
         self.held(LookButton::Right) || self.scripted
     }
 
@@ -653,7 +653,7 @@ impl WorldMouse {
     }
 
     /// Both channels held: the both-button run (`0x514da0` nets `0x1` and `0x2` as forward).
-    pub(super) fn both(&self) -> bool {
+    pub(crate) fn both(&self) -> bool {
         self.turn() && self.held(LookButton::Left)
     }
 
@@ -698,7 +698,7 @@ impl WorldMouse {
 /// or any press while a look session owns the cursor (a chord's second button). Its own system,
 /// ahead of `/follow`'s both-button cancel ([`super::follow::steer_follow`]), which runs before
 /// the controller and would otherwise read it a frame late.
-pub(super) fn latch_world_mouse(
+pub(crate) fn latch_world_mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     // The raw flag: a press on a nameplate is the plate's, so dragging from a plate never turns the
     // camera, as in 1.12. `0x7662c0` hands a mouse-down to one frame (capture at `0x7663e9`), and
@@ -762,9 +762,9 @@ pub(super) fn send_world_right_press(
 #[derive(Component)]
 // `pub(crate)` for the scripted camera park's query; `FlyCam::park` is its one lever.
 pub(crate) struct FlyCam {
-    pub(super) yaw: f32,
-    pub(super) pitch: f32,
-    pub(super) speed: f32,
+    pub(crate) yaw: f32,
+    pub(crate) pitch: f32,
+    pub(crate) speed: f32,
 }
 
 impl FlyCam {
@@ -793,7 +793,7 @@ pub(crate) struct CameraPivot {
 /// select are independent: each primary press engages its session at once and arms a click test,
 /// and the release decides on [`PressGesture::is_click`] alone. A session lasts while its
 /// [`WorldMouse::channel`] is held, so a `MouselookStart` runs the right button's session.
-pub(super) fn run_look_session(
+pub(crate) fn run_look_session(
     mouse_motion: &AccumulatedMouseMotion,
     both_buttons: bool,
     rig: &mut CameraControl,
@@ -950,7 +950,11 @@ fn engage_look(
 
 /// End the look session: free and show the cursor, and put it back where the look began unless
 /// it was already free, when it is wherever the player left it.
-fn disengage_look(rig: &mut CameraControl, window: &mut Window, cursor_opts: &mut CursorOptions) {
+pub(crate) fn disengage_look(
+    rig: &mut CameraControl,
+    window: &mut Window,
+    cursor_opts: &mut CursorOptions,
+) {
     rig.look = None;
     let stash = rig.cursor_stash.take();
     if !std::mem::take(&mut rig.cursor_released) {
@@ -1010,7 +1014,7 @@ fn sync_look_focus(
 /// names (Mind Vision, Sentry Totem, Mind Control), substituting the orbit centre, sweep origin and
 /// pivot target before [`seat_camera`]. Both of the controller's seat paths call it, as far sight
 /// outlives a spline or a possession (Sentry Totem has no interrupt flags).
-pub(super) fn seat_on_subject(
+pub(crate) fn seat_on_subject(
     dt: f32,
     turn_delta: f32,
     feet: Vec3,

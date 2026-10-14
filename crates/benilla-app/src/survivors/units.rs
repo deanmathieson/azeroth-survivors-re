@@ -112,7 +112,8 @@ pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, ya
         .id()
 }
 
-/// Spawn a generic GameObject showing `GameObjectDisplayInfo` row `display`.
+/// Spawn a generic GameObject showing `GameObjectDisplayInfo` row `display`. Its hull, if the
+/// model has one, never collides: a gem or a cache is walked through, as it always was.
 pub(super) fn spawn_object(
     commands: &mut Commands,
     serial: u64,
@@ -142,6 +143,7 @@ pub(super) fn spawn_object(
             Transform::from_translation(pos),
             Visibility::default(),
             RunEntity,
+            avian3d::prelude::ColliderDisabled,
         ))
         .id()
 }

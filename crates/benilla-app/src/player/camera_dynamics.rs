@@ -105,41 +105,41 @@ impl Default for CameraOptions {
 
 /// One frame's camera-dynamics inputs: the options, and the followed unit's facts the gates read.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct DynamicsInput {
-    pub(super) options: CameraOptions,
+pub(crate) struct DynamicsInput {
+    pub(crate) options: CameraOptions,
     /// Raw `cameraSmoothStyle`, which the tilt matrix indexes (`0x50dbc0`), not the follow's copy.
-    pub(super) smooth_style: super::camera::FollowStyle,
+    pub(crate) smooth_style: super::camera::FollowStyle,
     /// `cameraSmoothTrackingStyle`, read only by the pivot release's third conjunct (`0x511010`).
-    pub(super) tracking_style: super::camera::FollowStyle,
-    pub(super) subject: SubjectState,
-    pub(super) nearclip: f32,
+    pub(crate) tracking_style: super::camera::FollowStyle,
+    pub(crate) subject: SubjectState,
+    pub(crate) nearclip: f32,
     /// The liquid surface over our own feet (Bevy Y), cached by the last movement tick. Unused
     /// under far sight: the reference reads the watched unit's liquid (`0x511ad0`), absent here.
-    pub(super) surface_y: Option<f32>,
+    pub(crate) surface_y: Option<f32>,
 }
 
 /// The followed unit's side of the gates. The movement word is last frame's, as the reference's
 /// input handler reads it (`0x50fee0`'s caller `0x514446` runs before the mover lookup).
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct SubjectState {
+pub(crate) struct SubjectState {
     /// `MOVEMENTFLAGS`, whole: the mechanisms read different masks of it.
-    pub(super) move_flags: u32,
+    pub(crate) move_flags: u32,
     /// `UNIT_FIELD_FLAGS & 0x100000`, taxi flight.
-    pub(super) taxi: bool,
+    pub(crate) taxi: bool,
     /// The camera's `Track` bit (`[cam+0x90] & 0x100`): externally driven movement.
-    pub(super) track: bool,
+    pub(crate) track: bool,
     /// The camera's `Fear` bit (`[cam+0x90] & 0x1000`): external control.
-    pub(super) fear: bool,
+    pub(crate) fear: bool,
     /// Facing, radians, in benilla's yaw convention (`[obj+0xc98]`).
-    pub(super) facing: f32,
+    pub(crate) facing: f32,
     /// `UNIT_FIELD_MOUNTDISPLAYID > 0`.
-    pub(super) mounted: bool,
+    pub(crate) mounted: bool,
     /// Current speed, yd/s (`GetCurrentSpeed`, `0x7c4c90`).
-    pub(super) speed: f32,
+    pub(crate) speed: f32,
     /// The input-command word ([`super::camera::follow_cmd`]); its edges arm head bob (`0x511170`).
-    pub(super) command: u32,
+    pub(crate) command: u32,
     /// The aura-76 FOV lock of the spyglass scope (`[cam+0x90] & 0x8`).
-    pub(super) scoped: bool,
+    pub(crate) scoped: bool,
 }
 
 impl SubjectState {
