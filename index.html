@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A Megabonk-style survivors roguelite set in vanilla World of Warcraft: 9 classes, 16 zones, talents, real WoW gear and achievements.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Azeroth Survivors">
+<meta property="og:description" content="A Megabonk-style survivors roguelite set in vanilla World of Warcraft: 9 classes, 16 zones, talents, real WoW gear and achievements.">
+<meta property="og:url" content="https://toast.house/azeroth-survivors-re/">
+<meta property="og:image" content="https://toast.house/azeroth-survivors-re/combat.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>html{-webkit-text-size-adjust:100%}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Azeroth Survivors</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus+SC&family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one centred column; hero with the combat shot, then a WoW item tooltip
+     listing the features beside a screenshot strip, then status, setup and credits. */
+  :root {
+    --bg: #12141a;          /* night stone */
+    --panel: #1b1f28;       /* raised stone */
+    --line: #2f3542;        /* mortar */
+    --fg: #e7dcc4;          /* parchment */
+    --muted: #a59b86;       /* faded parchment */
+    --gold: #ffd100;        /* WoW quest-text gold */
+    --tip-bg: #0b0e1d;      /* tooltip navy */
+    --tip-edge: #8a8f9e;    /* tooltip silver edge */
+    --q-legendary: #ff8000;
+    --q-epic: #a335ee;
+    --q-rare: #0070dd;
+    --q-uncommon: #1eff00;
+    --q-common: #ffffff;
+    --display: "Marcellus SC", "Palatino Linotype", Palatino, Georgia, serif;
+    --body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 50% -200px, rgba(255, 209, 0, 0.07), transparent 70%),
+      var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 48px 64px;
+    display: grid;
+    gap: 64px;
+  }
+  a { color: var(--gold); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  h1, h2 { font-family: var(--display); font-weight: 400; text-wrap: balance; margin: 0; }
+  h2 { font-size: 1.75rem; color: var(--gold); letter-spacing: 0.02em; }
+  p { margin: 0; }
+
+  /* Hero */
+  .hero { display: grid; gap: 28px; }
+  .eyebrow {
+    font-size: 0.8rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+  }
+  h1 {
+    font-size: clamp(2.6rem, 7vw, 4.6rem);
+    line-height: 1.02;
+    color: var(--gold);
+    text-shadow: 0 2px 0 #000, 0 0 28px rgba(255, 209, 0, 0.18);
+  }
+  .pitch { font-size: 1.2rem; max-width: 62ch; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px;
+    border-radius: 4px;
+    border: 1px solid #7a5a12;
+    background: linear-gradient(#4a1010, #2c0808);
+    color: var(--gold);
+    font-family: var(--display);
+    font-size: 1.05rem;
+    text-decoration: none;
+    box-shadow: inset 0 1px 0 rgba(255, 220, 120, 0.25), 0 2px 0 #000;
+  }
+  .btn:hover { background: linear-gradient(#5c1414, #380a0a); }
+  .btn.ghost { background: transparent; border-color: var(--line); color: var(--fg); }
+  .btn.ghost:hover { border-color: var(--muted); }
+  figure { margin: 0; }
+  .shot {
+    width: 100%; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+  }
+  figcaption { color: var(--muted); font-size: 0.92rem; margin-top: 8px; }
+
+  /* Features: tooltip + screenshots */
+  .features { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 40px; align-items: start; }
+  .features > * { min-width: 0; }
+  .tooltip {
+    background: var(--tip-bg);
+    border: 2px solid var(--tip-edge);
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px #000, 0 10px 30px rgba(0, 0, 0, 0.5);
+    padding: 14px 16px 16px;
+    font-family: var(--body);
+    font-size: 1rem;
+    line-height: 1.45;
+    color: var(--q-common);
+    display: grid; gap: 2px;
+  }
+  .tooltip .name { font-family: var(--body); font-weight: 700; font-size: 1.2rem; color: var(--q-legendary); }
+  .tooltip .row { display: flex; justify-content: space-between; gap: 12px; }
+  .tooltip .stat { color: var(--q-common); }
+  .tooltip .equip { color: var(--q-uncommon); }
+  .tooltip .gap { height: 8px; }
+  .tooltip .flavor { color: var(--gold); font-style: italic; margin-top: 8px; }
+  .tooltip .req { color: var(--muted); }
+  .tooltip .set { color: var(--q-epic); }
+  .gallery { display: grid; gap: 20px; }
+  .gallery .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .gallery .pair > * { min-width: 0; }
+
+  /* Status */
+  .status { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .status > * { min-width: 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 20px 22px; display: grid; gap: 12px; align-content: start;
+  }
+  .card h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 1.25rem; }
+  .card ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+  .tag { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; }
+  .tag.now { color: var(--q-uncommon); }
+  .tag.next { color: var(--q-epic); }
+
+  /* Setup */
+  .setup { display: grid; gap: 20px; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; counter-reset: step; }
+  .steps li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 12px; counter-increment: step; }
+  .steps li::before {
+    content: counter(step);
+    font-family: var(--display); color: var(--gold); font-size: 1.3rem; line-height: 1.4;
+  }
+  .steps li > div { display: grid; gap: 8px; min-width: 0; }
+  .cmd {
+    display: flex; align-items: stretch; gap: 0;
+    border: 1px solid var(--line); border-radius: 4px; background: #0d0f14; overflow: hidden;
+  }
+  .cmd code {
+    flex: 1; min-width: 0; overflow-x: auto; white-space: pre;
+    padding: 10px 12px; font-family: var(--mono); font-size: 0.86rem; color: var(--fg);
+  }
+  .cmd button {
+    flex: none; border: 0; border-left: 1px solid var(--line); background: var(--panel);
+    color: var(--muted); font: 500 0.82rem var(--body); padding: 0 14px; cursor: pointer;
+  }
+  .cmd button:hover { color: var(--gold); }
+  .label { color: var(--muted); font-size: 0.9rem; }
+  .keys { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--muted); font-size: 0.95rem; }
+  kbd {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--fg);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px;
+    padding: 1px 6px; background: var(--panel);
+  }
+
+  footer { color: var(--muted); font-size: 0.92rem; display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 24px; }
+
+  @media (max-width: 820px) {
+    .features, .status { grid-template-columns: 1fr; }
+    .tooltip { max-width: 420px; }
+  }
+  @media (max-width: 480px) {
+    .gallery .pair { grid-template-columns: 1fr; }
+    body { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="hero">
+    <div class="eyebrow">Fan-made roguelite · World of Warcraft 1.12</div>
+    <h1>Azeroth Survivors</h1>
+    <p class="pitch">A Megabonk-style survivors game set in vanilla Azeroth. Pick a class, walk into a zone, and hold off the horde for fifteen minutes while your spells cast themselves and a boss shows up every couple of minutes.</p>
+    <div class="actions">
+      <a class="btn" href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">View the code on GitHub</a>
+      <a class="btn ghost" href="#run-it">How to run it</a>
+    </div>
+    <figure>
+      <img class="shot" src="combat.jpg" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
+      <figcaption>Late game in Elwynn Forest: the whole spell pool at full rank against a 200-strong horde.</figcaption>
+    </figure>
+  </header>
+
+  <section class="features" aria-labelledby="whats-in">
+    <div style="display:grid; gap:16px;">
+      <h2 id="whats-in">What's in it</h2>
+      <div class="tooltip" role="list">
+        <div class="name" role="listitem">Azeroth Survivors</div>
+        <div role="listitem">Binds when played</div>
+        <div class="row" role="listitem"><span>Two-Hand</span><span>Roguelite</span></div>
+        <div class="row" role="listitem"><span>15:00 Survival</span><span>Speed 1.00</span></div>
+        <div class="stat" role="listitem">+9 Classes</div>
+        <div class="stat" role="listitem">+8 Races, two racial traits each</div>
+        <div class="stat" role="listitem">+16 Zones, Elwynn Forest to Naxxramas</div>
+        <div class="stat" role="listitem">+27 Talent trees</div>
+        <div class="stat" role="listitem">+405 Pieces of real WoW gear</div>
+        <div class="stat" role="listitem">+47 Achievements</div>
+        <div class="gap"></div>
+        <div class="equip" role="listitem">Equip: Your spells cast themselves.</div>
+        <div class="equip" role="listitem">Equip: Bosses arrive every 2:15 and drop gear for your class.</div>
+        <div class="equip" role="listitem">Equip: Elites, guardians and treasure chests stalk the battleground.</div>
+        <div class="equip" role="listitem">Use: Reroll, skip or banish a level-up hand.</div>
+        <div class="equip" role="listitem">Use: Raise the horde's density, health, damage and speed for up to ×2 rewards.</div>
+        <div class="equip" role="listitem">Chance on victory: The next tier of zones opens.</div>
+        <div class="gap"></div>
+        <div class="set" role="listitem">Meta-progression (4/4)</div>
+        <div class="equip" role="listitem">(1) Talent XP from every run</div>
+        <div class="equip" role="listitem">(2) Gear from Thunderfury to Atiesh</div>
+        <div class="equip" role="listitem">(3) Perks bought with achievement points</div>
+        <div class="equip" role="listitem">(4) A companion pet that fetches your loot</div>
+        <div class="flavor" role="listitem">"Running on a from-scratch World of Warcraft 1.12 client, written in Rust."</div>
+        <div class="req" role="listitem">Requires Rust and a WoW 1.12.1 client</div>
+      </div>
+    </div>
+    <div class="gallery">
+      <figure>
+        <img class="shot" src="levelup.jpg" alt="The level-up screen with three spell cards and Reroll, Skip and Banish buttons" loading="lazy">
+        <figcaption>Level up: three cards, coloured by rarity, plus reroll, skip and banish.</figcaption>
+      </figure>
+      <div class="pair">
+        <figure>
+          <img class="shot" src="run-options.jpg" alt="The Run Options panel with sliders for enemy density, health, damage and speed" loading="lazy">
+          <figcaption>Run Options: make it harder, earn more.</figcaption>
+        </figure>
+        <figure>
+          <img class="shot" src="victory.jpg" alt="The victory screen showing 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches" loading="lazy">
+          <figcaption>A full 15-minute win, with the run in numbers.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="status" aria-labelledby="where">
+    <div class="card">
+      <span class="tag now">Where it's at</span>
+      <h3 id="where">Playable, freshly built</h3>
+      <ul>
+        <li>The core run, gold, elites, chests, Run Options and the results screen have been played end to end.</li>
+        <li>Talents, gear, achievements, perks, zone unlocks and the smoother camera are built and pass their tests, but haven't had a proper play-through yet.</li>
+        <li>Expect rough edges and balance that needs tuning.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag next">Coming next</span>
+      <h3>Co-op and mounts</h3>
+      <ul>
+        <li>2–4 player co-op, on one PC or online, with tanks who pull aggro and healers who keep the party alive.</li>
+        <li>Downed heroes get back up when a friend stands beside them.</li>
+        <li>Mounts to ride into battle. Possibly with hats for the mounts.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="setup" id="run-it" aria-labelledby="run-title">
+    <h2 id="run-title">Run it yourself</h2>
+    <ol class="steps">
+      <li><div>
+        <p>Install Rust from <a href="https://rustup.rs">rustup.rs</a>, plus Git.</p>
+      </div></li>
+      <li><div>
+        <p>Get the code on the <code>progression</code> branch.</p>
+        <div class="cmd"><code>git clone -b progression https://github.com/deanmathieson/azeroth-survivors-re</code><button type="button" data-copy>Copy</button></div>
+      </div></li>
+      <li><div>
+        <p>Get the game data. The repo ships no Blizzard files; this script downloads a WoW 1.12.1 client's <code>Data</code> folder (about 5.5 GB) into <code>wow-data/</code>. On Windows, run it from Git Bash.</p>
+        <div class="cmd"><code>cd azeroth-survivors-re && bash scripts/fetch-data.sh</code><button type="button" data-copy>Copy</button></div>
+      </div></li>
+      <li><div>
+        <p>Build and play. The first build takes about ten minutes.</p>
+        <span class="label">PowerShell</span>
+        <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; cargo survivors</code><button type="button" data-copy>Copy</button></div>
+        <span class="label">macOS, Linux or Git Bash</span>
+        <div class="cmd"><code>WOW_DATA=wow-data/Data cargo survivors</code><button type="button" data-copy>Copy</button></div>
+      </div></li>
+    </ol>
+    <div class="keys">
+      <span><kbd>WASD</kbd> move</span>
+      <span><kbd>Space</kbd> jump</span>
+      <span><kbd>F</kbd> movement spell</span>
+      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick a card</span>
+      <span><kbd>R</kbd> reroll</span>
+      <span><kbd>B</kbd> banish</span>
+      <span><kbd>C</kbd> free the camera</span>
+      <span><kbd>Esc</kbd> pause</span>
+    </div>
+  </section>
+
+  <footer>
+    <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
+    <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is © Blizzard Entertainment.</p>
+  </footer>
+</main>
+
+<script>
+  document.querySelectorAll("[data-copy]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var code = button.parentElement.querySelector("code");
+      var text = code.textContent;
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      };
+      var selectIt = function () {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        button.textContent = "Selected";
+        setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      };
+      try {
+        navigator.clipboard.writeText(text).then(done, selectIt);
+      } catch (e) {
+        selectIt();
+      }
+    });
+  });
+</script>
+</body>
+</html>
