@@ -2,32 +2,85 @@
 //! `Talent.dbc` and `TalentTab.dbc` (the [`crate::ui_talent::Talents`] load), with each talent's
 //! name and icon from its rank-1 spell. What a rank grants is the mode's own design
 //! ([`effects`]); how points may be spent is vanilla's ([`rules`]).
-
-// The talent screen and the stat layer consume this in later workstreams; drop this once they do.
-#![allow(dead_code)]
+//!
+//! Each recorded run pays its class talent XP, which buys points ([`progress`]); the Armory's
+//! Talents tab spends them ([`tab`]); and the picked class's learned ranks become
+//! [`MetaParts::talents`], which every run starts with ([`apply_talents`]).
 
 mod effects;
+mod progress;
 mod rules;
 mod save;
+mod tab;
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
-use super::bonus::Bonus;
-use super::data;
+use super::bonus::{Bonus, Bonuses};
+use super::meta::MetaParts;
+use super::profile::{slug, Profile};
+use super::{data, hud, Selection};
 
-#[allow(unused_imports)] // The talent screen and the stat layer are the users, still to land.
-pub(super) use rules::{
-    bonuses, can_learn, can_unlearn, Allocation, Why, MAX_POINTS, POINTS_PER_TIER,
-};
+pub(super) use progress::{earned_points, xp_for_points, TalentDevXp};
+use rules::{bonuses, can_learn, can_unlearn};
+pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;
+pub(super) use tab::{
+    check_learn, check_reset, check_unlearn, describe_rank, unmet, why_text, TalentAction,
+    TalentArt, TalentFocus, TalentSlot,
+};
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
+    app.init_resource::<TalentFocus>().add_systems(
         Update,
-        build_catalog.run_if(not(resource_exists::<TalentCatalog>)),
+        (
+            build_catalog.run_if(not(resource_exists::<TalentCatalog>)),
+            progress::award_xp,
+            apply_talents,
+            tab::talent_input,
+            tab::catalog_arrived,
+            // After the Armory has (re)built the tab, so new art fills the same frame.
+            tab::fill_art.after(hud::show_panels),
+        ),
     );
+    if let Some(dev) = TalentDevXp::from_env() {
+        app.insert_resource(dev);
+    }
+}
+
+/// One class's saved talents (an index into [`data::CLASSES`]), if it has a record.
+pub(super) fn saved(profile: &Profile, class: usize) -> Option<&TalentSave> {
+    let class = data::CLASSES.get(class)?;
+    profile.classes.get(&slug(class.name)).map(|r| &r.talents)
+}
+
+/// What a class's learned talents grant, nothing for a class with none.
+fn class_bonuses(catalog: &TalentCatalog, profile: &Profile, class: usize) -> Bonuses {
+    saved(profile, class).map_or_else(Bonuses::default, |s| bonuses(catalog, &s.allocation()))
+}
+
+/// Keeps [`MetaParts::talents`] at the picked class's learned talents, rechecked whenever the
+/// pick, the profile or the catalog changes; written only when the bonuses do.
+fn apply_talents(
+    catalog: Option<Res<TalentCatalog>>,
+    profile: Option<Res<Profile>>,
+    selection: Res<Selection>,
+    mut parts: ResMut<MetaParts>,
+) {
+    let changed = selection.is_changed()
+        || profile.as_ref().is_some_and(|p| p.is_changed())
+        || catalog.as_ref().is_some_and(|c| c.is_changed());
+    if !changed {
+        return;
+    }
+    let want = match (&catalog, &profile, selection.class) {
+        (Some(catalog), Some(profile), Some(class)) => class_bonuses(catalog, profile, class),
+        _ => Bonuses::default(),
+    };
+    if parts.talents != want {
+        parts.talents = want;
+    }
 }
 
 /// One class's talent tree, a `TalentTab.dbc` row.
@@ -139,6 +192,7 @@ impl TalentCatalog {
     }
 
     /// Every tree, in file order.
+    #[allow(dead_code)] // The data tests read the whole catalog; the game reads it by class.
     pub fn trees(&self) -> &[Tree] {
         &self.trees
     }
@@ -154,6 +208,7 @@ impl TalentCatalog {
         self.trees.iter().find(|t| t.id == id)
     }
 
+    #[allow(dead_code)] // As [`Self::trees`]: the game reads talents by tree or id.
     pub fn talents(&self) -> &[Talent] {
         &self.talents
     }
@@ -186,6 +241,54 @@ fn build_catalog(
     commands.insert_resource(catalog);
 }
 
+/// A made-up catalog for the pure tests, no client data needed.
+#[cfg(test)]
+pub(super) mod fixture {
+    use super::{Talent, TalentCatalog, Tree};
+
+    /// Real ids, so the bonuses come from the real table: Toughness and Fire Power.
+    pub const TOUGH: u32 = 140;
+    pub const FIRE_POWER: u32 = 35;
+
+    fn talent(id: u32, tree: u32, tier: u8, max_rank: u8, prereq: Option<(u32, u8)>) -> Talent {
+        Talent {
+            id,
+            tree,
+            tier,
+            column: (id % 4) as u8,
+            max_rank,
+            spells: (1..=u32::from(max_rank)).map(|r| id * 10 + r).collect(),
+            prereq,
+            name: format!("t{id}"),
+            icon: None,
+        }
+    }
+
+    /// Class 0's "Tree 1" has made-up ids past every real talent: 9000 (5 ranks) and 9001 (3)
+    /// at tier 0, and 9010 (1) at tier 1 needing 9001 at 3/3. "Tree 2" has Toughness and Fire
+    /// Power at tier 0.
+    pub fn catalog() -> TalentCatalog {
+        let tree = |id: u32, order| Tree {
+            id,
+            class: 0,
+            name: format!("Tree {id}"),
+            order,
+            icon: None,
+            background: String::new(),
+        };
+        TalentCatalog::new(
+            vec![tree(1, 0), tree(2, 1)],
+            vec![
+                talent(9000, 1, 0, 5, None),
+                talent(9001, 1, 0, 3, None),
+                talent(9010, 1, 1, 1, Some((9001, 3))),
+                talent(TOUGH, 2, 0, 5, None),
+                talent(FIRE_POWER, 2, 0, 5, None),
+            ],
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -193,6 +296,72 @@ mod tests {
 
     use super::super::bonus::{Bonuses, School, StatKey};
     use super::*;
+
+    #[test]
+    fn the_picked_classs_talents_become_its_meta_part() {
+        use super::super::profile::ClassRecord;
+        use fixture::{FIRE_POWER, TOUGH};
+
+        let cat = fixture::catalog();
+        let mage = data::CLASSES.iter().position(|c| c.name == "Mage").unwrap();
+        let save = TalentSave {
+            xp: 0,
+            ranks: vec![(FIRE_POWER, 2), (TOUGH, 3)],
+        };
+        let mut profile = Profile::default();
+        profile.classes.insert(
+            "mage".into(),
+            ClassRecord {
+                talents: save.clone(),
+                ..default()
+            },
+        );
+        let mut app = App::new();
+        app.insert_resource(cat)
+            .insert_resource(profile)
+            .insert_resource(Selection {
+                class: Some(mage),
+                ..default()
+            })
+            .init_resource::<MetaParts>()
+            .add_systems(Update, apply_talents);
+        app.update();
+        let want = bonuses(app.world().resource::<TalentCatalog>(), &save.allocation());
+        assert_ne!(want, Bonuses::default());
+        assert_eq!(app.world().resource::<MetaParts>().talents, want);
+        assert_eq!(app.world().resource::<MetaParts>().gear, Bonuses::default());
+
+        // Another class, with nothing learned, starts runs with nothing.
+        app.world_mut().resource_mut::<Selection>().class = Some((mage + 1) % data::CLASSES.len());
+        app.update();
+        assert_eq!(
+            app.world().resource::<MetaParts>().talents,
+            Bonuses::default()
+        );
+
+        // Back on the mage, and a rank unlearned in the profile: the part follows.
+        app.world_mut().resource_mut::<Selection>().class = Some(mage);
+        app.world_mut()
+            .resource_mut::<Profile>()
+            .classes
+            .get_mut("mage")
+            .unwrap()
+            .talents
+            .ranks = vec![(TOUGH, 3)];
+        app.update();
+        let want = bonuses(
+            app.world().resource::<TalentCatalog>(),
+            &[(TOUGH, 3)].into_iter().collect(),
+        );
+        assert_eq!(app.world().resource::<MetaParts>().talents, want);
+        assert_eq!(
+            app.world()
+                .resource::<MetaParts>()
+                .talents
+                .school_damage(School::Fire),
+            0.0
+        );
+    }
 
     /// The client's raw talent table and the catalog built from it, loaded once for every test.
     fn client() -> Option<&'static (benilla_formats::TalentCatalog, TalentCatalog)> {
