@@ -807,7 +807,7 @@ mod tests {
 
     fn hero_at(world: &mut World, x: f32, state: HeroState) -> Entity {
         let local = state.player == super::party::LOCAL_PLAYER;
-        let hero = Hero { vy: 0.0, air: 0.0 };
+        let hero = Hero::default();
         let mut e = world.spawn((hero, Transform::from_xyz(x, 0.0, 0.0), state));
         if local {
             e.insert(LocalHero);
