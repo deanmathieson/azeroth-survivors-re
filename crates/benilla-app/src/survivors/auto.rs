@@ -245,13 +245,16 @@ pub(super) fn drive(
             .chain(run.passives.iter().map(|(p, l)| format!("{}:{}", p.key, l)))
             .collect();
         info!(
-            "survivors auto: {:?} t={:.0}s fps={fps:.0} alive={alive} level={} hp={:.0} kills={} damage={:.0} build=[{}]",
+            "survivors auto: {:?} t={:.0}s fps={fps:.0} alive={alive} level={} hp={:.0} kills={} damage={:.0} gold={} elites={} caches={} build=[{}]",
             phase.get(),
             run.elapsed,
             run.level,
             run.hp,
             run.kills,
             run.damage_done,
+            run.gold,
+            run.elites,
+            run.caches,
             build.join(" ")
         );
     }

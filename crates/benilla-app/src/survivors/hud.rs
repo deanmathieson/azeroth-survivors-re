@@ -186,6 +186,8 @@ pub(super) enum Choice {
 #[derive(Resource, Default)]
 pub(super) struct Offer {
     choices: Vec<Choice>,
+    /// The one slot a banish dealt again; the rest of the hand stays where it landed.
+    redealt: Option<usize>,
 }
 
 impl Offer {
@@ -195,6 +197,35 @@ impl Offer {
 
     pub(super) fn choices(&self) -> &[Choice] {
         &self.choices
+    }
+
+    pub(super) fn redealt(&self) -> Option<usize> {
+        self.redealt
+    }
+
+    /// A whole new hand.
+    pub(super) fn deal(&mut self, choices: Vec<Choice>) {
+        self.choices = choices;
+        self.redealt = None;
+    }
+
+    /// Slot `i` dealt again with `choice`, or dropped when nothing is left to offer.
+    pub(super) fn redeal(&mut self, i: usize, choice: Option<Choice>) {
+        match choice {
+            Some(c) if i < self.choices.len() => {
+                self.choices[i] = c;
+                self.redealt = Some(i);
+            }
+            _ => {
+                if i < self.choices.len() {
+                    self.choices.remove(i);
+                }
+                if self.choices.is_empty() {
+                    self.choices.push(Choice::Heal);
+                }
+                self.redealt = None;
+            }
+        }
     }
 }
 
@@ -510,6 +541,7 @@ pub(super) fn setup_hud(
                     .with_children(|line| {
                         line.spawn((LevelText, text(f, "Level 1", 14.0, GOLD)));
                         line.spawn((KillText, text(f, "Kills 0", 14.0, Color::WHITE)));
+                        line.spawn((super::treasure::GoldText, text(f, "Gold 0", 14.0, GOLD)));
                     });
                 });
                 // The minimap cluster's column.
@@ -712,6 +744,7 @@ pub(super) fn setup_hud(
                     ..default()
                 },
             ));
+            super::hand::spawn_tools(root, f);
             root.spawn(centered(f, "Click a card, or press 1, 2 or 3", 14.0, DIM));
         });
 
@@ -800,13 +833,15 @@ pub(super) fn setup_hud(
                 ..default()
             })
             .with_children(|row| {
-                for (i, label) in ["Survived", "Level", "Kills", "Damage", "Bosses"]
-                    .into_iter()
-                    .enumerate()
+                for (i, label) in [
+                    "Survived", "Level", "Kills", "Damage", "Bosses", "Gold", "Elites", "Caches",
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     row.spawn((
                         Node {
-                            width: Val::Px(128.0),
+                            width: Val::Px(112.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(12.0)),
@@ -933,7 +968,8 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection) -> bool {
     true
 }
 
-fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
+/// Everything a hand can deal now, with its weight; banished choices are gone for the run.
+pub(super) fn offer_pool(run: &Run) -> Vec<(Choice, f32)> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
     for (i, o) in run.abilities.iter().enumerate() {
         if o.level < data::MAX_ABILITY_LEVEL {
@@ -959,8 +995,14 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
             }
         }
     }
-    let mut out = Vec::with_capacity(3);
-    while out.len() < 3 && !pool.is_empty() {
+    pool.retain(|&(c, _)| !super::hand::is_banished(c, run));
+    pool
+}
+
+/// Up to `n` choices from `pool` by weight, none twice.
+pub(super) fn draw(mut pool: Vec<(Choice, f32)>, n: usize, rng: &mut Rng) -> Vec<Choice> {
+    let mut out = Vec::with_capacity(n);
+    while out.len() < n && !pool.is_empty() {
         let total: f32 = pool.iter().map(|(_, w)| w).sum();
         let mut pick = rng.f32() * total;
         let mut idx = pool.len() - 1;
@@ -973,6 +1015,12 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
         }
         out.push(pool.swap_remove(idx).0);
     }
+    out
+}
+
+/// A level-up hand: three choices, or the healthstone once everything is mastered.
+pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
+    let mut out = draw(offer_pool(run), 3, rng);
     if out.is_empty() {
         out.push(Choice::Heal);
     }
@@ -980,7 +1028,7 @@ fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
 }
 
 pub(super) fn roll_offer(run: Res<Run>, mut rng: ResMut<Rng>, mut offer: ResMut<Offer>) {
-    offer.choices = choices_for(&run, &mut rng);
+    offer.deal(choices_for(&run, &mut rng));
 }
 
 pub(super) fn pick(
@@ -1005,11 +1053,21 @@ pub(super) fn pick(
         Choice::Heal => run.hp = run.stats().max_hp,
     }
     run.version += 1;
+    close_hand(run, offer, rng, next);
+}
+
+/// A hand done with, taken or passed up: another banked level deals the next, else play resumes.
+pub(super) fn close_hand(
+    run: &mut Run,
+    offer: &mut Offer,
+    rng: &mut Rng,
+    next: &mut NextState<Phase>,
+) {
     run.pending_levels = run.pending_levels.saturating_sub(1);
     if run.pending_levels > 0 {
-        offer.choices = choices_for(run, rng);
+        offer.deal(choices_for(run, rng));
     } else {
-        offer.choices.clear();
+        offer.deal(Vec::new());
         next.set(Phase::Playing);
     }
 }
@@ -1676,6 +1734,9 @@ pub(super) fn refresh_results(
         run.kills.to_string(),
         compact(run.damage_done),
         run.bosses.to_string(),
+        run.gold.to_string(),
+        run.elites.to_string(),
+        run.caches.to_string(),
     ];
     for (stat, mut t) in &mut over_texts.p0() {
         if let Some(v) = values.get(stat.0) {

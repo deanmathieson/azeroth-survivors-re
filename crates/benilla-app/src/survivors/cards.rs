@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 
 use super::data::{self, Kind};
+use super::hand::{self, HandMode};
 use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
 use super::{Phase, Rng, Run};
 
@@ -163,6 +164,13 @@ pub(super) struct Rays;
 #[derive(Resource, Default)]
 pub(super) struct PendingPick(Option<(usize, f32)>);
 
+impl PendingPick {
+    /// A picked card is bursting; the hand is spoken for.
+    pub(super) fn busy(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
 const PICK_SECS: f32 = 0.28;
 
 /// The cards, rebuilt for each offer.
@@ -185,10 +193,16 @@ pub(super) fn deal_cards(
             let card = hud::describe_card(choice, &run, spells.as_deref());
             let rarity = rarity(choice, &run);
             let rc = rarity.color();
+            // After a banish only its slot is dealt again; the rest lie where they landed.
+            let t = match offer.redealt() {
+                Some(r) if r != i => DEAL_SECS + 1.0,
+                Some(_) => 0.0,
+                None => -(i as f32) * DEAL_STAGGER,
+            };
             row.spawn((
                 Card {
                     index: i,
-                    t: -(i as f32) * DEAL_STAGGER,
+                    t,
                     hover: 0.0,
                     tilt: Vec2::ZERO,
                     picked: None,
@@ -408,6 +422,7 @@ pub(super) fn animate_cards(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    mode: Res<HandMode>,
 ) {
     if *phase.get() != Phase::LevelUp {
         pending.0 = None;
@@ -473,7 +488,12 @@ pub(super) fn animate_cards(
         let s = (0.6 + 0.4 * e) * (1.0 + 0.06 * h) * pick_scale;
         tf.scale = Vec2::new(s * squash, s * (1.0 + card.tilt.y.abs() * 0.02));
         tf.rotation = Rot2::degrees((1.0 - e) * -14.0 + lean);
-        let rc = card.rarity.color();
+        // An armed Banish lights every card red.
+        let rc = if mode.banishing {
+            hand::BANISH_RED
+        } else {
+            card.rarity.color()
+        };
         if let Some(sh) = shadow.0.first_mut() {
             sh.color = rc.with_alpha((0.25 + 0.6 * h) * (1.0 - pick_fade));
             sh.blur_radius = Val::Px(18.0 + 22.0 * h);
@@ -504,13 +524,18 @@ pub(super) fn animate_cards(
     }
 }
 
-/// A click on a card, or 1/2/3: start its burst; the choice applies when it finishes.
+/// A click on a card, or 1/2/3: start its burst; the choice applies when it finishes. With Banish
+/// armed the card is struck instead ([`hand::banish`]).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn choose_card(
     phase: Res<State<Phase>>,
     keys: Res<ButtonInput<KeyCode>>,
     cards: Query<(&Card, &Interaction), Changed<Interaction>>,
-    offer: Res<Offer>,
+    mut offer: ResMut<Offer>,
     mut pending: ResMut<PendingPick>,
+    mut mode: ResMut<HandMode>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
 ) {
     if *phase.get() != Phase::LevelUp || pending.0.is_some() {
         return;
@@ -527,7 +552,13 @@ pub(super) fn choose_card(
             pick = Some(i);
         }
     }
-    if let Some(i) = pick.filter(|&i| i < offer.len()) {
+    let Some(i) = pick.filter(|&i| i < offer.len()) else {
+        return;
+    };
+    if !mode.banishing {
         pending.0 = Some((i, 0.0));
+    } else if hand::strikable(i, &run, &offer) {
+        hand::banish(i, &mut run, &mut offer, &mut rng);
+        mode.banishing = false;
     }
 }

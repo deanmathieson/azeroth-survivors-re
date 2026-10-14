@@ -1,5 +1,5 @@
 //! The horde: spawning on a ring outside the view, the chase, contact damage, death, and the
-//! experience gems the dead leave.
+//! experience gems and coins the dead leave.
 
 use std::collections::HashMap;
 
@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::treasure;
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
@@ -25,6 +26,11 @@ pub(super) struct Enemy {
     pub radius: f32,
     pub xp: u32,
     pub boss: bool,
+    /// An elite or a guardian: tougher, marked, and worth a treasure cache.
+    pub elite: bool,
+    pub guardian: bool,
+    /// A guardian holding its post until the hero comes near or hurts it.
+    pub dormant: bool,
     pub attack_cd: f32,
     pub slow: f32,
     pub slow_t: f32,
@@ -58,12 +64,25 @@ pub(super) struct Loot {
     pub pos: Vec3,
     pub xp: u32,
     pub boss: bool,
+    pub elite: bool,
+}
+
+/// What a spawn walks out as.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Rank {
+    Horde,
+    Boss,
+    /// Tougher and marked ([`treasure::elite_body`]).
+    Elite,
+    /// An elite holding a post until the hero comes near.
+    Guardian,
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum GemKind {
     Xp(u32),
     Heal(f32),
+    Gold(u32),
 }
 
 #[derive(Component)]
@@ -74,11 +93,12 @@ pub(super) struct Gem {
 }
 
 /// The `GameObjectDisplayInfo` row and scale a pickup wears: a wisp per experience tier, the
-/// bigger tiers rarer, and a turkey leg for health.
+/// bigger tiers rarer, a turkey leg for health and a heap of gold for coins.
 fn look_for(kind: GemKind) -> (u32, f32) {
     match kind {
         // `TurkeyLeg.mdx`.
         GemKind::Heal(_) => (114, 2.5),
+        GemKind::Gold(gold) => treasure::coin_look(gold),
         // `BFD_WispSmallPurple.mdx`.
         GemKind::Xp(xp) if xp >= 20 => (1307, 1.0),
         // `BFD_WispSmallGreen.mdx`.
@@ -93,22 +113,33 @@ fn radius_for(def: &EnemyDef) -> f32 {
     (if def.big { 1.3 } else { 0.6 }) * def.scale
 }
 
-fn spawn_enemy(
+pub(super) fn spawn_enemy(
     commands: &mut Commands,
     run: &mut Run,
     def: &'static EnemyDef,
     pos: Vec3,
     hero: Vec3,
-    boss: bool,
+    rank: Rank,
 ) {
-    let scale = data::hp_scale(run.elapsed);
+    let mut body = treasure::Body {
+        hp: def.hp * data::hp_scale(run.elapsed),
+        damage: def.damage * data::damage_scale(run.elapsed),
+        scale: def.scale,
+    };
+    let elite = matches!(rank, Rank::Elite | Rank::Guardian);
+    let mut marks = Marks::debuffs();
+    if elite {
+        body = treasure::elite_body(body);
+        // Held for life: the mark floats over the elite's head.
+        marks.add(treasure::ELITE_MARK, f32::INFINITY);
+    }
     let serial = run.guid();
     let e = units::spawn_unit(
         commands,
         &UnitSpec {
             serial,
             display: def.display,
-            scale: def.scale,
+            scale: body.scale,
             level: def.level,
             faction: units::FACTION_MONSTER,
             bytes0: 1 << 8,
@@ -118,17 +149,19 @@ fn spawn_enemy(
         pos,
         yaw_toward(hero - pos),
     );
-    let hp = def.hp * scale;
     commands.entity(e).insert((
         Enemy {
             def,
-            hp,
-            max_hp: hp,
+            hp: body.hp,
+            max_hp: body.hp,
             speed: def.speed,
-            damage: def.damage * data::damage_scale(run.elapsed),
-            radius: radius_for(def),
+            damage: body.damage,
+            radius: radius_for(def) * body.scale / def.scale,
             xp: def.xp,
-            boss,
+            boss: rank == Rank::Boss,
+            elite,
+            guardian: rank == Rank::Guardian,
+            dormant: rank == Rank::Guardian,
             attack_cd: 0.5,
             slow: 1.0,
             slow_t: 0.0,
@@ -140,11 +173,11 @@ fn spawn_enemy(
             dots: Vec::new(),
             dead: false,
         },
-        Marks::debuffs(),
+        marks,
     ));
 }
 
-fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
+pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p.y = world.terrain_height_under(p).unwrap_or(fallback);
     p
 }
@@ -180,7 +213,7 @@ pub(super) fn spawn_enemies(
             hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
             hpos.y,
         );
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, true);
+        spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Boss);
         run.bosses += 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
     }
@@ -198,7 +231,7 @@ pub(super) fn spawn_enemies(
                 hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
                 hpos.y,
             );
-            spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+            spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Horde);
         }
         run.banner = Some(("They're surrounding you!".into(), 3.0));
     }
@@ -208,7 +241,8 @@ pub(super) fn spawn_enemies(
         return;
     }
     spawner.timer = 0.12;
-    let alive = enemies.iter().filter(|e| !e.dead).count();
+    // Guardians at their posts are no part of the horde.
+    let alive = enemies.iter().filter(|e| !e.dead && !e.dormant).count();
     let target = data::target_alive(elapsed);
     if alive >= target {
         return;
@@ -219,16 +253,17 @@ pub(super) fn spawn_enemies(
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
         let pos = ground(&world, hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r, hpos.y);
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, false);
+        spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Horde);
     }
 }
 
 /// The chase: straight at the hero, pushed apart from each other, stopped by crowd control, and
 /// swinging when in reach.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
+    selection: Res<Selection>,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
@@ -244,6 +279,7 @@ pub(super) fn move_enemies(
     };
     let hpos = htf.translation;
     let hero_down = run.dead_t.is_some();
+    let wake = treasure::wake_radius(selection.stage_def().leash);
 
     // Separation over a coarse grid: only neighbours in the same or adjacent cells push.
     const CELL: f32 = 3.0;
@@ -313,6 +349,15 @@ pub(super) fn move_enemies(
         let pos = tf.translation;
         let to_hero = flat(hpos - pos);
         let dist = to_hero.length();
+
+        // A guardian holds its post, out of the chase, until the hero comes near or hurts it.
+        if e.dormant {
+            if dist > wake && e.hp >= e.max_hp {
+                continue;
+            }
+            e.dormant = false;
+            run.banner = Some((format!("{} leaves its post!", e.def.name), 3.0));
+        }
 
         // Strays far behind are brought back in front, as the reference genre does.
         if dist > 75.0 {
@@ -425,6 +470,18 @@ pub(super) fn drop_loot(
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
         }
+        if let Some(gold) = treasure::purse(d.boss, d.elite, run.elapsed, rng.f32()) {
+            spawn_gem(
+                &mut commands,
+                run.guid(),
+                d.pos - Vec3::X * 0.8,
+                GemKind::Gold(gold),
+            );
+        }
+        if d.elite {
+            run.elites += 1;
+            treasure::spawn_cache(&mut commands, run.guid(), d.pos + Vec3::Z * 1.2, false);
+        }
         if count >= MAX_GEMS && !d.boss {
             if let Some(mut g) = gems.iter_mut().find(|g| matches!(g.kind, GemKind::Xp(_))) {
                 if let GemKind::Xp(xp) = &mut g.kind {
@@ -477,6 +534,7 @@ pub(super) fn collect_gems(
             match g.kind {
                 GemKind::Xp(xp) => run.xp += xp as f32 * data::XP_RATE * stats.growth,
                 GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
+                GemKind::Gold(gold) => run.gold += gold,
             }
             commands.entity(e).despawn();
             continue;
