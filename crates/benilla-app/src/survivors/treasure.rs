@@ -12,9 +12,10 @@ use bevy::prelude::*;
 use super::data;
 use super::enemies::{self, Rank, Spawner};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::party;
 use super::run_options::RunOptions;
 use super::units::{self, flat, Fx};
-use super::{Phase, Rng, Run, Selection};
+use super::{HeroState, LocalHero, Phase, Rng, Run, Selection};
 use crate::net::{FieldChanged, Guid, ObjectStore};
 
 /// The first elite walks out at two minutes, then one every minute to a minute and a half.
@@ -125,10 +126,11 @@ pub(super) fn coin_look(gold: u32) -> (u32, f32) {
     (COIN_DISPLAY, (0.6 + 0.04 * gold as f32).min(1.4))
 }
 
-/// What a cache holds: a burst of gold and a level-up hand that needs no experience. The one place
-/// a cache's reward is decided. Returns the gold given.
-pub(super) fn open_cache(run: &mut Run) -> u32 {
-    let gold = cache_gold(run.elapsed, run.stats().gold);
+/// What a cache holds: a burst of gold (under the gold multiplier of the hero who opened it, into
+/// the party's purse) and a level-up hand that needs no experience. The one place a cache's reward
+/// is decided. Returns the gold given.
+pub(super) fn open_cache(run: &mut Run, opener: &HeroState) -> u32 {
+    let gold = cache_gold(run.elapsed, opener.stats().gold);
     run.gold += gold;
     run.caches += 1;
     run.pending_levels += 1;
@@ -219,7 +221,7 @@ pub(super) fn place_guardians(
     selection: Res<Selection>,
     opts: Res<RunOptions>,
     mut spawner: ResMut<Spawner>,
-    hero: Query<&Transform, With<Hero>>,
+    hero: Query<&Transform, With<LocalHero>>,
     world: WorldPoint,
 ) {
     if run.guarded {
@@ -251,7 +253,8 @@ pub(super) fn place_guardians(
     }
 }
 
-/// From the second minute, every minute or so one of the moment's foes walks out as an elite.
+/// From the second minute, every minute or so one of the moment's foes walks out as an elite, near
+/// the heroes still standing.
 pub(super) fn spawn_elites(
     mut commands: Commands,
     mut run: ResMut<Run>,
@@ -259,15 +262,17 @@ pub(super) fn spawn_elites(
     selection: Res<Selection>,
     opts: Res<RunOptions>,
     mut spawner: ResMut<Spawner>,
-    hero: Query<&Transform, With<Hero>>,
+    heroes: Query<(&Transform, &HeroState), With<Hero>>,
     world: WorldPoint,
 ) {
-    let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() || run.elapsed < run.next_elite {
+    let standing = heroes.iter().filter(|(_, h)| h.alive());
+    let Some(hpos) = party::centre(standing.map(|(tf, _)| tf.translation)) else {
+        return;
+    };
+    if run.elapsed < run.next_elite {
         return;
     }
     run.next_elite = run.elapsed + rng.range(ELITE_GAP_MIN, ELITE_GAP_MAX);
-    let hpos = h.translation;
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(run.elapsed, roster.enemies.len());
     let def = &roster.enemies[pool[rng.index(pool.len())]];
@@ -290,22 +295,23 @@ pub(super) fn spawn_elites(
     run.banner = Some((format!("Elite {} approaches!", def.name), 3.0));
 }
 
-/// Walking into a cache opens it, a locked one only for its price: its lid lifts, [`open_cache`]
-/// gives the reward, and it fades a moment later.
+/// Walking into a cache opens it, a locked one only for its price (from the party's purse): its lid
+/// lifts, [`open_cache`] gives the reward to the nearest hero standing in reach, and it fades a
+/// moment later.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn open_caches(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
-    hero: Query<(Entity, &Transform), With<Hero>>,
+    heroes: Query<(Entity, &Transform, &HeroState), With<Hero>>,
     mut caches: Query<(Entity, &Guid, &Transform, &mut Cache, &mut ObjectStore), Without<Hero>>,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
 ) {
-    let Ok((hero_e, h)) = hero.single() else {
+    if heroes.is_empty() {
         return;
-    };
+    }
     let dt = time.delta_secs();
     for (e, guid, tf, mut cache, mut store) in &mut caches {
         if let Some(t) = cache.opened.as_mut() {
@@ -318,12 +324,20 @@ pub(super) fn open_caches(
             }
             continue;
         }
-        if run.dead_t.is_some()
-            || flat(tf.translation - h.translation).length() > CACHE_REACH + HERO_RADIUS
-        {
+        let at = tf.translation;
+        let reach = heroes
+            .iter()
+            .filter(|(_, h, state)| {
+                state.alive() && flat(at - h.translation).length() <= CACHE_REACH + HERO_RADIUS
+            })
+            .map(|(e, h, _)| (e, h.translation));
+        let Some((hero_e, _)) = party::nearest(reach, at) else {
             cache.refused = false;
             continue;
-        }
+        };
+        let Ok((.., opener)) = heroes.get(hero_e) else {
+            continue;
+        };
         let cost = cache.locked.then(|| chest_cost(run.caches));
         if let Some(cost) = cost {
             if run.gold < cost {
@@ -350,7 +364,7 @@ pub(super) fn open_caches(
             old: GO_STATE_READY,
             new: GO_STATE_ACTIVE,
         });
-        let gold = open_cache(&mut run);
+        let gold = open_cache(&mut run, opener);
         fx.number(hero_e, gold as f32, false, COLOR_GOLD);
         let line = match cost {
             Some(cost) => format!("Chest opened for {cost} gold!"),
@@ -424,7 +438,7 @@ mod tests {
     #[test]
     fn a_cache_gives_gold_and_a_hand() {
         let mut run = Run::default();
-        let gold = open_cache(&mut run);
+        let gold = open_cache(&mut run, &HeroState::default());
         assert_eq!(gold, cache_gold(0.0, 1.0));
         assert_eq!(run.gold, gold);
         assert_eq!(run.caches, 1);

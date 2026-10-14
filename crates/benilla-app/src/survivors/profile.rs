@@ -419,9 +419,11 @@ pub(super) fn save_if_dirty(mut profile: ResMut<Profile>) {
     }
 }
 
-/// Turn the one GameOver transition into exactly one persistent run record and one [`RunEnded`].
+/// Turn the one GameOver transition into exactly one persistent run record and one [`RunEnded`]:
+/// the local player's, with its hero's class and damage.
 pub(super) fn record_finished(
     mut run: ResMut<Run>,
+    local: Query<&super::HeroState, With<super::LocalHero>>,
     selection: Res<Selection>,
     mut profile: ResMut<Profile>,
     mut news: ResMut<LastRunNews>,
@@ -435,10 +437,12 @@ pub(super) fn record_finished(
     if auto.is_some() && std::env::var("WOW_SURVIVORS_RECORD").as_deref() != Ok("1") {
         return;
     }
+    let me = local.single().ok();
     let class = selection.class.unwrap_or_else(|| {
+        let name = me.map_or(data::CLASSES[0].name, |hero| hero.class.name);
         data::CLASSES
             .iter()
-            .position(|class| class.name == run.class.name)
+            .position(|class| class.name == name)
             .unwrap_or(0)
     });
     let outcome = RunOutcome {
@@ -450,7 +454,7 @@ pub(super) fn record_finished(
         // The mode tracks bosses spawned, not bosses killed.
         bosses: run.bosses,
         level: run.level,
-        damage: run.damage_done,
+        damage: me.map_or(run.damage_done, |hero| hero.damage_done),
         gold: run.gold,
         reward_mult: run.reward_mult,
     };

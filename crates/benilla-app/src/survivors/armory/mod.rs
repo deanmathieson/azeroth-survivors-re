@@ -51,9 +51,9 @@ use bevy::ui_render::ui_material::MaterialNode;
 use bevy::window::PrimaryWindow;
 
 use super::data::ClassDef;
-use super::hero::Hero;
 use super::hud::{self, HudFont, MenuRoot};
 use super::menu::{self, MenuBuilt};
+use super::LocalHero;
 use super::{Phase, Selection};
 use crate::glue::art::{tc_rect, GlueArt, GOLD, NAME_EDGE, REALM_TAB_TC};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -1041,7 +1041,7 @@ fn dev_aid(
     mut aid: ResMut<DevAid>,
     phase: Res<State<Phase>>,
     menu: Query<(), (With<MenuRoot>, With<MenuBuilt>)>,
-    heroes: Query<(), With<Hero>>,
+    heroes: Query<(), With<LocalHero>>,
     loading: Res<crate::loading_screen::LoadingScreen>,
     mut state: ResMut<ArmoryState>,
 ) {

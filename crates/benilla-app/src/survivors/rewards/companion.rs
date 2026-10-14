@@ -1,5 +1,5 @@
-//! The companion: a critter the Companion perk brings on every run. It keeps to the hero's heel
-//! and, every [`FETCH_EVERY`] seconds, runs out for the nearest experience gem or coin lying
+//! The companion: a critter the Companion perk brings on every run. It keeps to the local hero's
+//! heel and, every [`FETCH_EVERY`] seconds, runs out for the nearest experience gem or coin lying
 //! beyond the hero's pickup range but within [`FETCH_REACH`] yards of the hero. Reaching it sends
 //! the pickup to the hero along the magnet's own path (`enemies::collect_gems`), so it is collected
 //! as any other. Healing is left where it fell and treasure caches are never touched. The critter
@@ -13,7 +13,7 @@ use super::super::enemies::{self, Gem, GemKind};
 use super::super::hero::Hero;
 use super::super::profile::Profile;
 use super::super::units::{self, flat, yaw_toward, UnitSpec};
-use super::super::{Phase, Run};
+use super::super::{HeroState, LocalHero, Phase, Run};
 use super::perks;
 use crate::creature_anim::{move_flags, MovementState};
 
@@ -124,17 +124,18 @@ pub(in crate::survivors) fn fetch_target<T>(
         .map(|(key, _)| key)
 }
 
-/// Experience and coins not already flying to the hero.
+/// Experience and coins not already flying to a hero.
 fn fetchable(gem: &Gem) -> bool {
-    !gem.pulled && matches!(gem.kind, GemKind::Xp(_) | GemKind::Gold(_))
+    gem.pulled.is_none() && matches!(gem.kind, GemKind::Xp(_) | GemKind::Gold(_))
 }
 
-/// Once a run is under way, the companion joins it at the hero's side, if the perk is bought.
+/// Once a run is under way, the companion joins it at the local hero's side, if the perk is bought:
+/// the perk is the local player's.
 fn spawn_companion(
     mut commands: Commands,
     profile: Res<Profile>,
     mut run: ResMut<Run>,
-    hero: Query<&Transform, With<Hero>>,
+    hero: Query<&Transform, With<LocalHero>>,
     companions: Query<(), With<Companion>>,
 ) {
     if !companions.is_empty() || !perks::companion_unlocked(&profile.rewards) {
@@ -169,9 +170,8 @@ fn spawn_companion(
 #[allow(clippy::type_complexity)]
 fn run_companion(
     time: Res<Time>,
-    run: Res<Run>,
     world: WorldPoint,
-    hero: Query<&Transform, (With<Hero>, Without<Companion>)>,
+    hero: Query<(Entity, &Transform, &HeroState), (With<LocalHero>, Without<Companion>)>,
     mut companions: Query<
         (&mut Transform, &mut MovementState, &mut Companion),
         (Without<Hero>, Without<Gem>),
@@ -182,10 +182,12 @@ fn run_companion(
     if dt <= 0.0 {
         return;
     }
-    let Ok(h) = hero.single() else { return };
+    let Ok((owner, h, me)) = hero.single() else {
+        return;
+    };
     let hpos = h.translation;
-    let stats = run.stats();
-    let down = run.dead_t.is_some();
+    let stats = me.stats();
+    let down = me.dead_t.is_some();
     for (mut tf, mut mv, mut pet) in &mut companions {
         let pos = tf.translation;
         if flat(hpos - pos).length() > LEASH {
@@ -197,9 +199,9 @@ fn run_companion(
         let mut chase = None;
         if let Some((target, t)) = pet.fetching.take() {
             if let Ok((_, at, mut gem)) = gems.get_mut(target) {
-                if !gem.pulled && t < GIVE_UP && !down {
+                if gem.pulled.is_none() && t < GIVE_UP && !down {
                     if flat(at.translation - pos).length() <= GRAB {
-                        gem.pulled = true;
+                        gem.pulled = Some(owner);
                     } else {
                         pet.fetching = Some((target, t + dt));
                         chase = Some(at.translation);

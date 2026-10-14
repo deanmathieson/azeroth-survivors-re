@@ -10,9 +10,8 @@ use bevy::prelude::*;
 
 use super::super::data::{self, CLASSES};
 use super::super::enemies::Loot;
-use super::super::hero::Hero;
 use super::super::hud::{BannerText, NoteKind, ResultsNotes, GOLD_TONE};
-use super::super::{treasure, Phase, Rng, Run, Selection};
+use super::super::{treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
 use super::save::Collected;
 use super::store::{GearRead, GearStore};
 use super::{drops_for, piece, BossDrop, Slot};
@@ -47,12 +46,12 @@ pub(super) fn boss_index(map: usize, name: &str) -> Option<usize> {
     data::roster(map).bosses.iter().position(|b| b.name == name)
 }
 
-/// The hero's class, as the profile records it: the pick, else the run's class by name.
-fn hero_class(selection: &Selection, run: &Run) -> usize {
+/// The local hero's class, as the profile records it: the pick, else the hero's class by name.
+fn hero_class(selection: &Selection, hero: &HeroState) -> usize {
     selection.class.unwrap_or_else(|| {
         CLASSES
             .iter()
-            .position(|c| c.name == run.class.name)
+            .position(|c| c.name == hero.class.name)
             .unwrap_or(0)
     })
 }
@@ -64,13 +63,15 @@ pub(super) struct LootToasts {
     shown: Option<(String, Color)>,
 }
 
-/// A slain roster boss's drops: each new piece is collected (and maybe worn) at once, announced
-/// and noted for the results; each duplicate pays gold.
+/// A slain roster boss's drops, for the local player's class and profile, under its hero's luck:
+/// each new piece is collected (and maybe worn) at once, announced and noted for the results; each
+/// duplicate pays gold into the party's purse.
 pub(super) fn roll_loot(
     mut loot: MessageReader<Loot>,
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     selection: Res<Selection>,
+    local: Query<&HeroState, With<LocalHero>>,
     mut store: GearStore,
     mut notes: ResMut<ResultsNotes>,
     mut toasts: ResMut<LootToasts>,
@@ -83,8 +84,10 @@ pub(super) fn roll_loot(
         let Some(drop) = boss_index(map, kill.def.name).and_then(|b| drops_for(map, b)) else {
             continue;
         };
-        let class = hero_class(&selection, &run);
-        let stats = run.stats();
+        let fallback = HeroState::default();
+        let me = local.single().unwrap_or(&fallback);
+        let class = hero_class(&selection, me);
+        let stats = me.stats();
         for slot in roll(drop, run.reward_mult, stats.luck, &mut rng) {
             let Some(p) = piece(class, slot, drop.rarity) else {
                 continue;
@@ -161,13 +164,14 @@ pub(super) fn clear_toasts(mut toasts: ResMut<LootToasts>) {
     toasts.shown = None;
 }
 
-/// The hero holds its class's worn main-hand piece, else the class's own weapon: the creature
-/// weapon slot the attach already dresses from (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`). Armor is
-/// baked into the trainer display, so the other slots do not show.
+/// The local hero holds its class's worn main-hand piece, else the class's own weapon: the
+/// creature weapon slot the attach already dresses from (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`). Armor
+/// is baked into the trainer display, so the other slots do not show. The gear is the local
+/// player's.
 pub(super) fn dress_hero(
     selection: Res<Selection>,
     gear: GearRead,
-    mut heroes: Query<&mut ObjectStore, With<Hero>>,
+    mut heroes: Query<&mut ObjectStore, With<LocalHero>>,
 ) {
     let Some(class) = selection.class else { return };
     let Some(&(slot, default, ..)) = CLASSES

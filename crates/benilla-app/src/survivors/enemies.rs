@@ -10,10 +10,11 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::party;
 use super::run_options::{self, RunOptions, XpCarry};
 use super::treasure;
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
-use super::{Phase, Rng, Run, Selection};
+use super::{HeroState, LocalHero, Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::net::{FieldChanged, Guid, ObjectStore};
 
@@ -42,12 +43,17 @@ pub(super) struct Enemy {
     pub weaken_t: f32,
     pub dots: Vec<Dot>,
     pub dead: bool,
+    /// The hero it must go for until the run second given, whatever else is near: a taunt's
+    /// seam ([`party::pick_target`]); nothing taunts yet.
+    pub taunted: Option<(Entity, f32)>,
 }
 
 pub(super) struct Dot {
     pub dps: f32,
     pub left: f32,
     pub tick: f32,
+    /// The hero whose spell it is, credited with its ticks.
+    pub source: Entity,
 }
 
 /// A corpse playing its death before it fades.
@@ -94,8 +100,8 @@ pub(super) enum GemKind {
 pub(super) struct Gem {
     /// Read by the rewards companion, which fetches only experience and coins.
     pub(super) kind: GemKind,
-    /// Flying to the hero; the companion sets it to send a fetched pickup on its way.
-    pub(super) pulled: bool,
+    /// The hero it is flying to; the companion sets it to send a fetched pickup on its way.
+    pub(super) pulled: Option<Entity>,
     speed: f32,
 }
 
@@ -184,6 +190,7 @@ pub(super) fn spawn_enemy(
             weaken_t: 0.0,
             dots: Vec::new(),
             dead: false,
+            taunted: None,
         },
         marks,
     ));
@@ -194,8 +201,8 @@ pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p
 }
 
-/// Keep the horde topped up on a ring outside the view, with the bosses and the encircling waves
-/// on the clock.
+/// Keep the horde topped up on a ring outside the view, round the heroes still standing, with the
+/// bosses and the encircling waves on the clock.
 pub(super) fn spawn_enemies(
     mut commands: Commands,
     time: Res<Time>,
@@ -204,15 +211,14 @@ pub(super) fn spawn_enemies(
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
     opts: Res<RunOptions>,
-    hero: Query<&Transform, With<Hero>>,
+    heroes: Query<(&Transform, &HeroState), With<Hero>>,
     enemies: Query<&Enemy>,
     world: WorldPoint,
 ) {
-    let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
+    let standing = heroes.iter().filter(|(_, h)| h.alive());
+    let Some(hpos) = party::centre(standing.map(|(tf, _)| tf.translation)) else {
         return;
-    }
-    let hpos = h.translation;
+    };
     let elapsed = run.elapsed;
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
@@ -299,15 +305,50 @@ pub(super) fn spawn_enemies(
     }
 }
 
-/// The chase: straight at the hero, pushed apart from each other, stopped by crowd control, and
-/// swinging when in reach.
+/// One hero as the horde sees it this frame.
+#[derive(Clone, Copy)]
+struct Seen {
+    e: Entity,
+    pos: Vec3,
+    /// Standing, not down.
+    up: bool,
+    /// Slipped the horde's sight (Fade): only bosses still see it.
+    hidden: bool,
+    threat: f32,
+}
+
+/// The hero an enemy at `pos` goes for, and where it stands: its taunter's while `taunted` lasts
+/// (to run second `now`), else [`party::pick_target`]'s among the heroes standing that it can see.
+/// `None` with the party down or, for all but a boss, every hero standing hidden.
+fn chase_target(
+    pos: Vec3,
+    boss: bool,
+    taunted: Option<(Entity, f32)>,
+    now: f32,
+    seen: &[Seen],
+) -> Option<(Entity, Vec3)> {
+    let prey = seen.iter().filter(|h| h.up && (boss || !h.hidden));
+    let forced = taunted
+        .filter(|&(_, until)| until > now)
+        .and_then(|(hero, _)| prey.clone().find(|h| h.e == hero));
+    let picked = match forced {
+        Some(h) => Some(h.e),
+        None => party::pick_target(pos, prey.map(|h| (h.e, h.pos, h.threat))),
+    };
+    picked
+        .and_then(|hero| seen.iter().find(|h| h.e == hero))
+        .map(|h| (h.e, h.pos))
+}
+
+/// The chase: straight at the nearest hero standing, pushed apart from each other, stopped by
+/// crowd control, and swinging at that hero when in reach.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
     selection: Res<Selection>,
     world: WorldPoint,
-    hero: Query<(Entity, &Transform), (With<Hero>, Without<Enemy>)>,
+    mut heroes: Query<(Entity, &Transform, &mut HeroState), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
     mut fx: Fx,
     mut hits: MessageWriter<Hit>,
@@ -316,11 +357,20 @@ pub(super) fn move_enemies(
     if dt <= 0.0 {
         return;
     }
-    let Ok((hero_e, htf)) = hero.single() else {
+    let seen: Vec<Seen> = heroes
+        .iter()
+        .map(|(e, tf, h)| Seen {
+            e,
+            pos: tf.translation,
+            up: h.alive(),
+            hidden: h.mobile.vanish_t > 0.0,
+            threat: h.threat,
+        })
+        .collect();
+    if seen.is_empty() {
         return;
-    };
-    let hpos = htf.translation;
-    let hero_down = run.dead_t.is_some();
+    }
+    let hero_down = seen.iter().all(|h| !h.up);
     let wake = treasure::wake_radius(selection.stage_def().leash);
 
     // Separation over a coarse grid: only neighbours in the same or adjacent cells push.
@@ -389,6 +439,15 @@ pub(super) fn move_enemies(
             e.weaken = 1.0;
         }
         let pos = tf.translation;
+        // The nearest hero standing (the nearest at all once the party is down) wakes guardians
+        // and calls strays back.
+        let near = |up_only: bool| {
+            let heroes = seen.iter().filter(|h| h.up || !up_only);
+            party::nearest(heroes.map(|h| (h.e, h.pos)), pos)
+        };
+        let Some((_, hpos)) = near(true).or_else(|| near(false)) else {
+            continue;
+        };
         let to_hero = flat(hpos - pos);
         let dist = to_hero.length();
 
@@ -408,17 +467,20 @@ pub(super) fn move_enemies(
             continue;
         }
 
-        // Under Fade the horde has lost the hero: it mills where it stands.
-        let lost = run.mobile.vanish_t > 0.0 && !e.boss;
+        // Under Fade a hero is lost to the horde (bosses still see it): with every hero standing
+        // lost, it mills where it stands.
+        let chase = chase_target(pos, e.boss, e.taunted, run.elapsed, &seen);
+        let lost = !hero_down && chase.is_none();
         let held = e.stun_t > 0.0 || e.root_t > 0.0 || lost;
-        let contact = dist <= HERO_RADIUS + e.radius + 0.35;
+        let to_target = chase.map_or(to_hero, |(_, at)| flat(at - pos));
+        let contact = chase.is_some() && to_target.length() <= HERO_RADIUS + e.radius + 0.35;
         let mut step = Vec3::ZERO;
         let mut speed = 0.0;
         if !held && !hero_down {
             let dir = if e.fear_t > 0.0 {
-                -to_hero.normalize_or_zero()
+                -to_target.normalize_or_zero()
             } else {
-                to_hero.normalize_or_zero()
+                to_target.normalize_or_zero()
             };
             if !contact || e.fear_t > 0.0 {
                 speed = e.speed * e.slow;
@@ -441,6 +503,7 @@ pub(super) fn move_enemies(
             mv.flags = 0;
         }
 
+        let Some((target, _)) = chase else { continue };
         if contact
             && !lost
             && e.stun_t <= 0.0
@@ -448,15 +511,19 @@ pub(super) fn move_enemies(
             && e.attack_cd <= 0.0
             && !hero_down
         {
+            let Ok((_, _, mut struck)) = heroes.get_mut(target) else {
+                continue;
+            };
             e.attack_cd = if e.boss { 1.0 } else { 1.3 };
             let raw = e.damage * e.weaken;
-            let taken = hero::hurt_hero(&mut run, raw);
-            fx.swing(ent, hero_e, taken);
+            let taken = hero::hurt_hero(&mut struck, raw);
+            fx.swing(ent, target, taken);
             if taken > 0.0 {
-                fx.number(hero_e, taken, false, COLOR_HURT);
+                fx.number(target, taken, false, COLOR_HURT);
             }
-            if run.thorns_t > 0.0 {
-                hits.write(Hit::direct(ent, run.thorns * run.stats().might, false));
+            if struck.thorns_t > 0.0 {
+                let thorns = struck.thorns * struck.stats().might;
+                hits.write(Hit::direct(target, ent, thorns, false));
             }
         }
     }
@@ -505,9 +572,14 @@ pub(super) fn drop_loot(
     mut rng: ResMut<Rng>,
     mut run: ResMut<Run>,
     mut gems: Query<&mut Gem>,
+    local: Query<&HeroState, With<LocalHero>>,
 ) {
     let mut count = gems.iter().count();
-    let gold = run.stats().gold;
+    // Coins are worth what the local player's gold multiplier makes them: the purse is shared.
+    let gold = local
+        .single()
+        .map_or_else(|_| HeroState::default().stats(), HeroState::stats)
+        .gold;
     for d in drops.read() {
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
@@ -547,40 +619,69 @@ fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * 0.5);
     commands.entity(e).insert(Gem {
         kind,
-        pulled: false,
+        pulled: None,
         speed: 6.0,
     });
 }
 
-/// Gems in the magnet's reach fly to the hero; levels bank as they land.
+/// Gems in a magnet's reach fly to the nearest hero standing whose magnet reaches them; experience
+/// (under the picker's growth) and gold go to the party's pool, healing to the picker, and levels
+/// bank as they land.
+#[allow(clippy::type_complexity)]
 pub(super) fn collect_gems(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
-    hero: Query<&Transform, (With<Hero>, Without<Gem>)>,
+    mut heroes: Query<
+        (Entity, &Transform, &mut HeroState, Has<LocalHero>),
+        (With<Hero>, Without<Gem>),
+    >,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
 ) {
-    let Ok(h) = hero.single() else { return };
-    if run.dead_t.is_some() {
+    // Each hero standing: where gems fly to, its magnet, and its growth.
+    let standing: Vec<(Entity, Vec3, f32, f32)> = heroes
+        .iter()
+        .filter(|(_, _, h, _)| h.alive())
+        .map(|(e, tf, h, _)| {
+            let s = h.stats();
+            (e, tf.translation + Vec3::Y * 1.0, s.magnet, s.growth)
+        })
+        .collect();
+    if standing.is_empty() {
         return;
     }
     let dt = time.delta_secs();
-    let stats = run.stats();
-    let target = h.translation + Vec3::Y * 1.0;
     for (e, mut tf, mut g) in &mut gems {
-        let d = target - tf.translation;
-        let dist = d.length();
-        if !g.pulled && flat(d).length() <= stats.magnet {
-            g.pulled = true;
+        let at = tf.translation;
+        if g.pulled.is_none() {
+            let reached = standing
+                .iter()
+                .filter(|h| flat(h.1 - at).length() <= h.2)
+                .map(|h| (h.0, h.1));
+            g.pulled = party::nearest(reached, at).map(|(hero, _)| hero);
         }
-        if !g.pulled {
+        let Some(to) = g.pulled else { continue };
+        // Its hero fell on the way: it flies on to the nearest one standing.
+        let Some(picker) = standing.iter().find(|h| h.0 == to).or_else(|| {
+            standing
+                .iter()
+                .min_by(|a, b| hero::reach(at, a.1).total_cmp(&hero::reach(at, b.1)))
+        }) else {
             continue;
-        }
+        };
+        g.pulled = Some(picker.0);
+        let d = picker.1 - at;
+        let dist = d.length();
         if dist < 0.9 {
             match g.kind {
-                GemKind::Xp(xp) => run.xp += xp as f32 * data::XP_RATE * stats.growth,
-                GemKind::Heal(hp) => run.hp = (run.hp + hp).min(stats.max_hp),
+                GemKind::Xp(xp) => run.xp += xp as f32 * data::XP_RATE * picker.3,
+                GemKind::Heal(hp) => {
+                    let target = party::support_target(picker.0);
+                    if let Ok((.., mut hero, _)) = heroes.get_mut(target) {
+                        party::heal(&mut hero, hp);
+                    }
+                }
                 GemKind::Gold(gold) => run.gold += gold,
             }
             commands.entity(e).despawn();
@@ -589,14 +690,20 @@ pub(super) fn collect_gems(
         g.speed += 30.0 * dt;
         tf.translation += d / dist * (g.speed * dt).min(dist);
     }
+    let learned = run.level;
     while run.xp >= data::xp_to_next(run.level) {
         run.xp -= data::xp_to_next(run.level);
         run.level += 1;
         run.pending_levels += 1;
-        if run.level == super::mobility::LEARN_LEVEL {
-            if let Some(m) = super::mobility::for_class(run.class.id) {
-                run.banner = Some((format!("You have learned {}! Press F.", m.name), 4.0));
-            }
+    }
+    // The local hero is told of its mobility as the party reaches the level that teaches it.
+    if learned < super::mobility::LEARN_LEVEL && run.level >= super::mobility::LEARN_LEVEL {
+        let class = heroes
+            .iter()
+            .find(|(.., local)| *local)
+            .map(|(_, _, h, _)| h.class.id);
+        if let Some(m) = class.and_then(super::mobility::for_class) {
+            run.banner = Some((format!("You have learned {}! Press F.", m.name), 4.0));
         }
     }
     if run.pending_levels > 0 {
@@ -617,5 +724,180 @@ pub(super) fn still_gems(
     }
     for mut drive in &mut drives {
         drive.set_paused(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::super::bonus::{Bonus, StatKey};
+    use super::*;
+
+    fn id(i: u32) -> Entity {
+        Entity::from_raw_u32(i).unwrap()
+    }
+
+    fn seen(i: u32, x: f32) -> Seen {
+        Seen {
+            e: id(i),
+            pos: Vec3::new(x, 0.0, 0.0),
+            up: true,
+            hidden: false,
+            threat: 1.0,
+        }
+    }
+
+    #[test]
+    fn the_horde_goes_for_the_nearest_hero_standing() {
+        let target = |party: &[Seen], boss: bool| {
+            chase_target(Vec3::ZERO, boss, None, 0.0, party).map(|(e, _)| e)
+        };
+        let mut party = [seen(1, 10.0), seen(2, -3.0), seen(3, 6.0)];
+        assert_eq!(
+            chase_target(Vec3::ZERO, false, None, 0.0, &party),
+            Some((id(2), party[1].pos))
+        );
+        // A hero down is passed over.
+        party[1].up = false;
+        assert_eq!(target(&party, false), Some(id(3)));
+        // So is one under Fade, except by a boss.
+        party[2].hidden = true;
+        assert_eq!(target(&party, false), Some(id(1)));
+        assert_eq!(target(&party, true), Some(id(3)));
+        // Every hero standing hidden: the horde has lost them.
+        party[0].hidden = true;
+        assert_eq!(target(&party, false), None);
+        // The whole party down: no one to chase.
+        for h in &mut party {
+            h.up = false;
+        }
+        assert_eq!(target(&party, true), None);
+    }
+
+    #[test]
+    fn a_taunt_holds_the_enemy_while_it_lasts() {
+        let party = [seen(1, 10.0), seen(2, -3.0)];
+        let taunt = Some((id(1), 5.0));
+        let target = |now: f32| chase_target(Vec3::ZERO, false, taunt, now, &party).map(|t| t.0);
+        assert_eq!(target(4.0), Some(id(1)));
+        assert_eq!(target(5.0), Some(id(2)), "over: back to the nearest");
+        // A taunt from a hero who is down holds nothing.
+        let mut down = party;
+        down[0].up = false;
+        assert_eq!(
+            chase_target(Vec3::ZERO, false, taunt, 0.0, &down).map(|t| t.0),
+            Some(id(2))
+        );
+    }
+
+    #[test]
+    fn a_blow_hurts_only_the_hero_it_lands_on() {
+        let party = [seen(1, 10.0), seen(2, -3.0)];
+        let mut heroes = [HeroState::default(), HeroState::default()];
+        let full = heroes[0].hp;
+        let (struck, _) = chase_target(Vec3::ZERO, false, None, 0.0, &party).unwrap();
+        let i = party.iter().position(|h| h.e == struck).unwrap();
+        let taken = hero::hurt_hero(&mut heroes[i], 30.0);
+        assert!(taken > 0.0);
+        assert_eq!(heroes[1].hp, full - taken);
+        assert_eq!(heroes[1].damage_taken, f64::from(taken));
+        assert_eq!((heroes[0].hp, heroes[0].damage_taken), (full, 0.0));
+    }
+
+    fn hero_at(world: &mut World, x: f32, state: HeroState) -> Entity {
+        let local = state.player == super::party::LOCAL_PLAYER;
+        let hero = Hero { vy: 0.0, air: 0.0 };
+        let mut e = world.spawn((hero, Transform::from_xyz(x, 0.0, 0.0), state));
+        if local {
+            e.insert(LocalHero);
+        }
+        e.id()
+    }
+
+    fn gem_at(world: &mut World, at: Vec3, kind: GemKind) -> Entity {
+        let gem = Gem {
+            kind,
+            pulled: None,
+            speed: 6.0,
+        };
+        world.spawn((Transform::from_translation(at), gem)).id()
+    }
+
+    /// Two heroes, ten yards apart: the local one plain (a 4.5 yd magnet), the other with three
+    /// times the reach and half again the growth.
+    fn two_heroes(world: &mut World) -> (Entity, Entity) {
+        world.init_resource::<Time>();
+        world.init_resource::<Run>();
+        world.init_resource::<NextState<Phase>>();
+        let a = hero_at(world, 0.0, HeroState::default());
+        let mut wide = HeroState {
+            player: 1,
+            ..HeroState::default()
+        };
+        wide.bonuses.add(&Bonus::new(StatKey::Pickup, 2.0));
+        wide.bonuses.add(&Bonus::new(StatKey::Experience, 0.5));
+        let b = hero_at(world, 10.0, wide);
+        (a, b)
+    }
+
+    #[test]
+    fn pickups_fly_to_the_nearest_hero_whose_magnet_reaches_them() {
+        let mut world = World::new();
+        let (a, b) = two_heroes(&mut world);
+        // In both magnets: the nearer hero's.
+        let both = gem_at(&mut world, Vec3::new(3.0, 0.0, 0.0), GemKind::Xp(1));
+        // Nearer `a` but past its magnet: `b`'s, whose magnet reaches it.
+        let past = gem_at(&mut world, Vec3::new(4.8, 0.0, 0.0), GemKind::Gold(1));
+        // In no magnet: it lies where it fell.
+        let none = gem_at(&mut world, Vec3::new(-20.0, 0.0, 0.0), GemKind::Xp(1));
+        world.run_system_once(collect_gems).unwrap();
+        let pulled = |g: Entity| world.get::<Gem>(g).unwrap().pulled;
+        assert_eq!(pulled(both), Some(a));
+        assert_eq!(pulled(past), Some(b));
+        assert_eq!(pulled(none), None);
+        // The hero it flies to falls: it flies on to the one still standing.
+        world.get_mut::<HeroState>(b).unwrap().dead_t = Some(0.0);
+        world.run_system_once(collect_gems).unwrap();
+        assert_eq!(world.get::<Gem>(past).unwrap().pulled, Some(a));
+    }
+
+    #[test]
+    fn experience_and_gold_go_to_the_pool_and_a_heal_to_its_picker() {
+        let mut world = World::new();
+        let (a, b) = two_heroes(&mut world);
+        for hero in [a, b] {
+            world.get_mut::<HeroState>(hero).unwrap().hp = 50.0;
+        }
+        // Each lands on its hero this frame.
+        let on = |x: f32| Vec3::new(x, 1.0, 0.0);
+        let gems = [
+            gem_at(&mut world, on(10.0), GemKind::Xp(1)),
+            gem_at(&mut world, on(0.0), GemKind::Gold(7)),
+            gem_at(&mut world, on(0.0), GemKind::Heal(30.0)),
+        ];
+        world.run_system_once(collect_gems).unwrap();
+        let run = world.resource::<Run>();
+        // `b`'s growth on `b`'s pickup.
+        assert_eq!(run.xp, data::XP_RATE * 1.5);
+        assert_eq!(run.gold, 7);
+        assert!(gems.iter().all(|&g| world.get_entity(g).is_err()), "taken");
+        assert_eq!(world.get::<HeroState>(a).unwrap().hp, 80.0);
+        assert_eq!(world.get::<HeroState>(b).unwrap().hp, 50.0);
+        // A level's worth banks one hand for the party, which deals one pick to each hero.
+        gem_at(&mut world, on(0.0), GemKind::Xp(5));
+        world.run_system_once(collect_gems).unwrap();
+        assert_eq!(world.resource::<Run>().level, 2);
+        assert_eq!(world.resource::<Run>().pending_levels, 1);
+        world
+            .run_system_once(|mut run: ResMut<Run>, mut heroes: Query<&mut HeroState>| {
+                party::deal_hands(&mut run, heroes.iter_mut());
+            })
+            .unwrap();
+        let picks: Vec<u32> = [a, b]
+            .iter()
+            .map(|&h| world.get::<HeroState>(h).unwrap().picks)
+            .collect();
+        assert_eq!(picks, [1, 1]);
     }
 }

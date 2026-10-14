@@ -12,7 +12,7 @@ use super::enemies::{Enemy, Gem};
 use super::hero::Hero;
 use super::hud::{self, Offer};
 use super::units::flat;
-use super::{data, MetaBonuses, Phase, Rng, Run, Selection};
+use super::{data, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, Selection};
 
 #[derive(Resource)]
 pub(super) struct Auto {
@@ -106,7 +106,7 @@ pub(super) fn plan(
     time: Res<Time<Real>>,
     mut auto: ResMut<Auto>,
     selection: Res<Selection>,
-    hero: Query<&Transform, With<Hero>>,
+    hero: Query<&Transform, With<LocalHero>>,
     gems: Query<&Transform, (With<Gem>, Without<Hero>)>,
     foes: Query<(&Transform, &Enemy), Without<Hero>>,
 ) {
@@ -158,7 +158,7 @@ pub(super) fn drive(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     loading: Res<crate::loading_screen::LoadingScreen>,
-    heroes: Query<(), With<Hero>>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
     enemies: Query<&Enemy>,
 ) {
     let dt = time.delta_secs();
@@ -176,20 +176,27 @@ pub(super) fn drive(
                 selection.look = None;
                 selection.version += 1;
                 auto.wait = 0.0;
-            } else if heroes.is_empty() || loading.covering() {
+            } else if local.is_empty() || loading.covering() {
                 auto.wait = 0.0;
             } else if auto.wait > 2.0 && auto.wait < 3.0 {
                 auto.capture_once(&mut commands, "menu".into());
-            } else if auto.wait > 3.0 && hud::start_run(&mut run, &mut selection, &meta) {
+            } else if let Some(mut me) = local
+                .single_mut()
+                .ok()
+                .filter(|_| auto.wait > 3.0)
+                .and_then(|mut me| {
+                    hud::start_run(&mut run, Some(&mut *me), &mut selection, &meta).then_some(me)
+                })
+            {
                 info!(
                     "survivors auto: run begins as {} at {}",
-                    run.class.name,
+                    me.class.name,
                     selection.map_def().name
                 );
                 if auto.all {
-                    for key in run.class.pool {
-                        if !run.abilities.iter().any(|o| o.def.key == *key) {
-                            run.abilities.push(super::Owned {
+                    for key in me.class.pool {
+                        if !me.abilities.iter().any(|o| o.def.key == *key) {
+                            me.abilities.push(super::Owned {
                                 def: data::ability(key),
                                 level: 1,
                                 cd: 0.5,
@@ -198,7 +205,7 @@ pub(super) fn drive(
                     }
                 }
                 if auto.late {
-                    for o in &mut run.abilities {
+                    for o in &mut me.abilities {
                         o.level = data::MAX_ABILITY_LEVEL;
                     }
                     run.elapsed = data::VICTORY_SECS * 2.0 / 3.0;
@@ -217,7 +224,9 @@ pub(super) fn drive(
             if auto.wait > 1.6 {
                 let n = offer.len().max(1);
                 let i = (rng.range(0.0, n as f32) as usize).min(n - 1);
-                hud::pick(i, &mut run, &mut offer, &mut rng, &mut next);
+                if let Ok(mut me) = local.single_mut() {
+                    hud::pick(i, &mut me, &mut run, &mut offer, &mut rng, &mut next);
+                }
                 auto.wait = 0.0;
             }
         }
@@ -239,18 +248,20 @@ pub(super) fn drive(
         let fps = auto.frames as f32 / 10.0;
         auto.frames = 0;
         let alive = enemies.iter().filter(|e| !e.dead).count();
-        let build: Vec<String> = run
+        let fallback = HeroState::default();
+        let me = local.single().unwrap_or(&fallback);
+        let build: Vec<String> = me
             .abilities
             .iter()
             .map(|o| format!("{}:{}", o.def.key, o.level))
-            .chain(run.passives.iter().map(|(p, l)| format!("{}:{}", p.key, l)))
+            .chain(me.passives.iter().map(|(p, l)| format!("{}:{}", p.key, l)))
             .collect();
         info!(
             "survivors auto: {:?} t={:.0}s fps={fps:.0} alive={alive} level={} hp={:.0} kills={} damage={:.0} gold={} elites={} caches={} build=[{}]",
             phase.get(),
             run.elapsed,
             run.level,
-            run.hp,
+            me.hp,
             run.kills,
             run.damage_done,
             run.gold,

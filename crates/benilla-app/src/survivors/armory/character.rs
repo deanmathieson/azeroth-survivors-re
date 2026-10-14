@@ -14,7 +14,7 @@ use crate::glue::widgets::{outlined_text, overlay, GlueText, Hilight};
 use crate::survivors::data::ClassDef;
 use crate::survivors::gear::{class_gear, summed, GearSave, Slot};
 use crate::survivors::hud::rgb;
-use crate::survivors::{Run, Stats, BASE_HP, BASE_SPEED};
+use crate::survivors::{HeroState, Stats, BASE_HP, BASE_SPEED};
 
 /// `NORMAL_FONT_COLOR`, a tooltip's description.
 const TIP_GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
@@ -38,12 +38,12 @@ pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
     );
 }
 
-/// The stats a fresh run of `class` starts on: [`Run::stats`] of the run
+/// The stats a fresh run of `class` starts on: [`HeroState::stats`] of the hero
 /// [`crate::survivors::hud::start_run`] begins, before any level-up.
 pub(super) fn starting_stats(class: &'static ClassDef) -> Stats {
-    Run {
+    HeroState {
         class,
-        ..Run::default()
+        ..HeroState::default()
     }
     .stats()
 }
@@ -57,7 +57,7 @@ pub(super) struct StatRow {
 
 /// The sheet for `s`, one row per [`Stats`] number, worded as the level-up cards word them.
 pub(super) fn stat_rows(s: &Stats) -> Vec<StatRow> {
-    // The class's head start over the shared base, where it has one (`Run::stats`).
+    // The class's head start over the shared base, where it has one (`HeroState::stats`).
     let adds = |base: f32, now: f32| {
         ((now - base).abs() > 1e-3).then(|| {
             format!(
@@ -417,7 +417,7 @@ fn equipment(p: &mut ChildSpawnerCommands, ctx: &TabCtx, gear: &GearSave) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::survivors::{data, hud, MetaBonuses, Selection};
+    use crate::survivors::{data, hud, MetaBonuses, Run, Selection};
 
     fn numbers(s: &Stats) -> [f32; 10] {
         [
@@ -435,15 +435,20 @@ mod tests {
                 look: Some(0),
                 ..Default::default()
             };
-            let mut run = Run::default();
+            let (mut run, mut hero) = (Run::default(), HeroState::default());
             assert!(
-                hud::start_run(&mut run, &mut selection, &MetaBonuses::default()),
+                hud::start_run(
+                    &mut run,
+                    Some(&mut hero),
+                    &mut selection,
+                    &MetaBonuses::default()
+                ),
                 "{}",
                 class.name
             );
             assert_eq!(
                 numbers(&starting_stats(class)),
-                numbers(&run.stats()),
+                numbers(&hero.stats()),
                 "{}",
                 class.name
             );

@@ -16,7 +16,7 @@ use super::achievements::earned_points;
 use super::armory::{ArmoryState, ArmoryTab};
 use super::meta::MetaParts;
 use super::profile::Profile;
-use super::{Phase, Run};
+use super::{HeroState, LocalHero, Phase};
 use crate::glue::GlueClicks;
 
 pub(super) use companion::{look_for, FETCH_EVERY, FETCH_REACH, LOOKS};
@@ -97,11 +97,14 @@ fn apply_perks(profile: Res<Profile>, mut parts: ResMut<MetaParts>) {
     }
 }
 
-/// A run begins: the reroll and banish perks add to its hand's tools, as Run Options stamps its
-/// multiplier onto it.
-fn stamp_hand(profile: Res<Profile>, mut run: ResMut<Run>) {
-    run.rerolls += perks::extra_rerolls(&profile.rewards);
-    run.banishes += perks::extra_banishes(&profile.rewards);
+/// A run begins: the reroll and banish perks add to the local hero's hand tools (the perks are
+/// its player's), as Run Options stamps its multiplier onto the run.
+fn stamp_hand(profile: Res<Profile>, mut local: Query<&mut HeroState, With<LocalHero>>) {
+    let Ok(mut me) = local.single_mut() else {
+        return;
+    };
+    me.rerolls += perks::extra_rerolls(&profile.rewards);
+    me.banishes += perks::extra_banishes(&profile.rewards);
 }
 
 /// Leaving the Rewards tab, or the Armory, commits the ranks bought there: they no longer refund.
@@ -238,15 +241,15 @@ mod tests {
         profile.rewards.perks.insert("extra_banish".into(), 1);
         world.insert_resource(profile);
         world.init_resource::<MetaParts>();
-        world.insert_resource(Run::default());
+        let hero = world.spawn((HeroState::default(), LocalHero)).id();
         world.run_system_once(apply_perks).unwrap();
         assert_eq!(
             world.resource::<MetaParts>().perks.get(StatKey::MaxHealth),
             40.0
         );
         world.run_system_once(stamp_hand).unwrap();
-        let run = world.resource::<Run>();
-        assert_eq!(run.rerolls, REROLLS_PER_RUN + 3);
-        assert_eq!(run.banishes, BANISHES_PER_RUN + 1);
+        let me = world.get::<HeroState>(hero).unwrap();
+        assert_eq!(me.rerolls, REROLLS_PER_RUN + 3);
+        assert_eq!(me.banishes, BANISHES_PER_RUN + 1);
     }
 }

@@ -9,7 +9,7 @@ use bevy::ui::RelativeCursorPosition;
 use super::data::{self, Kind};
 use super::hand::{self, HandMode};
 use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
-use super::{Phase, Rng, Run};
+use super::{HeroState, LocalHero, Phase, Rng, Run};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
 pub(super) const COMMON: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -83,11 +83,11 @@ fn power(def: &data::AbilityDef) -> Option<f32> {
 
 /// Where a new spell stands among its class's: the strongest third Epic, the weakest third
 /// Uncommon, the rest (and the defensive spells) Rare.
-fn spell_tier(def: &data::AbilityDef, run: &Run) -> Rarity {
+fn spell_tier(def: &data::AbilityDef, hero: &HeroState) -> Rarity {
     let Some(mine) = power(def) else {
         return Rarity::Rare;
     };
-    let mut all: Vec<f32> = run
+    let mut all: Vec<f32> = hero
         .class
         .pool
         .iter()
@@ -104,13 +104,14 @@ fn spell_tier(def: &data::AbilityDef, run: &Run) -> Rarity {
     }
 }
 
-/// What a choice is worth, by what it brings: a top rank is Legendary, a rank that adds a target
-/// Epic, a new spell by its power among the class's ([`spell_tier`]), a plain rank Uncommon.
-pub(super) fn rarity(choice: Choice, run: &Run) -> Rarity {
+/// What a choice is worth to `hero`, by what it brings: a top rank is Legendary, a rank that adds
+/// a target Epic, a new spell by its power among the class's ([`spell_tier`]), a plain rank
+/// Uncommon.
+pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
     match choice {
-        Choice::NewAbility(def) => spell_tier(def, run),
+        Choice::NewAbility(def) => spell_tier(def, hero),
         Choice::Upgrade(k) => {
-            let o = &run.abilities[k];
+            let o = &hero.abilities[k];
             let next = o.level + 1;
             let targets = [3, 5, 7].contains(&next)
                 && matches!(
@@ -126,7 +127,7 @@ pub(super) fn rarity(choice: Choice, run: &Run) -> Rarity {
             }
         }
         Choice::NewPassive(_) => Rarity::Uncommon,
-        Choice::UpPassive(k) => match run.passives[k].1 + 1 {
+        Choice::UpPassive(k) => match hero.passives[k].1 + 1 {
             n if n == data::MAX_PASSIVE_LEVEL => Rarity::Epic,
             n if n + 1 == data::MAX_PASSIVE_LEVEL => Rarity::Rare,
             2 => Rarity::Common,
@@ -173,11 +174,11 @@ impl PendingPick {
 
 const PICK_SECS: f32 = 0.28;
 
-/// The cards, rebuilt for each offer.
+/// The cards, rebuilt for each offer: the local hero's hand.
 pub(super) fn deal_cards(
     mut commands: Commands,
     offer: Res<Offer>,
-    run: Res<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     font: Res<HudFont>,
     rows: Query<Entity, With<hud::OfferRow>>,
@@ -187,11 +188,12 @@ pub(super) fn deal_cards(
     }
     let Ok(row) = rows.single() else { return };
     commands.entity(row).despawn_related::<Children>();
+    let Ok(me) = local.single() else { return };
     let f = &font.0;
     commands.entity(row).with_children(|row| {
         for (i, &choice) in offer.choices().iter().enumerate() {
-            let card = hud::describe_card(choice, &run, spells.as_deref());
-            let rarity = rarity(choice, &run);
+            let card = hud::describe_card(choice, me, spells.as_deref());
+            let rarity = rarity(choice, me);
             let rc = rarity.color();
             // After a banish only its slot is dealt again; the rest lie where they landed.
             let t = match offer.redealt() {
@@ -419,6 +421,7 @@ pub(super) fn animate_cards(
     mut rays: Query<&mut UiTransform, (With<Rays>, Without<Card>)>,
     mut pending: ResMut<PendingPick>,
     mut run: ResMut<Run>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
@@ -519,7 +522,9 @@ pub(super) fn animate_cards(
         if *t >= PICK_SECS {
             let i = *i;
             pending.0 = None;
-            hud::pick(i, &mut run, &mut offer, &mut rng, &mut next);
+            if let Ok(mut me) = local.single_mut() {
+                hud::pick(i, &mut me, &mut run, &mut offer, &mut rng, &mut next);
+            }
         }
     }
 }
@@ -534,7 +539,7 @@ pub(super) fn choose_card(
     mut offer: ResMut<Offer>,
     mut pending: ResMut<PendingPick>,
     mut mode: ResMut<HandMode>,
-    mut run: ResMut<Run>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
     mut rng: ResMut<Rng>,
 ) {
     if *phase.get() != Phase::LevelUp || pending.0.is_some() {
@@ -557,8 +562,13 @@ pub(super) fn choose_card(
     };
     if !mode.banishing {
         pending.0 = Some((i, 0.0));
-    } else if hand::strikable(i, &run, &offer) {
-        hand::banish(i, &mut run, &mut offer, &mut rng);
+        return;
+    }
+    let Ok(mut me) = local.single_mut() else {
+        return;
+    };
+    if hand::strikable(i, &me, &offer) {
+        hand::banish(i, &mut me, &mut offer, &mut rng);
         mode.banishing = false;
     }
 }

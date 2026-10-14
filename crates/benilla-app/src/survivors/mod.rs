@@ -21,6 +21,7 @@ mod menu;
 mod meta;
 mod minimap;
 mod mobility;
+mod party;
 mod profile;
 mod racials;
 mod rewards;
@@ -34,7 +35,8 @@ use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
 
 use bonus::{Bonuses, School, StatKey, ARMOR_CAP};
-use data::{AbilityDef, ClassDef, PassiveDef, Stat};
+use data::{AbilityDef, ClassDef, Stat};
+use party::{HeroState, LocalHero};
 
 /// Set by [`crate::run_survivors`] before the app builds. wasm32 has no process environment, so
 /// the flag lives here; `WOW_SURVIVORS` (`?survivors=1` / `__wenilla_env.survivors` on the web)
@@ -50,6 +52,7 @@ pub(crate) struct SurvivorsPlugin;
 
 impl Plugin for SurvivorsPlugin {
     fn build(&self, app: &mut App) {
+        let party = party::Party::from_env();
         // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
         app.insert_resource(crate::run_mode::CaptureMode)
             .add_plugins(grade::plugin)
@@ -68,6 +71,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<Rng>()
             .init_resource::<Selection>()
             .init_resource::<Run>()
+            .insert_resource(party)
             .init_resource::<profile::LastRunNews>()
             .init_resource::<MetaBonuses>()
             .init_resource::<hero::CamRig>()
@@ -203,6 +207,16 @@ impl Plugin for SurvivorsPlugin {
                 )
                 .add_systems(Update, auto::plan.before(WorldStage::Input));
         }
+        // The test aid's extra heroes join each run once it is under way.
+        if party.size > 1 {
+            app.add_systems(
+                Update,
+                party::fill_party
+                    .after(WorldStage::Input)
+                    .run_if(in_state(Phase::Playing))
+                    .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+            );
+        }
     }
 }
 
@@ -280,8 +294,8 @@ impl Owned {
     }
 }
 
-/// The hero's derived numbers: the base, the class, the level-up passives and the run's
-/// [`Bonuses`] ([`Run::stats`]). Within a stat a passive and a bonus add: +10% and +10% make
+/// A hero's derived numbers: the base, the class, the level-up passives and the run's
+/// [`Bonuses`] ([`HeroState::stats`]). Within a stat a passive and a bonus add: +10% and +10% make
 /// +20%, not +21%. Flat bonuses (health, regen, targets, revives) land on the base before any
 /// percentage scales it.
 #[derive(Clone, Copy)]
@@ -370,47 +384,35 @@ fn whole(v: f32) -> u32 {
     v.max(0.0).round() as u32
 }
 
-/// One run's state.
+/// What the party shares in one run: the clock, the horde, the XP bar and level, the spoils and
+/// the announcements. Each hero's own share is its [`HeroState`].
 #[derive(Resource)]
 pub(super) struct Run {
-    pub class: &'static ClassDef,
-    pub race: u8,
+    /// The clock: one horde, one run.
     pub elapsed: f32,
     pub kills: u32,
+    /// The XP bar and level: every hero's pickups fill the one bar, and the party levels together.
     pub level: u32,
     pub xp: f32,
-    pub hp: f32,
-    pub abilities: Vec<Owned>,
-    pub passives: Vec<(&'static PassiveDef, u8)>,
-    /// The permanent bonuses this run started with: [`MetaBonuses`] and the env test aid.
-    bonuses: Bonuses,
-    /// Extra lives spent so far.
-    pub revives_used: u32,
-    pub shield: f32,
-    pub shield_t: f32,
-    pub immune_t: f32,
-    pub thorns: f32,
-    pub thorns_t: f32,
-    pub thorns_spell: u32,
-    pub heal_rate: f32,
-    pub heal_t: f32,
-    /// The class mobility's cooldown and running effect.
-    mobile: mobility::MobilityState,
+    /// Hands banked by level-ups and caches, not yet dealt: [`party::deal_hands`] gives every hero
+    /// one pick for each as the picker opens.
     pub pending_levels: u32,
+    /// The horde's schedule: bosses and closing rings come on the shared clock.
     pub bosses: u32,
     pub rings: u32,
     pub won: bool,
     /// A GameOver transition records this run once, even if a later transition repeats it.
     pub recorded: bool,
-    /// Seconds since the hero fell, while the death plays out.
-    pub dead_t: Option<f32>,
+    /// Serials for every unit and object the run spawns, whoever's they are.
     pub next_guid: u64,
+    /// Damage dealt by the whole party; each hero's share is [`HeroState::damage_done`].
     pub damage_done: f64,
-    /// Bumped whenever abilities or passives change, so the HUD rebuilds the icon rows once.
+    /// Bumped whenever the local hero's abilities or passives change, so the HUD rebuilds the icon
+    /// rows once.
     pub version: u32,
     /// A centre-screen announcement and its seconds left.
     pub banner: Option<(String, f32)>,
-    /// Gold picked up this run ([`treasure`]).
+    /// Gold picked up this run ([`treasure`]): one purse for the party.
     pub gold: u32,
     /// Elites and guardians slain, and treasure caches opened.
     pub elites: u32,
@@ -419,10 +421,6 @@ pub(super) struct Run {
     pub next_elite: f32,
     /// Whether this run's guardians stand at their posts yet.
     pub guarded: bool,
-    /// The level-up hand's tools left, and the choices banished for the run ([`hand`]).
-    pub rerolls: u32,
-    pub banishes: u32,
-    pub banished: Vec<hand::Struck>,
     /// The Run Options rewards multiplier the run began under, for whatever pays out.
     pub reward_mult: f32,
 }
@@ -430,32 +428,15 @@ pub(super) struct Run {
 impl Default for Run {
     fn default() -> Self {
         Self {
-            class: &data::CLASSES[0],
-            race: 0,
             elapsed: 0.0,
             kills: 0,
             level: 1,
             xp: 0.0,
-            hp: BASE_HP,
-            abilities: Vec::new(),
-            passives: Vec::new(),
-            bonuses: Bonuses::default(),
-            revives_used: 0,
-            shield: 0.0,
-            shield_t: 0.0,
-            immune_t: 0.0,
-            thorns: 0.0,
-            thorns_t: 0.0,
-            thorns_spell: 0,
-            heal_rate: 0.0,
-            heal_t: 0.0,
-            mobile: mobility::MobilityState::default(),
             pending_levels: 0,
             bosses: 0,
             rings: 0,
             won: false,
             recorded: false,
-            dead_t: None,
             next_guid: 1,
             damage_done: 0.0,
             version: 0,
@@ -465,15 +446,12 @@ impl Default for Run {
             caches: 0,
             next_elite: treasure::ELITE_FIRST_SECS,
             guarded: false,
-            rerolls: hand::REROLLS_PER_RUN,
-            banishes: hand::BANISHES_PER_RUN,
-            banished: Vec::new(),
             reward_mult: 1.0,
         }
     }
 }
 
-impl Run {
+impl HeroState {
     /// The base, the class, the passives and the bonuses folded together (see [`Stats`]).
     pub fn stats(&self) -> Stats {
         let b = &self.bonuses;
@@ -544,7 +522,9 @@ impl Run {
         self.immune_t = self.immune_t.max(REVIVE_IMMUNE_SECS);
         true
     }
+}
 
+impl Run {
     pub fn guid(&mut self) -> u64 {
         self.next_guid += 1;
         self.next_guid
@@ -621,16 +601,17 @@ fn reset_run(
 #[cfg(test)]
 mod tests {
     use super::bonus::{Bonus, COOLDOWN_CAP};
+    use super::data::PassiveDef;
     use super::*;
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
     }
 
-    fn run_with(bonuses: &[Bonus]) -> Run {
-        let mut run = Run::default();
-        run.bonuses.add_all(bonuses);
-        run
+    fn hero_with(bonuses: &[Bonus]) -> HeroState {
+        let mut hero = HeroState::default();
+        hero.bonuses.add_all(bonuses);
+        hero
     }
 
     fn passive(key: &str) -> &'static PassiveDef {
@@ -647,7 +628,7 @@ mod tests {
 
     #[test]
     fn no_bonuses_leave_the_base() {
-        let s = Run::default().stats();
+        let s = HeroState::default().stats();
         assert!(close(s.might, 1.0) && close(s.area, 1.0) && close(s.growth, 1.0));
         assert!(close(s.haste, 0.0) && close(s.armor_frac, 0.0) && close(s.lifesteal, 0.0));
         assert!(close(s.crit, 0.05) && close(s.crit_damage, BASE_CRIT_DAMAGE));
@@ -657,8 +638,8 @@ mod tests {
 
     #[test]
     fn each_stat_key_reaches_its_stat() {
-        let base = Run::default().stats();
-        let one = |stat, v| run_with(&[Bonus::new(stat, v)]).stats();
+        let base = HeroState::default().stats();
+        let one = |stat, v| hero_with(&[Bonus::new(stat, v)]).stats();
         assert!(close(
             one(StatKey::MaxHealth, 30.0).max_hp,
             base.max_hp + 30.0
@@ -679,24 +660,24 @@ mod tests {
         assert!(close(one(StatKey::Lifesteal, 0.05).lifesteal, 0.05));
         assert_eq!(one(StatKey::Revives, 1.0).revives, 1);
         // School damage stays off the unscoped multiplier.
-        let fire = run_with(&[Bonus::school(School::Fire, 0.3)]).stats();
+        let fire = hero_with(&[Bonus::school(School::Fire, 0.3)]).stats();
         assert!(close(fire.might, 1.0));
     }
 
     #[test]
     fn passives_and_bonuses_add_within_a_stat() {
-        let mut run = run_with(&[
+        let mut hero = hero_with(&[
             Bonus::new(StatKey::MoveSpeed, 0.1),
             Bonus::new(StatKey::Damage, 0.1),
             Bonus::new(StatKey::MaxHealth, 20.0),
         ]);
-        run.passives = vec![
+        hero.passives = vec![
             (passive("pack"), 1),
             (passive("might"), 1),
             (passive("fortitude"), 1),
         ];
-        let base = Run::default().stats();
-        let s = run.stats();
+        let base = HeroState::default().stats();
+        let s = hero.stats();
         assert!(close(s.speed, base.speed * 1.2));
         assert!(close(s.might, 1.2));
         // Flat health lands before the percentage scales it.
@@ -705,12 +686,12 @@ mod tests {
 
     #[test]
     fn armor_is_capped_with_the_flat_block_counted() {
-        let s = run_with(&[Bonus::new(StatKey::Armor, 0.9)]).stats();
+        let s = hero_with(&[Bonus::new(StatKey::Armor, 0.9)]).stats();
         assert_eq!(s.armor_frac, ARMOR_CAP);
         assert!(close(s.after_armor(100.0), 40.0));
-        let mut run = run_with(&[Bonus::new(StatKey::Armor, 0.5)]);
-        run.passives = vec![(passive("wild"), 5)];
-        let s = run.stats();
+        let mut hero = hero_with(&[Bonus::new(StatKey::Armor, 0.5)]);
+        hero.passives = vec![(passive("wild"), 5)];
+        let s = hero.stats();
         assert!(close(s.armor, 5.0));
         // 5 flat and half of 100 remove 55.
         assert!(close(s.after_armor(100.0), 45.0));
@@ -718,17 +699,17 @@ mod tests {
         assert!(close(s.after_armor(20.0), 8.0));
         assert!(close(s.after_armor(1.5), 1.0));
         // The flat block alone, under the cap, is unchanged.
-        run.bonuses = Bonuses::default();
-        assert!(close(run.stats().after_armor(20.0), 15.0));
+        hero.bonuses = Bonuses::default();
+        assert!(close(hero.stats().after_armor(20.0), 15.0));
     }
 
     #[test]
     fn cooldown_bonus_is_capped_and_stacks_with_haste() {
-        let s = run_with(&[Bonus::new(StatKey::Cooldown, 0.8)]).stats();
+        let s = hero_with(&[Bonus::new(StatKey::Cooldown, 0.8)]).stats();
         assert_eq!(s.haste, COOLDOWN_CAP);
-        let mut run = run_with(&[Bonus::new(StatKey::Cooldown, 0.8)]);
-        run.passives = vec![(passive("intellect"), 5)];
-        let s = run.stats();
+        let mut hero = hero_with(&[Bonus::new(StatKey::Cooldown, 0.8)]);
+        hero.passives = vec![(passive("intellect"), 5)];
+        let s = hero.stats();
         assert!(close(s.haste, COOLDOWN_CAP + 0.4));
         // The ability floor still keeps 35% of a cooldown.
         let o = owned("frostbolt", 1);
@@ -737,32 +718,32 @@ mod tests {
 
     #[test]
     fn targets_add_to_ability_counts() {
-        let s = run_with(&[Bonus::new(StatKey::Targets, 2.0)]).stats();
+        let s = hero_with(&[Bonus::new(StatKey::Targets, 2.0)]).stats();
         // Three missiles, one more at rank 3, two from the bonus.
         assert_eq!(owned("arcane_missiles", 3).count(&s), 6);
         assert_eq!(
-            owned("arcane_missiles", 3).count(&Run::default().stats()),
+            owned("arcane_missiles", 3).count(&HeroState::default().stats()),
             4
         );
     }
 
     #[test]
     fn school_damage_multiplies_its_school_on_top_of_might() {
-        let run = run_with(&[
+        let hero = hero_with(&[
             Bonus::school(School::Fire, 0.3),
             Bonus::new(StatKey::Damage, 0.5),
         ]);
-        assert!(close(run.school_mult(School::Fire), 1.3));
-        assert!(close(run.school_mult(School::Frost), 1.0));
+        assert!(close(hero.school_mult(School::Fire), 1.3));
+        assert!(close(hero.school_mult(School::Frost), 1.0));
         assert!(close(
-            run.stats().might * run.school_mult(School::Fire),
+            hero.stats().might * hero.school_mult(School::Fire),
             1.95
         ));
     }
 
     #[test]
     fn lifesteal_heals_its_share_up_to_max_health() {
-        let mut s = run_with(&[Bonus::new(StatKey::Lifesteal, 0.1)]).stats();
+        let mut s = hero_with(&[Bonus::new(StatKey::Lifesteal, 0.1)]).stats();
         let max = s.max_hp;
         assert!(close(s.leech(50.0, 100.0), 60.0));
         assert!(close(s.leech(max - 3.0, 100.0), max));
@@ -773,27 +754,75 @@ mod tests {
 
     #[test]
     fn revives_are_spent_one_at_a_time() {
-        let mut run = run_with(&[Bonus::new(StatKey::Revives, 1.0)]);
-        run.hp = -5.0;
-        assert!(run.revive());
-        assert_eq!(run.revives_used, 1);
-        assert!(close(run.hp, run.stats().max_hp * REVIVE_HP));
-        assert!(close(run.immune_t, REVIVE_IMMUNE_SECS));
+        let mut hero = hero_with(&[Bonus::new(StatKey::Revives, 1.0)]);
+        hero.hp = -5.0;
+        assert!(hero.revive());
+        assert_eq!(hero.revives_used, 1);
+        assert!(close(hero.hp, hero.stats().max_hp * REVIVE_HP));
+        assert!(close(hero.immune_t, REVIVE_IMMUNE_SECS));
         // Untouchable while the revive's immunity lasts.
-        assert_eq!(hero::hurt_hero(&mut run, 500.0), 0.0);
-        run.hp = 0.0;
-        assert!(!run.revive());
-        assert_eq!(run.revives_used, 1);
-        assert!(!Run::default().revive());
+        assert_eq!(hero::hurt_hero(&mut hero, 500.0), 0.0);
+        hero.hp = 0.0;
+        assert!(!hero.revive());
+        assert_eq!(hero.revives_used, 1);
+        assert!(!HeroState::default().revive());
+    }
+
+    #[test]
+    fn a_party_of_one_starts_as_the_run_always_did() {
+        // No `WOW_SURVIVORS_PARTY`: one hero, the local player's.
+        assert_eq!(party::Party::default().size, 1);
+        let class = &data::CLASSES[0];
+        let mut selection = Selection {
+            class: Some(0),
+            looks: vec![(0, 1, 0)],
+            look: Some(0),
+            ..Default::default()
+        };
+        let mut meta = MetaBonuses::default();
+        meta.0.add(&Bonus::new(StatKey::MaxHealth, 20.0));
+        let mut run = Run {
+            next_guid: 41,
+            kills: 9,
+            ..Run::default()
+        };
+        let mut hero = HeroState::default();
+        assert!(hud::start_run(
+            &mut run,
+            Some(&mut hero),
+            &mut selection,
+            &meta
+        ));
+        // The shared part starts over, keeping its serials.
+        assert_eq!(
+            (run.next_guid, run.kills, run.level, run.version),
+            (41, 0, 1, 1)
+        );
+        // The hero's part: the menu's bonuses on a warrior's 40 extra health, the class's first
+        // spell, full health and a fresh hand.
+        assert_eq!(class.id, 1);
+        let s = hero.stats();
+        assert_eq!(
+            (s.max_hp, s.speed, s.magnet, s.might),
+            (BASE_HP + 20.0 + 40.0, BASE_SPEED, BASE_MAGNET, 1.0)
+        );
+        assert_eq!(hero.hp, s.max_hp);
+        assert_eq!((hero.player, hero.race), (party::LOCAL_PLAYER, 1));
+        assert_eq!(hero.abilities.len(), 1);
+        assert_eq!(hero.abilities[0].def.key, class.start);
+        assert_eq!(
+            (hero.rerolls, hero.banishes, hero.picks),
+            (hand::REROLLS_PER_RUN, hand::BANISHES_PER_RUN, 0)
+        );
     }
 
     #[test]
     fn luck_weighs_rarer_tiers_up() {
-        let plain = Run::default().stats();
+        let plain = HeroState::default().stats();
         for tier in 0..5 {
             assert_eq!(plain.luck_weight(tier), 1.0);
         }
-        let lucky = run_with(&[Bonus::new(StatKey::Luck, 0.5)]).stats();
+        let lucky = hero_with(&[Bonus::new(StatKey::Luck, 0.5)]).stats();
         assert_eq!(lucky.luck_weight(0), 1.0);
         assert!(close(lucky.luck_weight(2), 2.25));
         assert!(lucky.luck_weight(4) > lucky.luck_weight(3));

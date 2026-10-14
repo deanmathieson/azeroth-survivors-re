@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use super::enemies::Enemy;
 use super::hero::{self, Hero};
 use super::units::{flat, Fx};
-use super::{Phase, Run};
+use super::{HeroState, LocalHero, Phase, Run};
 use benilla_world::world_point::WorldPoint;
 
 pub(super) const LEARN_LEVEL: u32 = 5;
@@ -142,7 +142,8 @@ static MOBILITY: &[(u8, Mobility)] = &[
     ),
 ];
 
-/// The mobility's run state, on [`Run`]: cooldown left, and the haste or vanish still running.
+/// The mobility's run state, on each [`HeroState`]: cooldown left, and the haste or vanish still
+/// running.
 #[derive(Default, Clone, Copy)]
 pub(super) struct MobilityState {
     pub cd: f32,
@@ -151,10 +152,10 @@ pub(super) struct MobilityState {
     pub vanish_t: f32,
 }
 
-impl Run {
-    /// The class's mobility once the hero is level enough.
-    pub(super) fn mobility(&self) -> Option<&'static Mobility> {
-        (self.level >= LEARN_LEVEL)
+impl HeroState {
+    /// The class's mobility once the party's `level` is high enough.
+    pub(super) fn mobility(&self, level: u32) -> Option<&'static Mobility> {
+        (level >= LEARN_LEVEL)
             .then(|| for_class(self.class.id))
             .flatten()
     }
@@ -169,35 +170,43 @@ impl Run {
     }
 }
 
-/// `F`: cast the mobility if it is learned and ready; ticks the cooldown and the running effect.
+/// `F`: the local hero casts the mobility if it is learned and ready; every hero's cooldown and
+/// running effect tick.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cast_mobility(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     phase: Res<State<Phase>>,
-    mut run: ResMut<Run>,
+    run: Res<Run>,
     world: WorldPoint,
-    mut hero: Query<(Entity, &mut Transform), With<Hero>>,
+    mut heroes: Query<(Entity, &mut Transform, &mut HeroState, Has<LocalHero>), With<Hero>>,
     mut enemies: Query<(Entity, &Transform, &mut Enemy), Without<Hero>>,
     selection: Res<super::Selection>,
     aim: Res<hero::AimPoint>,
     mut fx: Fx,
 ) {
     let dt = time.delta_secs();
-    let m = &mut run.mobile;
-    m.cd = (m.cd - dt).max(0.0);
-    m.haste_t = (m.haste_t - dt).max(0.0);
-    m.vanish_t = (m.vanish_t - dt).max(0.0);
-    if *phase.get() != Phase::Playing || run.dead_t.is_some() || !keys.just_pressed(KEY) {
+    for (_, _, mut hero, _) in &mut heroes {
+        let m = &mut hero.mobile;
+        m.cd = (m.cd - dt).max(0.0);
+        m.haste_t = (m.haste_t - dt).max(0.0);
+        m.vanish_t = (m.vanish_t - dt).max(0.0);
+    }
+    if *phase.get() != Phase::Playing || !keys.just_pressed(KEY) {
         return;
     }
-    let Some(def) = run.mobility() else { return };
-    if run.mobile.cd > 0.0 {
-        return;
-    }
-    let Ok((me, mut tf)) = hero.single_mut() else {
+    let Some((me, mut tf, mut state, _)) = heroes.iter_mut().find(|(.., local)| *local) else {
         return;
     };
+    if state.dead_t.is_some() {
+        return;
+    }
+    let Some(def) = state.mobility(run.level) else {
+        return;
+    };
+    if state.mobile.cd > 0.0 {
+        return;
+    }
     let pos = tf.translation;
     let facing = tf.rotation * Vec3::NEG_Z;
     let facing = flat(facing).normalize_or(Vec3::NEG_Z);
@@ -256,14 +265,14 @@ pub(super) fn cast_mobility(
         }
         Move::Haste(x) => {
             fx.cast(me, def.spell, &[me], None);
-            run.mobile.haste = x;
-            run.mobile.haste_t = def.secs;
+            state.mobile.haste = x;
+            state.mobile.haste_t = def.secs;
         }
         Move::Vanish(x) => {
             fx.cast(me, def.spell, &[me], None);
-            run.mobile.haste = x;
-            run.mobile.haste_t = def.secs;
-            run.mobile.vanish_t = def.secs;
+            state.mobile.haste = x;
+            state.mobile.haste_t = def.secs;
+            state.mobile.vanish_t = def.secs;
         }
         Move::Scatter(r) => {
             fx.cast(me, def.spell, &[me], None);
@@ -274,5 +283,5 @@ pub(super) fn cast_mobility(
             }
         }
     }
-    run.mobile.cd = def.cooldown;
+    state.mobile.cd = def.cooldown;
 }

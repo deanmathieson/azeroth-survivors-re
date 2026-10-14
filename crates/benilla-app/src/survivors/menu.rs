@@ -13,7 +13,7 @@ use bevy::ui_render::ui_material::MaterialNode;
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
 use super::run_options::GREEN;
 use super::zones::{self, Unlocks};
-use super::{data, racials, MetaBonuses, Phase, Rng, Run, Selection};
+use super::{data, racials, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, Selection};
 use crate::char_select::race_name;
 use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -803,6 +803,7 @@ pub(super) fn menu_clicks(
     creatures: Option<Res<crate::entities::Creatures>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
     meta: Res<MetaBonuses>,
     unlocks: Res<Unlocks>,
     mut rng: ResMut<Rng>,
@@ -837,7 +838,14 @@ pub(super) fn menu_clicks(
             }
         }
         MenuAction::Enter => {
-            if unlocks.is_open(selection.map) && start_run(&mut run, &mut selection, &meta) {
+            if unlocks.is_open(selection.map)
+                && start_run(
+                    &mut run,
+                    local.single_mut().ok().as_deref_mut(),
+                    &mut selection,
+                    &meta,
+                )
+            {
                 next.set(Phase::Playing);
             }
         }

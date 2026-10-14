@@ -24,7 +24,7 @@ use super::enemies::Enemy;
 use super::hero::Hero;
 use super::hud::UiArt;
 use super::treasure::Cache;
-use super::Run;
+use super::{HeroState, LocalHero};
 use crate::area::AreaTableRes;
 
 /// The composite's edge in texels; the 140-unit widget is ~200 px at 1080p.
@@ -52,6 +52,10 @@ const ELITE_RING_COLOR: [f32; 3] = [255.0, 210.0, 0.0];
 const GUARDIAN_RING_COLOR: [f32; 3] = [200.0, 90.0, 255.0];
 /// A treasure cache not yet opened: a gold diamond this many dots across, rimmed dark.
 const CACHE_MARK: f32 = 1.4;
+/// Every other hero in the party: a blue disc this many dots across, rimmed dark, over the horde.
+/// The local hero is the arrow.
+const ALLY_DOT: f32 = 1.3;
+const ALLY_COLOR: [f32; 3] = [70.0, 150.0, 255.0];
 
 /// `GAMETIME_DAWN` and `GAMETIME_DUSK`, minutes into the day.
 const DAWN: u32 = 5 * 60 + 30;
@@ -324,11 +328,11 @@ pub(super) fn map_buttons(
 }
 
 /// `Minimap_Update`: `GetMinimapZoneText` (the subzone, else the zone) in `GetZonePVPInfo`'s
-/// colour, the zone's owner against the hero's faction.
+/// colour, the zone's owner against the local hero's faction.
 pub(super) fn zone_text(
     world: WorldPoint,
     areas: Option<Res<AreaTableRes>>,
-    run: Res<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     mut texts: Query<(&mut Text, &mut TextColor), With<ZoneText>>,
 ) {
     let Some(areas) = areas else { return };
@@ -340,7 +344,7 @@ pub(super) fn zone_text(
     } else {
         row.name.clone()
     };
-    let (friend, enemy) = match run.race {
+    let (friend, enemy) = match local.single().map_or(0, |hero| hero.race) {
         1 | 3 | 4 | 7 => (GROUP_ALLIANCE, GROUP_HORDE),
         _ => (GROUP_HORDE, GROUP_ALLIANCE),
     };
@@ -362,7 +366,8 @@ pub(super) fn zone_text(
     }
 }
 
-/// Recomposite the map around the hero: tiles, mask, arrow, then the enemy dots.
+/// Recomposite the map around the local hero: tiles, mask, arrow, the enemy dots, then the rest of
+/// the party.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compose(
     mut map: ResMut<MiniMap>,
@@ -370,7 +375,8 @@ pub(super) fn compose(
     catalog: Option<Res<MapCatalogRes>>,
     current: Option<Res<CurrentMap>>,
     phase: Res<State<super::Phase>>,
-    hero: Query<&Transform, With<Hero>>,
+    hero: Query<&Transform, With<LocalHero>>,
+    allies: Query<&Transform, (With<Hero>, Without<LocalHero>)>,
     enemies: Query<(&Transform, &Enemy)>,
     caches: Query<(&Transform, &Cache)>,
     mut images: ResMut<Assets<Image>>,
@@ -576,6 +582,24 @@ pub(super) fn compose(
             });
             dot(buf, at, size * ELITE_DOT);
         }
+    }
+    // The rest of the party, pinned to the rim while out of view.
+    let ally = DOT_PX * scale * ALLY_DOT;
+    for tf in &allies {
+        let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+        if off.length() > radius {
+            off = off.normalize() * radius * 0.88;
+        }
+        blit(buf, center + off / yd_per_px, ally, |q| {
+            let d = q.length() / (ally / 2.0);
+            let a = ((1.0 - d) * ally / 2.0).clamp(0.0, 1.0);
+            let rgb = if d < 0.7 {
+                ALLY_COLOR
+            } else {
+                [0.0, 20.0, 60.0]
+            };
+            (a > 0.0).then_some([rgb[0], rgb[1], rgb[2], 255.0 * a])
+        });
     }
 
     if let Some(image) = images.get_mut(&map.image) {

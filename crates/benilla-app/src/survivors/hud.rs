@@ -14,8 +14,9 @@ use bevy::window::PrimaryWindow;
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
+use super::party;
 use super::profile::LastRunNews;
-use super::{MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
+use super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 /// The mobility button's edge, an action button's 36 units.
@@ -1018,18 +1019,23 @@ pub(super) fn menu_preview(
         pos.y = h;
     }
     let serial = run.guid();
-    hero::spawn_hero(
-        &mut commands,
-        &data::CLASSES[class],
-        display,
+    // The local player's hero, out of a run until one begins on it ([`start_run`]).
+    let state = HeroState {
+        class: &data::CLASSES[class],
         race,
-        sex,
-        serial,
-        pos,
-    );
+        ..HeroState::default()
+    };
+    hero::spawn_hero(&mut commands, state, display, sex, serial, pos);
 }
 
-pub(super) fn start_run(run: &mut Run, selection: &mut Selection, meta: &MetaBonuses) -> bool {
+/// A run begins on the menu's pick: the shared state starts over, and the local hero (the menu's,
+/// when there is one) becomes the pick, with the player's [`MetaBonuses`].
+pub(super) fn start_run(
+    run: &mut Run,
+    hero: Option<&mut HeroState>,
+    selection: &mut Selection,
+    meta: &MetaBonuses,
+) -> bool {
     let (Some(class), Some(&(_, race, _))) = (
         selection.class_def(),
         selection.look.and_then(|i| selection.looks.get(i)),
@@ -1040,55 +1046,51 @@ pub(super) fn start_run(run: &mut Run, selection: &mut Selection, meta: &MetaBon
     selection.stage = selection.map;
     let next_guid = run.next_guid;
     *run = Run {
-        class,
-        race,
         next_guid,
-        bonuses: meta.0.clone(),
         ..Run::default()
     };
-    run.bonuses.merge(&super::env_bonuses());
-    run.abilities.push(Owned {
-        def: data::ability(class.start),
-        level: 1,
-        cd: 0.5,
-    });
-    run.hp = run.stats().max_hp;
+    if let Some(hero) = hero {
+        let mut bonuses = meta.0.clone();
+        bonuses.merge(&super::env_bonuses());
+        *hero = HeroState::new(hero.player, class, race, bonuses);
+    }
     run.version += 1;
     true
 }
 
-/// Everything a hand can deal now, with its weight; banished choices are gone for the run.
-pub(super) fn offer_pool(run: &Run) -> Vec<(Choice, f32)> {
+/// Everything a hand can deal `hero` now, with its weight; its banished choices are gone for the
+/// run.
+pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
-    for (i, o) in run.abilities.iter().enumerate() {
+    for (i, o) in hero.abilities.iter().enumerate() {
         if o.level < data::MAX_ABILITY_LEVEL {
             pool.push((Choice::Upgrade(i), 1.2));
         }
     }
-    if run.abilities.len() < data::MAX_ABILITIES {
-        for key in run.class.pool {
-            if !run.abilities.iter().any(|o| o.def.key == *key) {
+    if hero.abilities.len() < data::MAX_ABILITIES {
+        for key in hero.class.pool {
+            if !hero.abilities.iter().any(|o| o.def.key == *key) {
                 pool.push((Choice::NewAbility(data::ability(key)), 1.0));
             }
         }
     }
-    for (i, (_, level)) in run.passives.iter().enumerate() {
+    for (i, (_, level)) in hero.passives.iter().enumerate() {
         if *level < data::MAX_PASSIVE_LEVEL {
             pool.push((Choice::UpPassive(i), 0.8));
         }
     }
-    if run.passives.len() < data::MAX_PASSIVES {
+    if hero.passives.len() < data::MAX_PASSIVES {
         for p in data::PASSIVES {
-            if !run.passives.iter().any(|(q, _)| q.key == p.key) {
+            if !hero.passives.iter().any(|(q, _)| q.key == p.key) {
                 pool.push((Choice::NewPassive(p), 0.5));
             }
         }
     }
-    pool.retain(|&(c, _)| !super::hand::is_banished(c, run));
+    pool.retain(|&(c, _)| !super::hand::is_banished(c, hero));
     // Luck tilts the draw toward the rarer cards.
-    let stats = run.stats();
+    let stats = hero.stats();
     for (choice, w) in &mut pool {
-        *w *= stats.luck_weight(super::cards::rarity(*choice, run) as i32);
+        *w *= stats.luck_weight(super::cards::rarity(*choice, hero) as i32);
     }
     pool
 }
@@ -1112,21 +1114,58 @@ pub(super) fn draw(mut pool: Vec<(Choice, f32)>, n: usize, rng: &mut Rng) -> Vec
     out
 }
 
-/// A level-up hand: three choices, or the healthstone once everything is mastered.
-pub(super) fn choices_for(run: &Run, rng: &mut Rng) -> Vec<Choice> {
-    let mut out = draw(offer_pool(run), 3, rng);
+/// A level-up hand for `hero`: three choices, or the healthstone once everything is mastered.
+pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
+    let mut out = draw(offer_pool(hero), 3, rng);
     if out.is_empty() {
         out.push(Choice::Heal);
     }
     out
 }
 
-pub(super) fn roll_offer(run: Res<Run>, mut rng: ResMut<Rng>, mut offer: ResMut<Offer>) {
-    offer.deal(choices_for(&run, &mut rng));
+/// The picker opens: the banked levels become a hand for every hero ([`party::deal_hands`]), the
+/// heroes no one here picks for take theirs at random, and the local hero's first hand is dealt.
+pub(super) fn roll_offer(
+    mut run: ResMut<Run>,
+    mut heroes: Query<(&mut HeroState, Has<LocalHero>)>,
+    mut rng: ResMut<Rng>,
+    mut offer: ResMut<Offer>,
+    mut next: ResMut<NextState<Phase>>,
+) {
+    party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, _)| hero));
+    for (mut hero, local) in &mut heroes {
+        if !local {
+            party::pick_at_random(&mut hero, &mut rng);
+        }
+    }
+    match heroes.iter().find(|(_, local)| *local) {
+        Some((hero, _)) => offer.deal(choices_for(hero, &mut rng)),
+        None => {
+            offer.deal(Vec::new());
+            next.set(Phase::Playing);
+        }
+    }
 }
 
+/// `choice` joins `hero`'s build.
+pub(super) fn take(hero: &mut HeroState, choice: Choice) {
+    match choice {
+        Choice::NewAbility(def) => hero.abilities.push(Owned {
+            def,
+            level: 1,
+            cd: 0.3,
+        }),
+        Choice::Upgrade(k) => hero.abilities[k].level += 1,
+        Choice::NewPassive(p) => hero.passives.push((p, 1)),
+        Choice::UpPassive(k) => hero.passives[k].1 += 1,
+        Choice::Heal => hero.hp = hero.stats().max_hp,
+    }
+}
+
+/// The local hero takes card `i` of the hand on offer.
 pub(super) fn pick(
     i: usize,
+    hero: &mut HeroState,
     run: &mut Run,
     offer: &mut Offer,
     rng: &mut Rng,
@@ -1135,31 +1174,22 @@ pub(super) fn pick(
     let Some(&choice) = offer.choices.get(i) else {
         return;
     };
-    match choice {
-        Choice::NewAbility(def) => run.abilities.push(Owned {
-            def,
-            level: 1,
-            cd: 0.3,
-        }),
-        Choice::Upgrade(k) => run.abilities[k].level += 1,
-        Choice::NewPassive(p) => run.passives.push((p, 1)),
-        Choice::UpPassive(k) => run.passives[k].1 += 1,
-        Choice::Heal => run.hp = run.stats().max_hp,
-    }
+    take(hero, choice);
     run.version += 1;
-    close_hand(run, offer, rng, next);
+    close_hand(hero, offer, rng, next);
 }
 
-/// A hand done with, taken or passed up: another banked level deals the next, else play resumes.
+/// A hand done with, taken or passed up: another the hero holds deals next, else play resumes.
+/// The other heroes' hands are already drawn by then ([`roll_offer`]).
 pub(super) fn close_hand(
-    run: &mut Run,
+    hero: &mut HeroState,
     offer: &mut Offer,
     rng: &mut Rng,
     next: &mut NextState<Phase>,
 ) {
-    run.pending_levels = run.pending_levels.saturating_sub(1);
-    if run.pending_levels > 0 {
-        offer.deal(choices_for(run, rng));
+    hero.picks = hero.picks.saturating_sub(1);
+    if hero.picks > 0 {
+        offer.deal(choices_for(hero, rng));
     } else {
         offer.deal(Vec::new());
         next.set(Phase::Playing);
@@ -1216,6 +1246,7 @@ pub(super) fn keys(
     phase: Res<State<Phase>>,
     mut selection: ResMut<Selection>,
     mut run: ResMut<Run>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
     meta: Res<MetaBonuses>,
     unlocks: Res<super::zones::Unlocks>,
     mut next: ResMut<NextState<Phase>>,
@@ -1225,7 +1256,12 @@ pub(super) fn keys(
             // As Enter World, never into a zone not yet open.
             if keys.just_pressed(KeyCode::Enter)
                 && unlocks.is_open(selection.map)
-                && start_run(&mut run, &mut selection, &meta)
+                && start_run(
+                    &mut run,
+                    local.single_mut().ok().as_deref_mut(),
+                    &mut selection,
+                    &meta,
+                )
             {
                 next.set(Phase::Playing);
             }
@@ -1280,13 +1316,13 @@ pub(super) struct CardText {
 
 pub(super) fn describe_card(
     choice: Choice,
-    run: &Run,
+    hero: &HeroState,
     spells: Option<&crate::ui_action::Spells>,
 ) -> CardText {
     let new = Color::srgb(0.3, 1.0, 0.3);
     match choice {
         Choice::NewAbility(def) => {
-            let stats = run.stats();
+            let stats = hero.stats();
             let c = cast_at(def, 1, &stats);
             CardText {
                 spell: def.spell,
@@ -1298,9 +1334,9 @@ pub(super) fn describe_card(
             }
         }
         Choice::Upgrade(k) => {
-            let o = &run.abilities[k];
+            let o = &hero.abilities[k];
             let next = o.level + 1;
-            let stats = run.stats();
+            let stats = hero.stats();
             let (a, b) = (
                 cast_at(o.def, o.level, &stats),
                 cast_at(o.def, next, &stats),
@@ -1349,7 +1385,7 @@ pub(super) fn describe_card(
             ranks: Some((0, data::MAX_PASSIVE_LEVEL)),
         },
         Choice::UpPassive(k) => {
-            let (p, level) = run.passives[k];
+            let (p, level) = hero.passives[k];
             let fmt = |v: f32| match p.stat {
                 Stat::Regen | Stat::Armor => num(v),
                 _ => pct(v),
@@ -1385,6 +1421,7 @@ pub(super) fn refresh_hud(
     time: Res<Time>,
     phase: Res<State<Phase>>,
     mut run: ResMut<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     selection: Res<Selection>,
     font: Res<HudFont>,
     mut texts: ParamSet<(
@@ -1456,10 +1493,19 @@ pub(super) fn refresh_hud(
     if let Ok(mut t) = texts.p4().single_mut() {
         **t = title;
     }
+    // The local hero's, as this screen and the icon rows below are.
+    let fallback;
+    let me = match local.single() {
+        Ok(hero) => hero,
+        Err(_) => {
+            fallback = HeroState::default();
+            &fallback
+        }
+    };
     let summary = format!(
         "{} {} in {}   —   press Enter to play again",
-        crate::char_select::race_name(run.race),
-        run.class.name,
+        crate::char_select::race_name(me.race),
+        me.class.name,
         selection.map_def().name,
     );
     if let Ok(mut t) = texts.p5().single_mut() {
@@ -1478,13 +1524,13 @@ pub(super) fn refresh_hud(
         commands.entity(row).despawn_related::<Children>();
         commands.entity(row).with_children(|row| {
             let entries: Vec<(u32, u8, f32, TipFor)> = if is_abilities {
-                run.abilities
+                me.abilities
                     .iter()
                     .enumerate()
                     .map(|(i, o)| (o.def.spell, o.level, 40.0, TipFor::Ability(i)))
                     .collect()
             } else {
-                run.passives
+                me.passives
                     .iter()
                     .enumerate()
                     .map(|(i, (p, l))| (p.spell, *l, 30.0, TipFor::Passive(i)))
@@ -1573,17 +1619,20 @@ pub(super) fn fill_icons(
     }
 }
 
-/// The mobility button: shown once learned, its icon the class's spell, its sweep the cooldown.
+/// The mobility button: shown once the local hero has learned it, its icon the class's spell, its
+/// sweep the cooldown.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_mobility(
     run: Res<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     mut commands: Commands,
     mut slot: Query<&mut Node, With<MobilitySlot>>,
     icon: Query<(Entity, Option<&SpellIcon>), With<MobilityIcon>>,
     sweep: Query<&MobilitySweep>,
     mut mats: ResMut<Assets<SweepUiMaterial>>,
 ) {
-    let def = run.mobility();
+    let me = local.single().ok();
+    let def = me.and_then(|hero| hero.mobility(run.level));
     if let Ok(mut node) = slot.single_mut() {
         let display = if def.is_some() {
             Display::Flex
@@ -1594,7 +1643,9 @@ pub(super) fn refresh_mobility(
             node.display = display;
         }
     }
-    let Some(def) = def else { return };
+    let (Some(me), Some(def)) = (me, def) else {
+        return;
+    };
     // A new spell re-arms the icon fill ([`fill_icons`]).
     if let Ok((e, have)) = icon.single() {
         if have.is_none_or(|s| s.0 != def.spell) {
@@ -1605,7 +1656,7 @@ pub(super) fn refresh_mobility(
         }
     }
     if let Ok(s) = sweep.single() {
-        let f = (run.mobile.cd / def.cooldown.max(0.01)).clamp(0.0, 1.0);
+        let f = (me.mobile.cd / def.cooldown.max(0.01)).clamp(0.0, 1.0);
         if let Some(m) = mats.get_mut(&s.0) {
             if m.sweep != f {
                 m.sweep = f;
@@ -1614,15 +1665,16 @@ pub(super) fn refresh_mobility(
     }
 }
 
-/// Drive each ability icon's cooldown sweep from its remaining cooldown.
+/// Drive each of the local hero's ability icons' cooldown sweep from its remaining cooldown.
 pub(super) fn update_cooldown_sweeps(
-    run: Res<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     mut mats: ResMut<Assets<SweepUiMaterial>>,
     sweeps: Query<&AbilitySweep>,
 ) {
-    let stats = run.stats();
+    let Ok(me) = local.single() else { return };
+    let stats = me.stats();
     for s in &sweeps {
-        let Some(o) = run.abilities.get(s.index) else {
+        let Some(o) = me.abilities.get(s.index) else {
             continue;
         };
         let total = o.cooldown(&stats).max(0.01);
@@ -1673,14 +1725,14 @@ const PLATE_FEET_GAP: f32 = 0.004;
 /// A couple of screen pixels lower than the gap alone sets it.
 const PLATE_NUDGE: f32 = 2.0;
 
-/// The hero's nameplate under its feet, sized from the screen diagonal as [`crate::vplates`]
+/// The local hero's nameplate under its feet, sized from the screen diagonal as [`crate::vplates`]
 /// sizes a plate, outside the UI scale. The border's top half seats a name the hero has none of,
 /// so the plate rises until its bar sits just under the feet.
 #[allow(clippy::type_complexity)]
 pub(super) fn hero_plate(
     run: Res<Run>,
     ui_scale: Res<UiScale>,
-    hero: Query<&Transform, With<Hero>>,
+    hero: Query<(&Transform, &HeroState), With<LocalHero>>,
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     mut nodes: ParamSet<(
         Query<(&mut Node, &mut Visibility), With<HpFrame>>,
@@ -1695,19 +1747,19 @@ pub(super) fn hero_plate(
         gx_px, plate_basis, text_px, BAR_H, BAR_OFF_X, BAR_OFF_Y, BAR_W, LEVEL_H, LEVEL_OFF_X,
         LEVEL_OFF_Y, PLATE_H, PLATE_W,
     };
-    let seat = hero.single().ok().and_then(|h| {
+    let seat = hero.single().ok().and_then(|(h, me)| {
         let (cam, tf) = cams.single().ok()?;
         let viewport = cam.logical_viewport_size()?;
         let feet = cam
             .world_to_viewport(&GlobalTransform::from(*tf), h.translation)
             .ok()?;
-        Some((feet, viewport))
+        Some((feet, viewport, me))
     });
     let mut frames = nodes.p0();
     let Ok((mut frame, mut vis)) = frames.single_mut() else {
         return;
     };
-    let Some((feet, viewport)) = seat else {
+    let Some((feet, viewport, me)) = seat else {
         *vis = Visibility::Hidden;
         return;
     };
@@ -1727,10 +1779,10 @@ pub(super) fn hero_plate(
         bar.width = Val::Px(gx(BAR_W));
         bar.height = Val::Px(gx(BAR_H));
     }
-    let stats = run.stats();
-    let hp = (run.hp / stats.max_hp).clamp(0.0, 1.0);
-    let shield = if run.shield_t > 0.0 {
-        (run.shield / stats.max_hp).clamp(0.0, 1.0)
+    let stats = me.stats();
+    let hp = (me.hp / stats.max_hp).clamp(0.0, 1.0);
+    let shield = if me.shield_t > 0.0 {
+        (me.shield / stats.max_hp).clamp(0.0, 1.0)
     } else {
         0.0
     };
@@ -2301,6 +2353,7 @@ pub(super) fn icon_tooltip(
     mut commands: Commands,
     phase: Res<State<Phase>>,
     run: Res<Run>,
+    local: Query<&HeroState, With<LocalHero>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     font: Res<HudFont>,
     ui_scale: Res<UiScale>,
@@ -2357,17 +2410,18 @@ pub(super) fn icon_tooltip(
         }
         return;
     }
-    let stats = run.stats();
+    let Ok(me) = local.single() else { return };
+    let stats = me.stats();
     let lines = match tip {
-        TipFor::Ability(i) => run
+        TipFor::Ability(i) => me
             .abilities
             .get(i)
             .map(|o| ability_tip(o, &stats, spells.as_deref())),
-        TipFor::Passive(i) => run
+        TipFor::Passive(i) => me
             .passives
             .get(i)
             .map(|&(p, level)| passive_tip(p, level, &stats)),
-        TipFor::Mobility => run.mobility().map(|m| {
+        TipFor::Mobility => me.mobility(run.level).map(|m| {
             vec![
                 TipLine::new(spell_name(spells.as_deref(), m.spell, m.name), Color::WHITE).header(),
                 TipLine::new("Press F", Color::WHITE)
