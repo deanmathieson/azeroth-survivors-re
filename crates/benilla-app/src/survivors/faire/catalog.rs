@@ -536,6 +536,9 @@ mod tests {
                 (looks[0].kind, looks[0].rarity),
                 (Kind::CompanionLook, rarity)
             );
+            let look = all_looks().find(|look| look.display == display).unwrap();
+            assert_eq!(looks[0].name, name);
+            assert_eq!(look.name, name);
         }
         assert_eq!(
             by_id("look:disgusting_oozeling").map(|p| p.rarity),

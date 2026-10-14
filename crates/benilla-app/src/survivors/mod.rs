@@ -182,8 +182,7 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    // The Armory, the Run Options panel and the Darkmoon Faire, any open over the
-                    // menu, take its keys and clicks.
+                    // An overlay panel takes the menu's keys and clicks while it is open.
                     hud::keys
                         .run_if(armory::closed)
                         .run_if(run_options::closed)

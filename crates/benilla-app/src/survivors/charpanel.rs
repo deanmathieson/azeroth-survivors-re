@@ -29,7 +29,7 @@ use bevy::ui_render::ui_material::MaterialNode;
 
 use super::armory::{self, TabCtx};
 use super::bonus::School;
-use super::gear::{class_gear, GearSave, ItemIcon, Slot};
+use super::gear::{class_gear, hero_name, GearSave, ItemIcon, Slot};
 use super::hud::{self, rgb, HudFont};
 use super::jewelry::SLOTS;
 use super::meta::MetaParts;
@@ -419,6 +419,7 @@ fn sync_panel(world: &mut World, mut built: Local<Option<(Entity, u32)>>) {
             .unwrap_or(0);
         let sheet = Sheet {
             hero,
+            class,
             level: world.resource::<Run>().level,
             gear: class_gear(world, class),
             rows: breakdown(hero, &world.resource::<RunSources>().0),
@@ -437,6 +438,7 @@ fn sync_panel(world: &mut World, mut built: Local<Option<(Entity, u32)>>) {
 /// What the panel shows.
 struct Sheet<'a> {
     hero: &'a HeroState,
+    class: usize,
     level: u32,
     gear: &'a GearSave,
     rows: Vec<Row>,
@@ -619,6 +621,9 @@ fn socket(p: &mut ChildSpawnerCommands, icon: Option<&'static str>, size: f32) {
 fn hero_column(p: &mut ChildSpawnerCommands, ctx: &TabCtx, sheet: &Sheet) {
     let hero = sheet.hero;
     let race = crate::char_select::race_name(hero.race);
+    if let Some(name) = hero_name(ctx.world, sheet.class) {
+        armory::text(p, ctx, name, 18.0, GOLD);
+    }
     armory::text(
         p,
         ctx,

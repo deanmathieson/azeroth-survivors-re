@@ -1,8 +1,8 @@
 //! The companion's looks: real 1.12 vanity pets, each checked against the client's
 //! `CreatureDisplayInfo.dbc` and `CreatureModelData.dbc` (the model and skin are named beside each).
 //! Some are worn from the start; the rest open as the pet levels ([`super::pet`]), as an
-//! achievement is earned ([`super::super::achievements`]), or as a quest chain awards them
-//! ([`super::super::quests`], kept in [`RewardsSave::unlocked_looks`]).
+//! achievement is earned ([`super::super::achievements`]), as a quest chain awards them, or at
+//! the Darkmoon Faire (the latter two kept in [`RewardsSave::unlocked_looks`]).
 
 use super::super::achievements::AchievementSave;
 use super::pet;
@@ -20,6 +20,8 @@ pub(in crate::survivors) enum Unlock {
     Achievement(&'static str),
     /// A quest chain's reward, kept by display in [`RewardsSave::unlocked_looks`].
     Quest,
+    /// A Darkmoon Faire prize, kept by display in [`RewardsSave::unlocked_looks`].
+    Faire,
 }
 
 /// One look the companion can wear.
@@ -168,6 +170,55 @@ pub(in crate::survivors) static EARNED_LOOKS: &[Look] = &[
         0.9,
         Unlock::Quest,
     ),
+    // `Creature\Cat\Cat.mdx`, display scale 0.5.
+    look("silver_tabby", "Silver Tabby", 5555, 0.9, Unlock::Faire),
+    look("bombay", "Bombay", 5556, 0.9, Unlock::Faire),
+    look("cornish_rex", "Cornish Rex", 5586, 0.9, Unlock::Faire),
+    // `Creature\Parrot\Parrot.mdx`, display scale 0.25.
+    look("senegal", "Senegal", 6190, 0.45, Unlock::Faire),
+    look("cockatiel", "Cockatiel", 6191, 0.45, Unlock::Faire),
+    // `Creature\Owl\Owl.mdx`.
+    look(
+        "great_horned_owl",
+        "Great Horned Owl",
+        4615,
+        1.8,
+        Unlock::Faire,
+    ),
+    look("hawk_owl", "Hawk Owl", 6300, 1.8, Unlock::Faire),
+    // `Creature\Frog\Frog.mdx`, `FrogGreen`.
+    look("tree_frog", "Tree Frog", 6297, 1.8, Unlock::Faire),
+    // `Creature\snake\snake.mdx`, red.
+    look("crimson_snake", "Crimson Snake", 6303, 1.8, Unlock::Faire),
+    // `Creature\DragonWhelp\DragonWhelp.mdx`, display scale 0.5.
+    look(
+        "crimson_whelpling",
+        "Crimson Whelpling",
+        6290,
+        0.9,
+        Unlock::Faire,
+    ),
+    look("dark_whelpling", "Dark Whelpling", 6288, 0.9, Unlock::Faire),
+    // `Creature\PetBombling\PetBombling.mdx`, display scale 0.5.
+    look("pet_bombling", "Pet Bombling", 8909, 0.9, Unlock::Faire),
+    // `Creature\PetBombling\PetBombling.mdx`, smoky.
+    look("lil_smoky", "Lil' Smoky", 8910, 0.9, Unlock::Faire),
+    // `Creature\Spider\Spider.mdx`.
+    look(
+        "smolderweb_hatchling",
+        "Smolderweb Hatchling",
+        9934,
+        1.8,
+        Unlock::Faire,
+    ),
+    // `Creature\Ooze\Ooze.mdx`.
+    look(
+        "disgusting_oozeling",
+        "Disgusting Oozeling",
+        15436,
+        1.8,
+        Unlock::Faire,
+    ),
 ];
 
 /// Every look, [`LOOKS`] then [`EARNED_LOOKS`]: what a look pick indexes.
@@ -186,7 +237,7 @@ pub(in crate::survivors) fn offered(
         Unlock::Start => true,
         Unlock::PetLevel(level) => pet::level(save.pet_xp) >= level,
         Unlock::Achievement(id) => earned.has(id),
-        Unlock::Quest => save.unlocked_looks.contains(&look.display),
+        Unlock::Quest | Unlock::Faire => save.unlocked_looks.contains(&look.display),
     }
 }
 
@@ -252,9 +303,24 @@ mod tests {
                 "{id} is no achievement"
             );
         }
-        // The quest chains' looks are all and only the earned ones.
-        assert!(LOOKS.iter().all(|l| l.unlock != Unlock::Quest));
-        assert!(EARNED_LOOKS.iter().all(|l| l.unlock == Unlock::Quest));
+        // Quest chains and the Faire keep their earned looks outside the regular progression.
+        assert!(LOOKS
+            .iter()
+            .all(|l| !matches!(l.unlock, Unlock::Quest | Unlock::Faire)));
+        assert_eq!(
+            EARNED_LOOKS
+                .iter()
+                .filter(|l| l.unlock == Unlock::Quest)
+                .count(),
+            3
+        );
+        assert_eq!(
+            EARNED_LOOKS
+                .iter()
+                .filter(|l| l.unlock == Unlock::Faire)
+                .count(),
+            15
+        );
     }
 
     #[test]
@@ -287,6 +353,9 @@ mod tests {
         assert!(!offered(look_for("black_kingsnake"), &save, &earned));
         save.unlocked_looks.insert(1206);
         assert!(offered(look_for("black_kingsnake"), &save, &earned));
+        assert!(!offered(look_for("silver_tabby"), &save, &earned));
+        save.unlocked_looks.insert(5555);
+        assert!(offered(look_for("silver_tabby"), &save, &earned));
         assert_eq!(earned_look(1206).map(|l| l.key), Some("black_kingsnake"));
         assert!(earned_look(134).is_none(), "a starting look is not earned");
     }
@@ -349,6 +418,27 @@ mod tests {
                     "dragonwhelpskingreen",
                 ),
             ),
+            ("silver_tabby", ("creature\\cat\\cat.", "")),
+            ("bombay", ("creature\\cat\\cat.", "")),
+            ("cornish_rex", ("creature\\cat\\cat.", "")),
+            ("senegal", ("creature\\parrot\\parrot.", "")),
+            ("cockatiel", ("creature\\parrot\\parrot.", "")),
+            ("great_horned_owl", ("creature\\owl\\owl.", "")),
+            ("hawk_owl", ("creature\\owl\\owl.", "")),
+            ("tree_frog", ("creature\\frog\\frog.", "frog")),
+            ("crimson_snake", ("creature\\snake\\snake.", "")),
+            (
+                "crimson_whelpling",
+                ("creature\\dragonwhelp\\dragonwhelp.", ""),
+            ),
+            (
+                "dark_whelpling",
+                ("creature\\dragonwhelp\\dragonwhelp.", ""),
+            ),
+            ("pet_bombling", ("creature\\petbombling\\petbombling.", "")),
+            ("lil_smoky", ("creature\\petbombling\\petbombling.", "")),
+            ("smolderweb_hatchling", ("creature\\spider\\spider.", "")),
+            ("disgusting_oozeling", ("creature\\ooze\\ooze.", "")),
         ]
         .into_iter()
         .collect();

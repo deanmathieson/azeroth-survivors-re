@@ -565,7 +565,7 @@ mod tests {
         });
         let hero = world
             .spawn((
-                Hero { vy: 0.0, air: 0.0 },
+                Hero::default(),
                 NetEntity {
                     kind: benilla_protocol::EntityKind::Unit,
                     display_id: Some(3000),
@@ -634,7 +634,7 @@ mod tests {
         // A hero arriving in the same dress is dressed without a new row.
         let extra = world
             .spawn((
-                Hero { vy: 0.0, air: 0.0 },
+                Hero::default(),
                 NetEntity {
                     kind: benilla_protocol::EntityKind::Unit,
                     display_id: Some(3000),

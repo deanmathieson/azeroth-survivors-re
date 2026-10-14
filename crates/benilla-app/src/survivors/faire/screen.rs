@@ -1724,7 +1724,7 @@ fn details(b: &mut ChildSpawnerCommands, ctx: &Ctx, buying: bool) {
 fn kind_note(kind: Kind) -> &'static str {
     match kind {
         Kind::CompanionLook => {
-            "Dress your companion in it on the Armory's Rewards tab, once the Companion perk is bought."
+            "Dress your companion in it on the Armory's Companion tab, once the Companion perk is bought."
         }
         Kind::Mount | Kind::MountHat | Kind::Tabard => {
             "Kept with the quest chains' unlocks, for the mounts and their finery to come."

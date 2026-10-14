@@ -484,6 +484,7 @@ fn short_source(unlock: Unlock) -> String {
         Unlock::PetLevel(level) => format!("Pet level {level}"),
         Unlock::Achievement(_) => "Achievement".into(),
         Unlock::Quest => "Quest chain".into(),
+        Unlock::Faire => "Darkmoon Faire".into(),
     }
 }
 
@@ -530,6 +531,7 @@ fn source(look: &Look) -> String {
                 None => "Quest chain reward".into(),
             }
         }
+        Unlock::Faire => "Darkmoon Faire prize".into(),
     }
 }
 
