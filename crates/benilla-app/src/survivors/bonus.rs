@@ -49,8 +49,7 @@ impl StatKey {
     const COUNT: usize = StatKey::Revives as usize + 1;
 
     /// The stat's tooltip name, plural where it counts something.
-    // Tooltip text, for the talent and gear screens still to come.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Tooltip text for the talent and gear screens, still to land.
     pub fn label(self) -> &'static str {
         match self {
             StatKey::MaxHealth => "max health",
@@ -73,7 +72,7 @@ impl StatKey {
     }
 
     /// Whether the value is a flat amount rather than a fraction shown as a percentage.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Tooltip text for the talent and gear screens, still to land.
     fn flat(self) -> bool {
         matches!(
             self,
@@ -99,7 +98,7 @@ impl School {
     const COUNT: usize = School::Arcane as usize + 1;
 
     /// The school's display name, capitalised as in tooltips.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Tooltip text for the talent and gear screens, still to land.
     pub fn label(self) -> &'static str {
         match self {
             School::Physical => "Physical",
@@ -146,7 +145,7 @@ impl Bonus {
     }
 
     /// Short tooltip text: "+10% damage", "+5% Fire damage", "+126 max health", "-9% cooldowns".
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Tooltip text for the talent and gear screens, still to land.
     pub fn describe(&self) -> String {
         // Cooldown reduction shortens cooldowns, so it reads as a minus.
         let shown = if self.stat == StatKey::Cooldown {
@@ -179,7 +178,7 @@ impl Bonus {
 }
 
 /// `v` to one decimal place, without the decimal when it rounds to a whole number.
-#[allow(dead_code)]
+#[allow(dead_code)] // Tooltip text for the talent and gear screens, still to land.
 fn tenths(v: f32) -> String {
     let t = (v * 10.0).round() / 10.0;
     if t.fract() == 0.0 {
@@ -204,8 +203,6 @@ impl Bonuses {
         }
     }
 
-    // For the static source slices still to come.
-    #[allow(dead_code)]
     pub fn add_all(&mut self, bonuses: &[Bonus]) {
         for bonus in bonuses {
             self.add(bonus);

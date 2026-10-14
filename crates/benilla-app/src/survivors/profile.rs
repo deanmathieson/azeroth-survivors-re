@@ -25,6 +25,8 @@ pub(super) struct AccountRecord {
     pub seconds_played: f64,
     pub damage_done: f64,
     pub best_level: u32,
+    /// Gold picked up over every run; saves from before gold read as 0.
+    pub gold_earned: u64,
 }
 
 /// One class's finished-run record.
@@ -91,6 +93,7 @@ pub(super) struct RunOutcome {
     pub bosses: u32,
     pub level: u32,
     pub damage: f64,
+    pub gold: u32,
 }
 
 /// The profile changes a results screen can announce.
@@ -147,6 +150,10 @@ impl Profile {
         self.account.seconds_played += f64::from(outcome.seconds);
         self.account.damage_done += outcome.damage;
         self.account.best_level = self.account.best_level.max(outcome.level);
+        self.account.gold_earned = self
+            .account
+            .gold_earned
+            .saturating_add(u64::from(outcome.gold));
         if outcome.won {
             self.account.wins = self.account.wins.saturating_add(1);
         } else {
@@ -377,6 +384,7 @@ pub(super) fn record_finished(
         bosses: run.bosses,
         level: run.level,
         damage: run.damage_done,
+        gold: run.gold,
     };
     if profile.writable {
         match read_clean_profile() {
@@ -442,6 +450,7 @@ mod tests {
         assert_eq!(profile.version, PROFILE_VERSION);
         assert_eq!(profile.account.runs, 2);
         assert_eq!(profile.account.kills, 0);
+        assert_eq!(profile.account.gold_earned, 0);
         assert!(profile.classes.is_empty());
     }
 
@@ -457,6 +466,7 @@ mod tests {
             bosses: 1,
             level: 2,
             damage: 5.0,
+            gold: 40,
         };
         let first = profile.record(&death);
         assert!(!first.new_best_survival);
@@ -478,6 +488,7 @@ mod tests {
         assert_eq!(profile.account.runs, 3);
         assert_eq!(profile.account.wins, 1);
         assert_eq!(profile.account.deaths, 2);
+        assert_eq!(profile.account.gold_earned, 120);
         assert_eq!(zone.runs, 3);
         assert_eq!(zone.wins, 1);
         assert_eq!(zone.best_seconds, 35.0);
@@ -549,6 +560,7 @@ mod tests {
                 deaths: u32::MAX,
                 kills: u64::MAX,
                 bosses: u64::MAX,
+                gold_earned: u64::MAX,
                 ..default()
             },
             ..Profile::default()
@@ -579,12 +591,14 @@ mod tests {
             bosses: u32::MAX,
             level: 1,
             damage: 1.0,
+            gold: u32::MAX,
         });
         assert_eq!(profile.account.runs, u32::MAX);
         assert_eq!(profile.account.wins, u32::MAX);
         assert_eq!(profile.account.deaths, u32::MAX);
         assert_eq!(profile.account.kills, u64::MAX);
         assert_eq!(profile.account.bosses, u64::MAX);
+        assert_eq!(profile.account.gold_earned, u64::MAX);
         let class = profile.classes.get(&slug(data::CLASSES[0].name)).unwrap();
         assert_eq!(class.runs, u32::MAX);
         assert_eq!(class.wins, u32::MAX);

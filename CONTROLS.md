@@ -16,6 +16,9 @@
 | Playing | **Esc** | pause |
 | Playing | — | abilities cast themselves (no aim) |
 | Level up | **1 / 2 / 3** (or click a card) | pick an upgrade |
+| Level up | **R** (or **Reroll**) | deal a new hand (2 a run) |
+| Level up | **B** (or **Banish**), then a card | strike that choice for the rest of the run and deal its slot again (1 a run; **B** again cancels) |
+| Level up | **Skip** | pass the hand up for gold |
 | Paused | **Esc** | resume |
 | Game over | **Enter** (or **Play again**) | back to the menu |
 | Any | minimap **+ / −** / minimize | minimap zoom / collapse |

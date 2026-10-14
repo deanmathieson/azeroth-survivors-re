@@ -82,30 +82,42 @@ pub(super) fn elite_body(b: Body) -> Body {
     }
 }
 
-/// What one coin is worth `elapsed` seconds in: 1 early, 2 mid-run, 3 at the end. The one place a
-/// coin's worth is reckoned, so a Gold bonus multiplies here.
+/// What one coin is worth `elapsed` seconds in: 1 early, 2 mid-run, 3 at the end, before the
+/// hero's gold multiplier ([`worth`] applies it).
 pub(super) fn coin_value(elapsed: f32) -> u32 {
     (1.0 + 2.0 * data::progress(elapsed).min(1.0)).round() as u32
 }
 
+/// `coins` coins' worth `elapsed` seconds in under the gold multiplier `gold` ([`Stats::gold`],
+/// 1.0 with no Gold bonus): the one place a coin's worth is reckoned. The drop is rounded once,
+/// its fraction up when `dither` (uniform in `[0, 1)`) falls under it, so even a lone coin pays
+/// the bonus in full on average; never less than one.
+///
+/// [`Stats::gold`]: super::Stats::gold
+fn worth(coins: u32, elapsed: f32, gold: f32, dither: f32) -> u32 {
+    let exact = (coins * coin_value(elapsed)) as f32 * gold.max(0.0);
+    ((exact + dither).floor() as u32).max(1)
+}
+
 /// The gold a kill drops, if any: a pile from a boss or an elite, now and then a coin from the
-/// horde. `roll` is uniform in `[0, 1)`.
-pub(super) fn purse(boss: bool, elite: bool, elapsed: f32, roll: f32) -> Option<u32> {
-    let coins = if boss {
-        BOSS_PILE_COINS
+/// horde, under the gold multiplier `gold`. `roll` is uniform in `[0, 1)`.
+pub(super) fn purse(boss: bool, elite: bool, elapsed: f32, gold: f32, roll: f32) -> Option<u32> {
+    let (coins, dither) = if boss {
+        (BOSS_PILE_COINS, roll)
     } else if elite {
-        ELITE_PILE_COINS
+        (ELITE_PILE_COINS, roll)
     } else if roll < COIN_CHANCE {
-        1
+        // The roll that let the coin drop is uniform under the chance: stretched, it dithers.
+        (1, roll / COIN_CHANCE)
     } else {
         return None;
     };
-    Some(coins * coin_value(elapsed))
+    Some(worth(coins, elapsed, gold, dither))
 }
 
-/// A cache's burst of gold.
-pub(super) fn cache_gold(elapsed: f32) -> u32 {
-    CACHE_COINS * coin_value(elapsed)
+/// A cache's burst of gold under the gold multiplier `gold`, rounded to the nearest coin.
+pub(super) fn cache_gold(elapsed: f32, gold: f32) -> u32 {
+    worth(CACHE_COINS, elapsed, gold, 0.5)
 }
 
 /// The `GameObjectDisplayInfo` row and scale of `gold` on the ground: the heap grows with it.
@@ -116,7 +128,7 @@ pub(super) fn coin_look(gold: u32) -> (u32, f32) {
 /// What a cache holds: a burst of gold and a level-up hand that needs no experience. The one place
 /// a cache's reward is decided. Returns the gold given.
 pub(super) fn open_cache(run: &mut Run) -> u32 {
-    let gold = cache_gold(run.elapsed);
+    let gold = cache_gold(run.elapsed, run.stats().gold);
     run.gold += gold;
     run.caches += 1;
     run.pending_levels += 1;
@@ -381,20 +393,39 @@ mod tests {
     #[test]
     fn purses_by_rank() {
         let t = data::VICTORY_SECS;
-        assert_eq!(purse(true, false, t, 0.99), Some(BOSS_PILE_COINS * 3));
-        assert_eq!(purse(false, true, 0.0, 0.99), Some(ELITE_PILE_COINS));
-        assert_eq!(purse(false, false, 0.0, 0.0), Some(1));
-        assert_eq!(purse(false, false, t, COIN_CHANCE / 2.0), Some(3));
-        assert_eq!(purse(false, false, 0.0, COIN_CHANCE), None);
-        assert_eq!(cache_gold(0.0), CACHE_COINS);
-        assert!(purse(true, false, 0.0, 0.5) > purse(false, true, 0.0, 0.5));
+        assert_eq!(purse(true, false, t, 1.0, 0.99), Some(BOSS_PILE_COINS * 3));
+        assert_eq!(purse(false, true, 0.0, 1.0, 0.99), Some(ELITE_PILE_COINS));
+        assert_eq!(purse(false, false, 0.0, 1.0, 0.0), Some(1));
+        assert_eq!(purse(false, false, t, 1.0, COIN_CHANCE / 2.0), Some(3));
+        assert_eq!(purse(false, false, 0.0, 1.0, COIN_CHANCE), None);
+        assert_eq!(cache_gold(0.0, 1.0), CACHE_COINS);
+        assert!(purse(true, false, 0.0, 1.0, 0.5) > purse(false, true, 0.0, 1.0, 0.5));
+    }
+
+    #[test]
+    fn a_gold_bonus_multiplies_every_coin() {
+        let t = data::VICTORY_SECS;
+        let pile = |coins: u32| (coins * 3) as f32 * 1.5;
+        assert_eq!(
+            purse(true, false, t, 1.5, 0.0),
+            Some(pile(BOSS_PILE_COINS) as u32)
+        );
+        assert_eq!(cache_gold(t, 1.5), pile(CACHE_COINS).round() as u32);
+        // A lone early coin is worth 1.4 on average: the fraction pays out that often.
+        let n = 1000;
+        let total: u32 = (0..n)
+            .map(|i| purse(false, false, 0.0, 1.4, COIN_CHANCE * i as f32 / n as f32).unwrap())
+            .sum();
+        assert!((total as i64 - 1400).abs() <= 1, "{total}");
+        // A negative multiplier still drops a coin.
+        assert_eq!(purse(false, false, 0.0, -1.0, 0.0), Some(1));
     }
 
     #[test]
     fn a_cache_gives_gold_and_a_hand() {
         let mut run = Run::default();
         let gold = open_cache(&mut run);
-        assert_eq!(gold, cache_gold(0.0));
+        assert_eq!(gold, cache_gold(0.0, 1.0));
         assert_eq!(run.gold, gold);
         assert_eq!(run.caches, 1);
         assert_eq!(run.pending_levels, 1);

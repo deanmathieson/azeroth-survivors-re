@@ -503,17 +503,18 @@ pub(super) fn drop_loot(
     mut gems: Query<&mut Gem>,
 ) {
     let mut count = gems.iter().count();
+    let gold = run.stats().gold;
     for d in drops.read() {
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
         }
-        if let Some(gold) = treasure::purse(d.boss, d.elite, run.elapsed, rng.f32()) {
+        if let Some(coins) = treasure::purse(d.boss, d.elite, run.elapsed, gold, rng.f32()) {
             spawn_gem(
                 &mut commands,
                 run.guid(),
                 d.pos - Vec3::X * 0.8,
-                GemKind::Gold(gold),
+                GemKind::Gold(coins),
             );
         }
         if d.elite {

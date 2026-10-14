@@ -135,9 +135,7 @@ impl Plugin for SurvivorsPlugin {
                     hud::buttons,
                     // The Armory and the Run Options panel, either open over the menu, take its
                     // keys and clicks.
-                    hud::keys
-                        .run_if(armory::closed)
-                        .run_if(run_options::closed),
+                    hud::keys.run_if(armory::closed).run_if(run_options::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
@@ -291,8 +289,7 @@ pub(super) struct Stats {
     pub crit_damage: f32,
     /// Extra targets, projectiles or jumps for every ability that counts them.
     pub targets: u32,
-    /// The gold multiplier. Unread until gold exists: its consumer is the per-coin value.
-    #[allow(dead_code)]
+    /// The gold multiplier on every coin's worth ([`treasure::purse`], [`treasure::cache_gold`]).
     pub gold: f32,
     /// The luck multiplier: each rarity tier up weighs this much more in level-up offers.
     pub luck: f32,
