@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use super::cards::PendingPick;
 use super::hud::{self, Choice, Offer};
-use super::{Phase, Rng, Run};
+use super::{treasure, Phase, Rng, Run};
 
 /// Rerolls and banishes a run starts with.
 pub(super) const REROLLS_PER_RUN: u32 = 2;
@@ -43,9 +43,19 @@ pub(super) fn is_banished(choice: Choice, run: &Run) -> bool {
     struck(choice, run).is_some_and(|k| run.banished.contains(&k))
 }
 
-/// The gold for passing up a hand.
-pub(super) fn skip_gold(level: u32) -> u32 {
-    25 + 5 * level
+/// What passing up a hand pays, in coins.
+const SKIP_COINS: u32 = 10;
+
+/// The gold for passing up a hand: [`SKIP_COINS`] coins at what a coin is worth now
+/// ([`treasure::coin_value`]) under the hero's gold multiplier, rounded to the nearest coin and
+/// never less than one. The button's label and the payout both read it.
+pub(super) fn skip_gold(run: &Run) -> u32 {
+    treasure::worth(SKIP_COINS, run.elapsed, run.stats().gold, 0.5)
+}
+
+/// The Skip button's label, with what it pays.
+fn skip_label(run: &Run) -> String {
+    format!("Skip: +{} gold", skip_gold(run))
 }
 
 /// Deal a whole new hand, if a reroll is left.
@@ -102,7 +112,7 @@ pub(super) fn skip(
     rng: &mut Rng,
     next: &mut NextState<Phase>,
 ) -> u32 {
-    let gold = skip_gold(run.level);
+    let gold = skip_gold(run);
     run.gold += gold;
     run.banner = Some((format!("Skipped: +{gold} gold"), 2.5));
     hud::close_hand(run, offer, rng, next);
@@ -253,7 +263,7 @@ pub(super) fn refresh_tools(
     for (label, mut text, mut color) in &mut labels {
         let want = match label.0 {
             Tool::Reroll => format!("Reroll (R): {} left", run.rerolls),
-            Tool::Skip => format!("Skip: +{} gold", skip_gold(run.level)),
+            Tool::Skip => skip_label(&run),
             Tool::Banish if mode.banishing => "Cancel banish (B)".to_string(),
             Tool::Banish => format!("Banish (B): {} left", run.banishes),
         };
@@ -279,6 +289,7 @@ pub(super) fn refresh_tools(
 
 #[cfg(test)]
 mod tests {
+    use super::super::bonus::{Bonus, StatKey};
     use super::super::{data, Owned};
     use super::*;
 
@@ -366,15 +377,56 @@ mod tests {
         run.pending_levels = 2;
         offer.deal(hud::choices_for(&run, &mut rng));
         let mut next = NextState::default();
-        assert_eq!(skip(&mut run, &mut offer, &mut rng, &mut next), 45);
-        assert_eq!((run.gold, run.pending_levels), (45, 1));
+        let label = skip_label(&run);
+        let paid = skip(&mut run, &mut offer, &mut rng, &mut next);
+        assert_eq!(paid, SKIP_COINS);
+        assert_eq!(label, format!("Skip: +{paid} gold"), "it pays what it says");
+        assert_eq!((run.gold, run.pending_levels), (paid, 1));
         assert_ne!(offer.len(), 0, "another banked level deals another hand");
         assert!(matches!(next, NextState::Unchanged));
         skip(&mut run, &mut offer, &mut rng, &mut next);
-        assert_eq!((run.gold, run.pending_levels), (90, 0));
+        assert_eq!((run.gold, run.pending_levels), (2 * paid, 0));
         assert_eq!(offer.len(), 0);
         assert!(matches!(next, NextState::Pending(Phase::Playing)));
         assert_eq!(run.abilities.len(), 1, "no card was taken");
-        assert_eq!(skip_gold(1), 30);
+    }
+
+    #[test]
+    fn skip_gold_follows_the_coin_economy() {
+        let pays = |run: &mut Run| {
+            let label = skip_label(run);
+            let (mut offer, mut rng) = (Offer::default(), Rng(9));
+            let mut next = NextState::default();
+            run.gold = 0;
+            run.pending_levels = 1;
+            let paid = skip(run, &mut offer, &mut rng, &mut next);
+            assert_eq!(paid, skip_gold(run));
+            assert_eq!(run.gold, paid);
+            assert_eq!(label, format!("Skip: +{paid} gold"));
+            paid
+        };
+        let mut run = fresh_run();
+        // The hero's level has no say: only the clock and the gold multiplier.
+        run.level = 174;
+        assert_eq!(pays(&mut run), SKIP_COINS);
+        run.elapsed = data::VICTORY_SECS / 2.0;
+        assert_eq!(pays(&mut run), 2 * SKIP_COINS);
+        run.elapsed = data::VICTORY_SECS;
+        assert_eq!(pays(&mut run), 3 * SKIP_COINS);
+        let mut last = 0;
+        for s in 0..=900 {
+            run.elapsed = s as f32;
+            let g = skip_gold(&run);
+            assert!(g >= last, "a skip never pays less later");
+            last = g;
+        }
+        // A Gold bonus multiplies it as it does every coin.
+        run.bonuses.add(&Bonus::new(StatKey::Gold, 0.5));
+        assert_eq!(pays(&mut run), 45);
+        run.elapsed = 0.0;
+        assert_eq!(pays(&mut run), 15);
+        // Never less than one, whatever the multiplier.
+        run.bonuses.add(&Bonus::new(StatKey::Gold, -3.0));
+        assert_eq!(pays(&mut run), 1);
     }
 }

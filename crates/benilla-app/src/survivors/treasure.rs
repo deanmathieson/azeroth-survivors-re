@@ -94,7 +94,7 @@ pub(super) fn coin_value(elapsed: f32) -> u32 {
 /// the bonus in full on average; never less than one.
 ///
 /// [`Stats::gold`]: super::Stats::gold
-fn worth(coins: u32, elapsed: f32, gold: f32, dither: f32) -> u32 {
+pub(super) fn worth(coins: u32, elapsed: f32, gold: f32, dither: f32) -> u32 {
     let exact = (coins * coin_value(elapsed)) as f32 * gold.max(0.0);
     ((exact + dither).floor() as u32).max(1)
 }
