@@ -19,6 +19,7 @@ mod menu;
 mod minimap;
 mod mobility;
 mod profile;
+mod run_options;
 mod treasure;
 mod units;
 
@@ -46,6 +47,7 @@ impl Plugin for SurvivorsPlugin {
         app.insert_resource(crate::run_mode::CaptureMode)
             .add_plugins(grade::plugin)
             .add_plugins(armory::plugin)
+            .add_plugins(run_options::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -128,12 +130,17 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    // The Armory over the menu takes the keys and clicks while it is open.
-                    hud::keys.run_if(armory::closed),
+                    // The Armory and the Run Options panel, either open over the menu, take its
+                    // keys and clicks.
+                    hud::keys
+                        .run_if(armory::closed)
+                        .run_if(run_options::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
-                    menu::menu_clicks.run_if(armory::closed),
+                    menu::menu_clicks
+                        .run_if(armory::closed)
+                        .run_if(run_options::closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
@@ -400,6 +407,8 @@ pub(super) struct Run {
     pub rerolls: u32,
     pub banishes: u32,
     pub banished: Vec<hand::Struck>,
+    /// The Run Options rewards multiplier the run began under, for whatever pays out.
+    pub reward_mult: f32,
 }
 
 impl Default for Run {
@@ -443,6 +452,7 @@ impl Default for Run {
             rerolls: hand::REROLLS_PER_RUN,
             banishes: hand::BANISHES_PER_RUN,
             banished: Vec::new(),
+            reward_mult: 1.0,
         }
     }
 }

@@ -10,8 +10,9 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
 use super::data;
-use super::enemies::{self, Rank};
+use super::enemies::{self, Rank, Spawner};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::run_options::RunOptions;
 use super::units::{self, flat, Fx};
 use super::{Phase, Rng, Run, Selection};
 use crate::net::{FieldChanged, Guid, ObjectStore};
@@ -204,6 +205,8 @@ pub(super) fn place_guardians(
     mut commands: Commands,
     mut run: ResMut<Run>,
     selection: Res<Selection>,
+    opts: Res<RunOptions>,
+    mut spawner: ResMut<Spawner>,
     hero: Query<&Transform, With<Hero>>,
     world: WorldPoint,
 ) {
@@ -219,7 +222,16 @@ pub(super) fn place_guardians(
     for (i, off) in posts.iter().enumerate() {
         let def = &roster.enemies[guardian_tier(i, posts.len(), roster.enemies.len())];
         let pos = enemies::ground(&world, center + *off, h.translation.y);
-        enemies::spawn_enemy(&mut commands, &mut run, def, pos, center, Rank::Guardian);
+        enemies::spawn_enemy(
+            &mut commands,
+            &mut run,
+            def,
+            pos,
+            center,
+            Rank::Guardian,
+            &opts,
+            &mut spawner.xp_carry,
+        );
     }
     for off in chest_posts(map.leash) {
         let pos = enemies::ground(&world, center + off, h.translation.y);
@@ -233,6 +245,8 @@ pub(super) fn spawn_elites(
     mut run: ResMut<Run>,
     mut rng: ResMut<Rng>,
     selection: Res<Selection>,
+    opts: Res<RunOptions>,
+    mut spawner: ResMut<Spawner>,
     hero: Query<&Transform, With<Hero>>,
     world: WorldPoint,
 ) {
@@ -251,7 +265,16 @@ pub(super) fn spawn_elites(
         hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
         hpos.y,
     );
-    enemies::spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Elite);
+    enemies::spawn_enemy(
+        &mut commands,
+        &mut run,
+        def,
+        pos,
+        hpos,
+        Rank::Elite,
+        &opts,
+        &mut spawner.xp_carry,
+    );
     run.banner = Some((format!("Elite {} approaches!", def.name), 3.0));
 }
 

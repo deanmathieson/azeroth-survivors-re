@@ -862,6 +862,10 @@ pub(super) fn setup_hud(
                     });
                 }
             });
+            root.spawn((
+                super::run_options::ResultsRewards,
+                centered(f, "", 18.0, super::run_options::GREEN),
+            ));
             root.spawn((OverStats, centered(f, "", 15.0, DIM)));
             root.spawn((
                 edged_button(UiAction::MainMenu, BUTTON, GOLD),

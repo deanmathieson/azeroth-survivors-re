@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use super::abilities::Hit;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::run_options::{self, RunOptions, XpCarry};
 use super::treasure;
 use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
 use super::{Phase, Rng, Run, Selection};
@@ -56,6 +57,8 @@ pub(super) struct Dying(f32);
 #[derive(Resource, Default)]
 pub(super) struct Spawner {
     timer: f32,
+    /// What the Run Options density split owes the next spawns.
+    pub xp_carry: XpCarry,
 }
 
 /// An enemy died here, worth this much.
@@ -120,10 +123,15 @@ pub(super) fn spawn_enemy(
     pos: Vec3,
     hero: Vec3,
     rank: Rank,
+    opts: &RunOptions,
+    xp_carry: &mut XpCarry,
 ) {
+    // The Run Options first, then the run clock's growth, then an elite's own multipliers. Only
+    // the horde splits its experience under density: density adds no bosses, elites or guardians.
+    let tuned = run_options::scaled(def, opts, rank != Rank::Horde, xp_carry);
     let mut body = treasure::Body {
-        hp: def.hp * data::hp_scale(run.elapsed),
-        damage: def.damage * data::damage_scale(run.elapsed),
+        hp: tuned.hp * data::hp_scale(run.elapsed),
+        damage: tuned.damage * data::damage_scale(run.elapsed),
         scale: def.scale,
     };
     let elite = matches!(rank, Rank::Elite | Rank::Guardian);
@@ -154,10 +162,10 @@ pub(super) fn spawn_enemy(
             def,
             hp: body.hp,
             max_hp: body.hp,
-            speed: def.speed,
+            speed: tuned.speed,
             damage: body.damage,
             radius: radius_for(def) * body.scale / def.scale,
-            xp: def.xp,
+            xp: tuned.xp,
             boss: rank == Rank::Boss,
             elite,
             guardian: rank == Rank::Guardian,
@@ -191,6 +199,7 @@ pub(super) fn spawn_enemies(
     mut rng: ResMut<Rng>,
     mut spawner: ResMut<Spawner>,
     selection: Res<Selection>,
+    opts: Res<RunOptions>,
     hero: Query<&Transform, With<Hero>>,
     enemies: Query<&Enemy>,
     world: WorldPoint,
@@ -213,7 +222,16 @@ pub(super) fn spawn_enemies(
             hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
             hpos.y,
         );
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Boss);
+        spawn_enemy(
+            &mut commands,
+            &mut run,
+            def,
+            pos,
+            hpos,
+            Rank::Boss,
+            &opts,
+            &mut spawner.xp_carry,
+        );
         run.bosses += 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
     }
@@ -223,7 +241,7 @@ pub(super) fn spawn_enemies(
     if run.rings < due_rings {
         run.rings = due_rings;
         let def = &roster.enemies[pool[0]];
-        let n = 28 + (data::progress(elapsed) * 60.0) as usize;
+        let n = opts.crowd(28 + (data::progress(elapsed) * 60.0) as usize);
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
             let pos = ground(
@@ -231,7 +249,16 @@ pub(super) fn spawn_enemies(
                 hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
                 hpos.y,
             );
-            spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Horde);
+            spawn_enemy(
+                &mut commands,
+                &mut run,
+                def,
+                pos,
+                hpos,
+                Rank::Horde,
+                &opts,
+                &mut spawner.xp_carry,
+            );
         }
         run.banner = Some(("They're surrounding you!".into(), 3.0));
     }
@@ -243,17 +270,28 @@ pub(super) fn spawn_enemies(
     spawner.timer = 0.12;
     // Guardians at their posts are no part of the horde.
     let alive = enemies.iter().filter(|e| !e.dead && !e.dormant).count();
-    let target = data::target_alive(elapsed);
+    let target = opts.crowd(data::target_alive(elapsed));
     if alive >= target {
         return;
     }
-    let n = (((target - alive) as f32) / 6.0).ceil().min(4.0) as usize;
+    let n = (((target - alive) as f32) / 6.0)
+        .ceil()
+        .min(4.0 * opts.density) as usize;
     for _ in 0..n {
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
         let pos = ground(&world, hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r, hpos.y);
-        spawn_enemy(&mut commands, &mut run, def, pos, hpos, Rank::Horde);
+        spawn_enemy(
+            &mut commands,
+            &mut run,
+            def,
+            pos,
+            hpos,
+            Rank::Horde,
+            &opts,
+            &mut spawner.xp_carry,
+        );
     }
 }
 
@@ -481,6 +519,10 @@ pub(super) fn drop_loot(
         if d.elite {
             run.elites += 1;
             treasure::spawn_cache(&mut commands, run.guid(), d.pos + Vec3::Z * 1.2, false);
+        }
+        // A Run Options density share can round to nothing: no empty wisp.
+        if d.xp == 0 {
+            continue;
         }
         if count >= MAX_GEMS && !d.boss {
             if let Some(mut g) = gems.iter_mut().find(|g| matches!(g.kind, GemKind::Xp(_))) {
