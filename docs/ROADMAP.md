@@ -25,6 +25,7 @@ In progress (paused, resumed tonight):
 
 Each step only starts when the one before is verified. Nothing is pushed unless the full gate is green.
 
+0. **Party size is 5** (the group is 4-5 friends): the host accepts 4 clients; party scaling gains a 5th step (×3.4); the party frames show 4 allies.
 1. **Resume the three paused workers** together: networking (in the main repo, its own `target/`), `wowparty` and `wowui` (each with its own target dir).
 2. **Networking lands.** Verify (rustfmt, clippy, survivors tests with and without `coop`, play build), then push.
 3. **Merge `wowparty` and `wowui`** on top. One integration worker wires them into networking:
@@ -37,8 +38,12 @@ Each step only starts when the one before is verified. Nothing is pushed unless 
    - **Ready check** in the lobby, with the real ready-check pop-up and sound; the lobby shows each player's class, title and mount.
    - **Spectate while downed:** cycle the camera through living allies.
    - **Personal boss loot:** each player rolls for their own class; everyone sees the party's loot banners.
-5. **Two-window smoke test:** with the PC free overnight, launch the game twice (one hosting, one joining on 127.0.0.1), take screenshots of the lobby and a shared run, and check they connect, see each other and level up without pausing.
-6. **Docs and page:** "How to play online" in `docs/MULTIPLAYER.md`, this roadmap, the README, and the toast.house page. Leave a morning summary.
+5. **Launch night kit** (so friends don't build anything):
+   - a prebuilt zip of the game exe and config, shared privately; friends bring their own WoW 1.12.1 data;
+   - a version check in the Hello/Welcome handshake that refuses mismatched builds with a clear message;
+   - a one-page friend guide: get the data, unzip, Tailscale, Join.
+6. **Two-window soak test:** with the PC free overnight, launch the game twice (one hosting, one joining on 127.0.0.1), take screenshots of the lobby and a shared run, and play a full 15-minute co-op run, and check they connect, see each other, level up without pausing, and hold frame rate with a 5-player-sized horde.
+7. **Docs and page:** "How to play online" in `docs/MULTIPLAYER.md`, this roadmap, the README, and the toast.house page. Leave a morning summary.
 
 **Rules for the night:**
 - one build folder per worktree;
@@ -54,6 +59,33 @@ Each step only starts when the one before is verified. Nothing is pushed unless 
 - Automated: in-process host + client over a real UDP loopback (already in the test suite).
 - On one PC: two windows, one hosting (`WOW_SURVIVORS_HOST=5000`) and one joining (`WOW_SURVIVORS_JOIN=127.0.0.1:5000`).
 - With friends: Tailscale on everyone's PC (easiest), or forward UDP 5000 on the host's router.
+
+## Tomorrow evening (before the group arrives)
+
+Small, social, high on laughs:
+
+- **Need / Greed / Pass** on boss loot, with the real roll window and dice sound, plus `/roll`.
+- **Side bets** before a run (top damage, first to die, survives to 15:00), wagered in Faire tickets and settled from the results.
+- **Faire pulls broadcast** to the lobby, with a fanfare for Legendary pulls, and ticket gifting.
+- **Fashion vote** after a run: best-dressed wins tickets.
+
+## Raid night: Molten Core
+
+The first raid is Molten Core. Its design lives in docs/RAIDS.md. Order of work:
+
+1. **Spike:** does the engine load and render the Molten Core instance map (map 409)? If not, what is missing?
+2. **Boss mechanics library** built on the mechanics toolkit:
+   - telegraphed ground effects;
+   - spread and stack;
+   - Living Bomb;
+   - dispellable curses;
+   - fear;
+   - taunt swaps;
+   - enrage timers;
+   - adds and phases.
+3. **Raid mode:** pull trash, then bosses in order, ending with Ragnaros.
+4. **Tier 1 sets** with real 2/4/8-piece set bonuses through Need/Greed, and raid achievements and titles.
+5. **Transmog collection,** so raid looks can be shown off.
 
 ## Backlog (after co-op)
 
