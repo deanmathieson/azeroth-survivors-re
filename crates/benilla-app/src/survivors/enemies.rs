@@ -67,6 +67,8 @@ pub(super) struct Spawner {
     timer: f32,
     /// What the Run Options density split owes the next spawns.
     pub xp_carry: XpCarry,
+    /// Spawns made round a standing hero so far: the heroes take turns ([`party::spawn_anchor`]).
+    pub turn: u32,
 }
 
 /// An enemy died here, worth this much.
@@ -95,7 +97,8 @@ pub(super) enum Rank {
 pub(super) enum GemKind {
     Xp(u32),
     Heal(f32),
-    Gold(u32),
+    /// Coins, paying under the gold multiplier of whoever picks them up.
+    Gold(treasure::Coins),
 }
 
 #[derive(Component)]
@@ -113,7 +116,7 @@ fn look_for(kind: GemKind) -> (u32, f32) {
     match kind {
         // `TurkeyLeg.mdx`.
         GemKind::Heal(_) => (114, 2.5),
-        GemKind::Gold(gold) => treasure::coin_look(gold),
+        GemKind::Gold(coins) => treasure::coin_look(coins.base),
         // `BFD_WispSmallPurple.mdx`.
         GemKind::Xp(xp) if xp >= 20 => (1307, 1.0),
         // `BFD_WispSmallGreen.mdx`.
@@ -160,12 +163,13 @@ pub(super) fn spawn_enemy(
     opts: &RunOptions,
     xp_carry: &mut XpCarry,
 ) {
-    // The Run Options first, then the run clock's growth, then an elite's own multipliers. Only
-    // the horde splits its experience under density: density adds no bosses, elites or guardians.
+    // The Run Options first, then the run clock's growth and the party's size, then an elite's own
+    // multipliers. Only the horde splits its experience under density: density adds no bosses,
+    // elites or guardians.
     let tuned = run_options::scaled(def, opts, rank != Rank::Horde, xp_carry);
     let body = ranked_body(
         treasure::Body {
-            hp: tuned.hp * data::hp_scale(run.elapsed),
+            hp: tuned.hp * data::hp_scale(run.elapsed) * party::scale(run.party),
             damage: tuned.damage * data::damage_scale(run.elapsed),
             scale: def.scale,
         },
@@ -257,8 +261,23 @@ fn spawn_site(map: &data::MapDef, hero_pos: Vec3, angle: f32, radius: f32) -> Ve
     site
 }
 
-/// Keep the horde topped up on a ring outside the view, round the heroes still standing, with the
-/// bosses and the encircling waves on the clock.
+/// Where the heroes stand: those standing (whom spawns ring round) and everyone (whom spawns keep
+/// clear of).
+pub(super) fn hero_spots(
+    heroes: &Query<(&Transform, &HeroState), With<Hero>>,
+) -> (Vec<Vec3>, Vec<Vec3>) {
+    let standing = heroes
+        .iter()
+        .filter(|(_, h)| h.alive())
+        .map(|(tf, _)| tf.translation)
+        .collect();
+    let everyone = heroes.iter().map(|(tf, _)| tf.translation).collect();
+    (standing, everyone)
+}
+
+/// Keep the horde topped up on a ring outside the view, round one standing hero at a time and
+/// clear of every hero, with the bosses and the encircling waves on the clock. The party's size
+/// swells the crowd ([`party::crowd`]).
 pub(super) fn spawn_enemies(
     mut commands: Commands,
     time: Res<Time>,
@@ -272,10 +291,12 @@ pub(super) fn spawn_enemies(
     collide: Option<WorldCollision>,
     world: WorldPoint,
 ) {
-    let standing = heroes.iter().filter(|(_, h)| h.alive());
-    let Some(hpos) = party::centre(standing.map(|(tf, _)| tf.translation)) else {
+    let (standing, everyone) = hero_spots(&heroes);
+    if standing.is_empty() {
         return;
-    };
+    }
+    let leash = party::Leash::of(selection.stage_def());
+    let heroes_in = run.party;
     let elapsed = run.elapsed;
     let map = selection.stage_def();
     let roster = data::roster(selection.map);
@@ -284,13 +305,12 @@ pub(super) fn spawn_enemies(
     let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(roster.bosses.len() as u32);
     while run.bosses < due_bosses {
         let def = &roster.bosses[run.bosses as usize];
+        let Some(hpos) = party::spawn_anchor(&standing, &mut spawner.turn) else {
+            break;
+        };
         let a = rng.range(0.0, std::f32::consts::TAU);
-        let pos = ground_on_collision(
-            collide.as_ref(),
-            &world,
-            spawn_site(map, hpos, a, 30.0),
-            map.floor,
-        );
+        let at = party::spawn_point(hpos, a, 30.0, &everyone, leash);
+        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
         spawn_enemy(
             &mut commands,
             &mut run,
@@ -310,15 +330,16 @@ pub(super) fn spawn_enemies(
     if run.rings < due_rings {
         run.rings = due_rings;
         let def = &roster.enemies[pool[0]];
-        let n = opts.crowd(28 + (data::progress(elapsed) * 60.0) as usize);
+        let n = party::crowd(
+            opts.crowd(28 + (data::progress(elapsed) * 60.0) as usize),
+            heroes_in,
+        );
+        // The whole ring closes round one hero.
+        let hpos = party::spawn_anchor(&standing, &mut spawner.turn).unwrap_or(standing[0]);
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let pos = ground_on_collision(
-                collide.as_ref(),
-                &world,
-                spawn_site(map, hpos, a, 26.0),
-                map.floor,
-            );
+            let at = party::spawn_point(hpos, a, 26.0, &everyone, leash);
+            let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
             spawn_enemy(
                 &mut commands,
                 &mut run,
@@ -340,23 +361,22 @@ pub(super) fn spawn_enemies(
     spawner.timer = 0.12;
     // Guardians at their posts are no part of the horde.
     let alive = enemies.iter().filter(|e| !e.dead && !e.dormant).count();
-    let target = opts.crowd(data::target_alive(elapsed));
+    let target = party::crowd(opts.crowd(data::target_alive(elapsed)), heroes_in);
     if alive >= target {
         return;
     }
     let n = (((target - alive) as f32) / 6.0)
         .ceil()
-        .min(4.0 * opts.density) as usize;
+        .min(4.0 * opts.density * party::scale(heroes_in)) as usize;
     for _ in 0..n {
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
-        let pos = ground_on_collision(
-            collide.as_ref(),
-            &world,
-            spawn_site(map, hpos, a, r),
-            map.floor,
-        );
+        let Some(hpos) = party::spawn_anchor(&standing, &mut spawner.turn) else {
+            break;
+        };
+        let at = party::spawn_point(hpos, a, r, &everyone, leash);
+        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
         spawn_enemy(
             &mut commands,
             &mut run,
@@ -639,20 +659,15 @@ pub(super) fn drop_loot(
     mut rng: ResMut<Rng>,
     mut run: ResMut<Run>,
     mut gems: Query<&mut Gem>,
-    local: Query<&HeroState, With<LocalHero>>,
 ) {
     let mut count = gems.iter().count();
-    // Coins are worth what the local player's gold multiplier makes them: the purse is shared.
-    let gold = local
-        .single()
-        .map_or_else(|_| HeroState::default().stats(), HeroState::stats)
-        .gold;
     for d in drops.read() {
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
             spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
         }
-        if let Some(coins) = treasure::purse(d.boss, d.elite, run.elapsed, gold, rng.f32()) {
+        // Their worth is reckoned as they are picked up, by the picker's gold multiplier.
+        if let Some(coins) = treasure::purse(d.boss, d.elite, run.elapsed, rng.f32()) {
             spawn_gem(
                 &mut commands,
                 run.guid(),
@@ -692,8 +707,8 @@ pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: G
 }
 
 /// Gems in a magnet's reach fly to the nearest hero standing whose magnet reaches them; experience
-/// (under the picker's growth) and gold go to the party's pool, healing to the picker, and levels
-/// bank as they land.
+/// (under the picker's growth) and gold (under the picker's gold multiplier) go to the party's
+/// pool, healing to the picker, and levels bank as they land.
 #[allow(clippy::type_complexity)]
 pub(super) fn collect_gems(
     mut commands: Commands,
@@ -706,13 +721,19 @@ pub(super) fn collect_gems(
     >,
     mut gems: Query<(Entity, &mut Transform, &mut Gem)>,
 ) {
-    // Each hero standing: where gems fly to, its magnet, and its growth.
-    let standing: Vec<(Entity, Vec3, f32, f32)> = heroes
+    // Each hero standing: where gems fly to, its magnet, its growth and its gold multiplier.
+    let standing: Vec<(Entity, Vec3, f32, f32, f32)> = heroes
         .iter()
         .filter(|(_, _, h, _)| h.alive())
         .map(|(e, tf, h, _)| {
             let s = h.stats();
-            (e, tf.translation + Vec3::Y * 1.0, s.magnet, s.growth)
+            (
+                e,
+                tf.translation + Vec3::Y * 1.0,
+                s.magnet,
+                s.growth,
+                s.gold,
+            )
         })
         .collect();
     if standing.is_empty() {
@@ -749,7 +770,7 @@ pub(super) fn collect_gems(
                         party::heal(&mut hero, hp);
                     }
                 }
-                GemKind::Gold(gold) => run.gold += gold,
+                GemKind::Gold(coins) => run.gold += coins.pays(picker.4),
             }
             commands.entity(e).despawn();
             continue;
@@ -882,6 +903,11 @@ mod tests {
         e.id()
     }
 
+    /// Coins worth `base` before the picker's multiplier, rounded down.
+    fn coins(base: u32) -> GemKind {
+        GemKind::Gold(treasure::Coins { base, dither: 0.0 })
+    }
+
     fn gem_at(world: &mut World, at: Vec3, kind: GemKind) -> Entity {
         let gem = Gem {
             kind,
@@ -915,7 +941,7 @@ mod tests {
         // In both magnets: the nearer hero's.
         let both = gem_at(&mut world, Vec3::new(3.0, 0.0, 0.0), GemKind::Xp(1));
         // Nearer `a` but past its magnet: `b`'s, whose magnet reaches it.
-        let past = gem_at(&mut world, Vec3::new(4.8, 0.0, 0.0), GemKind::Gold(1));
+        let past = gem_at(&mut world, Vec3::new(4.8, 0.0, 0.0), coins(1));
         // In no magnet: it lies where it fell.
         let none = gem_at(&mut world, Vec3::new(-20.0, 0.0, 0.0), GemKind::Xp(1));
         world.run_system_once(collect_gems).unwrap();
@@ -940,7 +966,7 @@ mod tests {
         let on = |x: f32| Vec3::new(x, 1.0, 0.0);
         let gems = [
             gem_at(&mut world, on(10.0), GemKind::Xp(1)),
-            gem_at(&mut world, on(0.0), GemKind::Gold(7)),
+            gem_at(&mut world, on(0.0), coins(7)),
             gem_at(&mut world, on(0.0), GemKind::Heal(30.0)),
         ];
         world.run_system_once(collect_gems).unwrap();
@@ -966,6 +992,29 @@ mod tests {
             .map(|&h| world.get::<HeroState>(h).unwrap().picks)
             .collect();
         assert_eq!(picks, [1, 1]);
+    }
+
+    #[test]
+    fn coins_pay_under_the_gold_multiplier_of_whoever_picks_them_up() {
+        let mut world = World::new();
+        let (_, b) = two_heroes(&mut world);
+        world
+            .get_mut::<HeroState>(b)
+            .unwrap()
+            .bonuses
+            .add(&Bonus::new(StatKey::Gold, 1.0));
+        let on = |x: f32| Vec3::new(x, 1.0, 0.0);
+        // `b` (doubling its gold) picks up ten; `a` (no bonus) picks up ten.
+        gem_at(&mut world, on(10.0), coins(10));
+        world.run_system_once(collect_gems).unwrap();
+        assert_eq!(world.resource::<Run>().gold, 20, "the picker's multiplier");
+        gem_at(&mut world, on(0.0), coins(10));
+        world.run_system_once(collect_gems).unwrap();
+        assert_eq!(
+            world.resource::<Run>().gold,
+            30,
+            "the local hero's is no one else's"
+        );
     }
 
     #[test]

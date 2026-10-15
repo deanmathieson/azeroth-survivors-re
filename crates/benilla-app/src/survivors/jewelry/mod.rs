@@ -664,25 +664,30 @@ fn open_jewelry(run: Res<Run>, mut next: ResMut<NextState<Phase>>) {
     }
 }
 
-/// The picker opens: the banked choices are dealt to every hero ([`deal`]), the heroes no one here
-/// picks for choose at random, and the local hero's first offer is dealt.
+/// The picker opens: the banked choices are dealt to every hero ([`deal`]), the bots standing
+/// choose at random, and the local hero's first offer is dealt if it is up. A downed hero's
+/// choices wait for its revive ([`party::open_banked_picks`]); another player's are theirs to make
+/// on their own screen.
 fn deal_jewelry(
     mut run: ResMut<Run>,
-    mut heroes: Query<(&mut HeroState, Has<LocalHero>)>,
+    mut heroes: Query<(&mut HeroState, Has<LocalHero>, Has<party::Bot>)>,
     mut rng: ResMut<Rng>,
     mut offer: ResMut<JewelOffer>,
     mut next: ResMut<NextState<Phase>>,
     profile: Option<Res<Profile>>,
 ) {
-    deal(&mut run, heroes.iter_mut().map(|(hero, _)| hero));
+    deal(&mut run, heroes.iter_mut().map(|(hero, ..)| hero));
     let level = run.level;
-    for (mut hero, local) in &mut heroes {
-        if !local {
+    for (mut hero, _, bot) in &mut heroes {
+        if party::auto_picks(&hero, bot) {
             choose_at_random(&mut hero, level, &mut rng);
         }
     }
-    match heroes.iter_mut().find(|(_, local)| *local) {
-        Some((mut hero, _)) => {
+    match heroes
+        .iter_mut()
+        .find(|(hero, local, _)| *local && hero.alive())
+    {
+        Some((mut hero, ..)) => {
             offer.replacing = None;
             offer.pieces.clear();
             offer.pool = pool(profile.as_deref());
@@ -1196,10 +1201,13 @@ mod tests {
             .id();
         let extra = app
             .world_mut()
-            .spawn(HeroState {
-                player: 1,
-                ..HeroState::default()
-            })
+            .spawn((
+                HeroState {
+                    player: 1,
+                    ..HeroState::default()
+                },
+                party::Bot,
+            ))
             .id();
         app.world_mut().resource_mut::<Run>().pending_jewelry = 1;
         app.world_mut()
@@ -1216,7 +1224,7 @@ mod tests {
             OFFER_SIZE
         );
         assert_eq!(app.world().get::<HeroState>(me).unwrap().jewelry.picks, 1);
-        // The extra chose on its own.
+        // The bot chose on its own.
         let extra = app.world().get::<HeroState>(extra).unwrap();
         assert_eq!((extra.jewelry.picks, extra.jewelry.worn().count()), (0, 1));
         assert_eq!(app.world().resource::<Run>().pending_jewelry, 0);
