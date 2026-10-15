@@ -14,6 +14,8 @@ mod bonus;
 mod bossbar;
 mod cards;
 mod charpanel;
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+mod coop;
 mod data;
 mod enemies;
 mod faire;
@@ -90,6 +92,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(sfx::plugin)
             .add_plugins(bossbar::plugin)
             .init_state::<Phase>()
+            .init_resource::<party::NetRole>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
             .init_resource::<Run>()
@@ -156,6 +159,8 @@ impl Plugin for SurvivorsPlugin {
                     .chain()
                     .after(WorldStage::Input)
                     .run_if(in_state(Phase::Playing))
+                    // A co-op client shows the host's run; it simulates none of it.
+                    .run_if(party::simulates)
                     // Entering a battleground raises its loading screen: the run waits behind it.
                     .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
             )
@@ -170,6 +175,7 @@ impl Plugin for SurvivorsPlugin {
                         .before(hero::hero_vitals),
                 )
                     .run_if(in_state(Phase::Playing))
+                    .run_if(party::simulates)
                     .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
             )
             .add_systems(
@@ -197,14 +203,16 @@ impl Plugin for SurvivorsPlugin {
                     hud::keys
                         .run_if(armory::closed)
                         .run_if(run_options::closed)
-                        .run_if(faire::closed),
+                        .run_if(faire::closed)
+                        .run_if(coop_closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
                     menu::menu_clicks
                         .run_if(armory::closed)
                         .run_if(run_options::closed)
-                        .run_if(faire::closed),
+                        .run_if(faire::closed)
+                        .run_if(coop_closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
@@ -251,6 +259,8 @@ impl Plugin for SurvivorsPlugin {
                 OnEnter(Phase::Menu),
                 (unpause, reset_run, hud::start_replay).chain(),
             );
+        #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+        app.add_plugins(coop::plugin);
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
                 .add_systems(
@@ -266,10 +276,21 @@ impl Plugin for SurvivorsPlugin {
                 party::fill_party
                     .after(WorldStage::Input)
                     .run_if(in_state(Phase::Playing))
+                    .run_if(party::simulates)
                     .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
             );
         }
     }
+}
+
+/// Run condition: no Multiplayer panel holds the menu's keys and clicks ([`coop`]).
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+use coop::closed as coop_closed;
+
+/// Run condition: without online co-op there is no Multiplayer panel to hold the menu.
+#[cfg(not(all(feature = "coop", not(target_arch = "wasm32"))))]
+fn coop_closed() -> bool {
+    true
 }
 
 /// The screen the mode is on.

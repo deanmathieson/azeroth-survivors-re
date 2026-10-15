@@ -41,7 +41,8 @@ pub(super) fn plugin(app: &mut App) {
             open_jewelry
                 .after(treasure::open_caches)
                 .before(hero::hero_vitals)
-                .run_if(in_state(Phase::Playing)),
+                .run_if(in_state(Phase::Playing))
+                .run_if(super::party::simulates),
         )
         .add_systems(
             Update,

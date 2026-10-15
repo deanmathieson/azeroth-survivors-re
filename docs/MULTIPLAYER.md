@@ -1,6 +1,58 @@
 # Multiplayer (co-op) design
 
-Status: planned. It starts after wave 3 (talents, gear, achievements and rewards, camera) and the zones and racials work are merged, because co-op touches nearly every survivors system.
+Status: milestone 1 (groundwork) is in. Milestone 3, online co-op on desktop, has a working first slice on the `net` branch: host, join, lobby, replicated heroes, enemies, pickups and run, per-player level-up hands, spell visuals, and disconnects (see "How to play online" and "Online co-op: what is built" below). The party rules (bots, down and revive, party scaling, LevelUp waiting for every human) are milestone 2's, on the `coop` branch.
+
+## How to play online
+
+Online co-op is in the desktop build (`warcraft-survivors`, cargo feature `coop`, on by default). The browser build has no co-op yet.
+
+**The host**
+
+1. At the main menu, pick your class, race and zone, then click **Multiplayer** (left of Enter World).
+2. Leave the port at **5000** (or type another) and click **Host**. The panel shows your LAN address, for example `Same network: friends join 192.168.1.20:5000`.
+3. Give your friends an address they can reach:
+   - **Same house or LAN:** the LAN address the panel shows.
+   - **Over the internet:** your public IP (search "what is my IP"), with **UDP** port 5000 forwarded on your router to this PC, and allowed through the Windows firewall (Windows asks the first time you host; allow it on private networks).
+   - **Easiest over the internet:** install [Tailscale](https://tailscale.com) or [ZeroTier](https://www.zerotier.com) on every PC and join the same network. Friends then join your Tailscale address (`100.x.y.z:5000`). No port forwarding, and it works behind most routers.
+4. The **Party** list fills as friends join (name, race and class). When everyone is in, click **Start Run**. Everyone enters the run together, on your zone and your Run Options.
+
+**A friend joining**
+
+1. Pick your own class, race and look at the main menu first: that is the hero you bring.
+2. Click **Multiplayer**, type the host's address in **Join address** (`192.168.1.20:5000`, `100.64.0.7`, or `[::1]:5000`; a bare address uses port 5000), and click **Join** (or press Enter). Ctrl+V pastes.
+3. Wait in the lobby. The run starts when the host clicks Start Run (Enter World does nothing while you are joined).
+
+**During and after a run**
+
+- Each player moves their own hero. Enemies, damage, drops, XP, gold and bosses are the host's.
+- The XP bar and level are shared. At a level-up the host deals you your own hand; your pick, rerolls, banishes and skips are yours.
+- When the run ends, each machine records the run on its own profile: talent XP, achievements, and loot for your own class.
+- **Leave** in the Multiplayer panel leaves the party; your hero leaves the host's run. If the host leaves or its connection drops, everyone else goes back to the menu with a message.
+
+**Two instances on one PC (testing)**
+
+Run two copies of `warcraft-survivors`, for example from two terminals. The first hosts and the second joins `127.0.0.1:5000`, from the panel or with the test aids:
+
+```bash
+WOW_SURVIVORS_NAME=Host WOW_SURVIVORS_HOST=5000 cargo survivors
+WOW_SURVIVORS_NAME=Guest WOW_SURVIVORS_JOIN=127.0.0.1:5000 cargo survivors
+```
+
+Both copies share one profile directory on one PC, so they save the same profile files.
+
+## Online co-op: what is built
+
+Code: `crates/benilla-app/src/survivors/coop/` (`net` for the transport, `wire` for what travels, `host`, `client` and `ui`), on `bevy_replicon` 0.40.4 and `bevy_replicon_renet2` 0.17.0 (renet2 netcode over UDP; the newest pair on Bevy 0.18). The integration seams the party-rules work replaces are in `party.rs`: `Remote` (a remote human's hero), `NetRole`/`simulates` (a client simulates nothing), `HandOutbox`/`HandDecision` (a client's cards post choices instead of applying them), and `apply_pick`.
+
+- **Authority.** The host simulates. Every system that decides the run (the spawner, the chase, casting and hits, drops, pickups, caches, quests, companions, jewelry and the vitals) runs only where `party::simulates` holds. Each client owns its hero's walk and sends it 30 times a second (unreliable); the host trusts it.
+- **Replication** (30 Hz on the wall clock, so a paused host still syncs):
+  - every unit, object and ground-spell area: its `units::Look` (display, scale and weapons, not meshes) and a quantised `NetPos` (centimetres, 1/256 turn, pace and movement flags);
+  - heroes: `NetHero` (player, name, class, race, sex, trainer display), `NetVitals` (health, max health, shield, down) and `NetBuild` (spells, talents, bonuses, picks, rerolls, banishes);
+  - enemies: `NetEnemy` (roster index and rank, sent once) and `NetLife` (health and death);
+  - the run: one `NetRun` entity (clock, kills, XP, level, gold, elites, caches, bosses, won, banner).
+  Clients build each body from its look, ease everything but their own hero toward the host's place, and play deaths and corpse fades locally. A client dresses only its own hero in its own gear; other heroes show their class trainer's look.
+- **Messages.** Client to host: `Hello` (name, pick, profile bonuses), `MoveInput`, `HandAction` (pick, reroll, banish, skip). Host to client: `Welcome` (player number), `Lobby`, `StartRun` (stage and Run Options), `RunPhase` (results, or back to the menu), `Hand` (that player's hand, with the build its slots index), and `NetFx` (spell GO with targets, other cast edges, melee swings and combat numbers, entity-mapped) so clients see and hear every spell.
+- **Not yet:** the browser transport; the party rules (milestone 2); a client's mobility spell only moves its own hero (its damage and effects do not reach the host); talent mechanics from a client's profile (its stat bonuses do travel); jewelry choices for remote players; enemy debuff marks, hero buff auras, ability cooldown sweeps and mounts on clients; reconnecting; ping display.
 
 ## Goal
 
@@ -65,7 +117,7 @@ Groundwork seams (milestone 1):
 
 1. **Groundwork.** The `RunShared`/`HeroState` split, still one player. No behaviour change; every test passes.
 2. **Couch co-op.** 2–4 local heroes, the revive rule, party scaling, the party camera and HUD.
-3. **Online co-op on desktop.** Replicon and renet2, host/join, replicated world, client-owned hero movement.
+3. **Online co-op on desktop.** Replicon and renet2, host/join, replicated world, client-owned hero movement. *First slice built (`net` branch); see "Online co-op: what is built".*
 4. **Browser transport and polish.** Reconnect, a lobby showing who has joined, and ping display.
 
 ## Milestone 2 checklist (from the groundwork review)

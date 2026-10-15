@@ -11,7 +11,7 @@ use bevy::ui::RelativeCursorPosition;
 use super::data::{self, Kind};
 use super::hand::{self, HandMode};
 use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
-use super::{HeroState, LocalHero, Phase, Rng, Run};
+use super::{party, HeroState, LocalHero, Phase, Rng, Run};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
 pub(super) const COMMON: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -527,6 +527,7 @@ pub(super) fn animate_cards(
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
     mode: Res<HandMode>,
+    mut outbox: Option<ResMut<party::HandOutbox>>,
 ) {
     if *phase.get() != Phase::LevelUp {
         pending.0 = None;
@@ -634,7 +635,11 @@ pub(super) fn animate_cards(
         if *t >= PICK_SECS {
             let i = *i;
             pending.0 = None;
-            if let Ok(mut me) = local.single_mut() {
+            if let Some(outbox) = outbox.as_deref_mut() {
+                // A co-op client: the host applies the pick and deals what comes next.
+                outbox.0.push(party::HandDecision::Pick(i));
+                offer.deal(Vec::new());
+            } else if let Ok(mut me) = local.single_mut() {
                 hud::pick(i, &mut me, &mut run, &mut offer, &mut rng, &mut next);
             }
         }
@@ -653,6 +658,7 @@ pub(super) fn choose_card(
     mut mode: ResMut<HandMode>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
     mut rng: ResMut<Rng>,
+    mut outbox: Option<ResMut<party::HandOutbox>>,
 ) {
     if *phase.get() != Phase::LevelUp || pending.0.is_some() {
         return;
@@ -680,7 +686,12 @@ pub(super) fn choose_card(
         return;
     };
     if hand::strikable(i, &me, &offer) {
-        hand::banish(i, &mut me, &mut offer, &mut rng);
+        match outbox.as_deref_mut() {
+            Some(outbox) => outbox.0.push(party::HandDecision::Banish(i)),
+            None => {
+                hand::banish(i, &mut me, &mut offer, &mut rng);
+            }
+        }
         mode.banishing = false;
     }
 }

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use super::cards::PendingPick;
 use super::hud::{self, Choice, Offer};
+use super::party::HandDecision;
 use super::{treasure, HeroState, LocalHero, Phase, Rng, Run};
 
 /// Rerolls and banishes a run starts with.
@@ -189,6 +190,7 @@ pub(super) fn use_tools(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    mut outbox: Option<ResMut<super::party::HandOutbox>>,
 ) {
     if *phase.get() != Phase::LevelUp {
         if mode.banishing {
@@ -214,13 +216,27 @@ pub(super) fn use_tools(
     }
     // Checked first: touching the offer mutably re-deals the cards.
     match used {
+        // A co-op client posts the tool to the host, which deals the hand that follows.
         Some(Tool::Reroll) if me.rerolls > 0 => {
             mode.banishing = false;
-            reroll(&mut me, &mut offer, &mut rng);
+            match outbox.as_deref_mut() {
+                Some(outbox) => outbox.0.push(HandDecision::Reroll),
+                None => {
+                    reroll(&mut me, &mut offer, &mut rng);
+                }
+            }
         }
-        Some(Tool::Skip) => {
+        Some(Tool::Skip) if !offer.choices().is_empty() => {
             mode.banishing = false;
-            skip(&mut run, &mut me, &mut offer, &mut rng, &mut next);
+            match outbox.as_deref_mut() {
+                Some(outbox) => {
+                    outbox.0.push(HandDecision::Skip);
+                    offer.deal(Vec::new());
+                }
+                None => {
+                    skip(&mut run, &mut me, &mut offer, &mut rng, &mut next);
+                }
+            }
         }
         Some(Tool::Banish) => {
             let arm = !mode.banishing && can_banish(&me, &offer);

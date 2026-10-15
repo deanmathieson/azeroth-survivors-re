@@ -1208,19 +1208,24 @@ pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
 /// heroes no one here picks for take theirs at random, and the local hero's first hand is dealt.
 pub(super) fn roll_offer(
     mut run: ResMut<Run>,
-    mut heroes: Query<(&mut HeroState, Has<LocalHero>)>,
+    mut heroes: Query<(&mut HeroState, Has<LocalHero>, Has<party::Remote>)>,
     mut rng: ResMut<Rng>,
     mut offer: ResMut<Offer>,
     mut next: ResMut<NextState<Phase>>,
+    outbox: Option<Res<party::HandOutbox>>,
 ) {
-    party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, _)| hero));
-    for (mut hero, local) in &mut heroes {
-        if !local {
+    // A co-op client's hands come from the host.
+    if outbox.is_some() {
+        return;
+    }
+    party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, ..)| hero));
+    for (mut hero, local, remote) in &mut heroes {
+        if !local && !remote {
             party::pick_at_random(&mut hero, &mut rng);
         }
     }
-    match heroes.iter().find(|(_, local)| *local) {
-        Some((hero, _)) => offer.deal(choices_for(hero, &mut rng)),
+    match heroes.iter().find(|(_, local, _)| *local) {
+        Some((hero, ..)) => offer.deal(choices_for(hero, &mut rng)),
         None => {
             offer.deal(Vec::new());
             next.set(Phase::Playing);

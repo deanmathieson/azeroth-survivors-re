@@ -31,6 +31,51 @@ const EXTRA_SPACING: f32 = 3.0;
 #[derive(Component)]
 pub(super) struct LocalHero;
 
+/// A hero another machine's player drives (online co-op): its input and its level-up choices arrive
+/// over the network, so no one here picks for it.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Component)]
+pub(super) struct Remote;
+
+/// Who simulates the run on this machine: alone or hosting, this machine does; a co-op client only
+/// shows the host's world ([`simulates`]).
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum NetRole {
+    #[default]
+    Solo,
+    Host,
+    Client,
+}
+
+/// Run condition: this machine runs the horde, the damage, the drops and the clock.
+pub(super) fn simulates(role: Res<NetRole>) -> bool {
+    *role != NetRole::Client
+}
+
+/// One choice at the level-up hand, as a co-op client makes it: sent to the host, which applies it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HandDecision {
+    Pick(usize),
+    Reroll,
+    Banish(usize),
+    Skip,
+}
+
+/// Present on a co-op client only: the cards and the hand's tools post the choices here instead of
+/// applying them, and the host deals the next hand.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Resource, Default)]
+pub(super) struct HandOutbox(pub Vec<HandDecision>);
+
+/// `hero` takes `choice` from one of its hands: the seam a host applies a remote player's pick
+/// through.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+pub(super) fn apply_pick(hero: &mut HeroState, choice: hud::Choice) {
+    hud::take(hero, choice);
+    hero.picks = hero.picks.saturating_sub(1);
+}
+
 /// How many heroes a run fields: one, unless `WOW_SURVIVORS_PARTY` asks for more.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Party {

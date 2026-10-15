@@ -9,8 +9,10 @@ description = "Warcraft Survivors: the benilla client booted server-less into a 
 workspace = true
 
 [features]
-default = ["dev"]
+default = ["dev", "coop"]
 dev = ["benilla-app/dev"]
+# Online co-op (host / join); the wasm build (`wenilla`) never turns it on.
+coop = ["benilla-app/coop"]
 
 [dependencies]
 benilla-app = { path = "../benilla-app", default-features = false }

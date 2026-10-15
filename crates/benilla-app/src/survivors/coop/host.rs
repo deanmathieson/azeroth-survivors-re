@@ -1,0 +1,759 @@
+//! The host's half: it takes clients into the lobby, spawns their heroes in its run, applies their
+//! walks and level-up choices, and replicates its world to them: every body's look and place,
+//! heroes' vitals and builds, enemies' health and deaths, the run, and the spell visuals.
+
+use bevy::prelude::*;
+use bevy_replicon::prelude::*;
+use bevy_replicon::server::server_tick::ServerTick;
+
+use super::super::data;
+use super::super::enemies::{self, Enemy};
+use super::super::hand;
+use super::super::hero::{self, Hero};
+use super::super::hud::{self, Choice, Offer};
+use super::super::party::{self, HandDecision};
+use super::super::run_options::RunOptions;
+use super::super::{
+    env_bonuses, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, RunEntity, Selection,
+};
+use super::wire::*;
+use super::{Link, Pace, PlayerName, Session};
+use crate::combat_text::CombatTextSpawn;
+use crate::creature_anim::{CastEvent, CastEventKind, MovementState, SpellGoTargets, SwingMessage};
+
+/// A connected client that said [`Hello`]: its player and pick, and its hero once spawned.
+#[derive(Component, Clone, Debug)]
+pub(super) struct Peer {
+    pub(super) player: u8,
+    pub(super) name: String,
+    pub(super) class: u8,
+    pub(super) race: u8,
+    pub(super) sex: u8,
+    pub(super) trainer: u32,
+    pub(super) bonuses: super::super::bonus::Bonuses,
+    pub(super) hero: Option<Entity>,
+}
+
+/// On a remote hero: the connected client whose player drives it.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Owner(pub(super) Entity);
+
+/// On a remote hero: the hand its player holds now, rolled here.
+#[derive(Component, Default)]
+pub(super) struct HeldHand(pub(super) Option<Vec<Choice>>);
+
+/// The replicated entity carrying [`NetRun`].
+#[derive(Component)]
+pub(super) struct RunCarrier;
+
+pub(super) fn hosting(session: Res<Session>) -> bool {
+    matches!(session.link, Link::Hosting { .. })
+}
+
+fn hosting_run(session: Res<Session>) -> bool {
+    matches!(session.link, Link::Hosting { .. }) && session.in_run
+}
+
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(
+        PreUpdate,
+        (greet, apply_moves, hand_actions)
+            .after(ServerSystems::Receive)
+            .run_if(hosting),
+    )
+    .add_systems(
+        Update,
+        (
+            spawn_remote_heroes
+                .after(hero::drive_hero)
+                .run_if(in_state(Phase::Playing))
+                .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
+            drop_departed,
+            serve_hands,
+            tag.run_if(hosting_run),
+            lobby,
+        )
+            .run_if(hosting),
+    )
+    .add_systems(
+        PostUpdate,
+        (
+            (
+                sync_positions,
+                sync_heroes,
+                sync_enemies,
+                sync_run,
+                relay_fx,
+            )
+                .run_if(hosting_run),
+            tick,
+        )
+            .chain()
+            .before(ServerSystems::Send)
+            .run_if(hosting),
+    )
+    .add_systems(
+        OnTransition {
+            exited: Phase::Menu,
+            entered: Phase::Playing,
+        },
+        begin_run.run_if(hosting),
+    )
+    .add_systems(OnEnter(Phase::GameOver), end_run.run_if(hosting))
+    .add_systems(OnEnter(Phase::Menu), to_lobby.run_if(hosting));
+}
+
+/// The lowest player number not taken: the host is 0, its clients 1 to 3.
+pub(super) fn free_player(taken: &[u8]) -> Option<u8> {
+    (1..party::MAX_PARTY).find(|p| !taken.contains(p))
+}
+
+/// Whether `sender` is the client driving the hero `owner` marks: a client moves and picks for
+/// its own hero only, and the host's own messages own no remote hero.
+pub(super) fn owns(owner: Owner, sender: ClientId) -> bool {
+    sender == ClientId::Client(owner.0)
+}
+
+/// The Run Options as they travel.
+pub(super) fn options_of(opts: &RunOptions) -> [f32; 4] {
+    [opts.density, opts.health, opts.damage, opts.speed]
+}
+
+fn start_of(selection: &Selection, opts: &RunOptions) -> StartRun {
+    StartRun {
+        stage: selection.stage.min(255) as u8,
+        options: options_of(opts),
+    }
+}
+
+/// A client says who it is: it gets a player number, the lobby, and, mid-run, the run.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn greet(
+    mut commands: Commands,
+    mut hellos: MessageReader<FromClient<Hello>>,
+    peers: Query<(Entity, &Peer)>,
+    mut session: ResMut<Session>,
+    selection: Res<Selection>,
+    opts: Res<RunOptions>,
+    mut welcome: MessageWriter<ToClients<Welcome>>,
+    mut start: MessageWriter<ToClients<StartRun>>,
+) {
+    let mut taken: Vec<(Entity, u8)> = peers.iter().map(|(e, p)| (e, p.player)).collect();
+    for hello in hellos.read() {
+        let ClientId::Client(client) = hello.client_id else {
+            continue;
+        };
+        let player = match taken.iter().find(|(e, _)| *e == client) {
+            Some(&(_, p)) => p,
+            None => {
+                let numbers: Vec<u8> = taken.iter().map(|t| t.1).collect();
+                let Some(p) = free_player(&numbers) else {
+                    warn!("survivors: co-op: the party is full; turning a client away");
+                    commands.entity(client).try_despawn();
+                    continue;
+                };
+                p
+            }
+        };
+        taken.push((client, player));
+        let h = &hello.message;
+        info!(
+            "survivors: co-op: {} joined as player {}",
+            h.name,
+            player + 1
+        );
+        commands.entity(client).try_insert(Peer {
+            player,
+            name: h.name.chars().take(24).collect(),
+            class: h.class,
+            race: h.race,
+            sex: h.sex,
+            trainer: h.trainer,
+            bonuses: h.bonuses.clone(),
+            // A repeated hello (sent until welcomed) keeps the hero it has.
+            hero: peers.get(client).ok().and_then(|(_, p)| p.hero),
+        });
+        let to = SendTargets::Single(hello.client_id);
+        welcome.write(ToClients {
+            targets: to,
+            message: Welcome { player },
+        });
+        if session.in_run {
+            start.write(ToClients {
+                targets: to,
+                message: start_of(&selection, &opts),
+            });
+        }
+        // The newcomer needs the lobby even if nothing else changed.
+        session.lobby.clear();
+    }
+}
+
+/// The lobby, sent to every client whenever it changes: the host, then the clients by number.
+fn lobby(
+    mut session: ResMut<Session>,
+    peers: Query<&Peer>,
+    selection: Res<Selection>,
+    name: Res<PlayerName>,
+    mut out: MessageWriter<ToClients<Lobby>>,
+) {
+    let race = selection
+        .look
+        .and_then(|i| selection.looks.get(i))
+        .map_or(0, |l| l.1);
+    let mut players = vec![Member {
+        player: 0,
+        name: name.0.clone(),
+        class: selection.class.unwrap_or(0) as u8,
+        race,
+    }];
+    let mut peers: Vec<&Peer> = peers.iter().collect();
+    peers.sort_by_key(|p| p.player);
+    players.extend(peers.iter().map(|p| Member {
+        player: p.player,
+        name: p.name.clone(),
+        class: p.class,
+        race: p.race,
+    }));
+    if session.lobby != players {
+        session.lobby = players.clone();
+        out.write(ToClients {
+            targets: SendTargets::CLIENTS_ONLY,
+            message: Lobby { players },
+        });
+    }
+}
+
+/// Each client's walk moves its own hero, trusted: friends only.
+pub(super) fn apply_moves(
+    mut moves: MessageReader<FromClient<MoveInput>>,
+    mut heroes: Query<(&Owner, &mut Transform, &mut MovementState), With<party::Remote>>,
+) {
+    for m in moves.read() {
+        let at = Vec3::from_array(m.message.at);
+        if !at.is_finite() || !m.message.yaw.is_finite() || !m.message.pace.is_finite() {
+            continue;
+        }
+        for (owner, mut tf, mut mv) in &mut heroes {
+            if !owns(*owner, m.client_id) {
+                continue;
+            }
+            tf.translation = at;
+            tf.rotation = Quat::from_rotation_y(m.message.yaw);
+            if mv.speed != m.message.pace || mv.flags != m.message.flags {
+                mv.speed = m.message.pace;
+                mv.flags = m.message.flags;
+            }
+        }
+    }
+}
+
+/// What a hero's player's HUD and cards read of it.
+pub(super) fn build_of(hero: &HeroState) -> NetBuild {
+    NetBuild {
+        abilities: hero
+            .abilities
+            .iter()
+            .map(|o| (o.def.key.to_string(), o.level))
+            .collect(),
+        passives: hero
+            .passives
+            .iter()
+            .map(|(p, l)| (p.key.to_string(), *l))
+            .collect(),
+        bonuses: hero.bonuses.clone(),
+        picks: hero.picks,
+        rerolls: hero.rerolls,
+        banishes: hero.banishes,
+        banished: hero.banished.iter().map(|&s| WireStruck::of(s)).collect(),
+    }
+}
+
+/// The hand message for `choices` dealt to `hero`, with the build its slots index into.
+pub(super) fn hand_for(hero: &HeroState, choices: &[Choice]) -> Hand {
+    Hand {
+        choices: choices.iter().map(|&c| WireChoice::of(c)).collect(),
+        build: build_of(hero),
+    }
+}
+
+/// One choice a remote player made at the hand it holds (`held`), applied to its hero: the hand
+/// it holds next, which the caller sends (an empty one when it holds none), or `None` when the
+/// choice changed nothing (no hand held, a slot not dealt, a tool used up).
+pub(super) fn decide(
+    hero: &mut HeroState,
+    held: &mut Option<Vec<Choice>>,
+    decision: HandDecision,
+    run: &mut Run,
+    rng: &mut Rng,
+) -> Option<Vec<Choice>> {
+    let hand = held.as_mut()?;
+    match decision {
+        HandDecision::Pick(i) => {
+            let &choice = hand.get(i)?;
+            party::apply_pick(hero, choice);
+            run.version += 1;
+            *held = None;
+        }
+        HandDecision::Skip => {
+            run.gold += hand::skip_gold(run, hero);
+            hero.picks = hero.picks.saturating_sub(1);
+            *held = None;
+        }
+        HandDecision::Reroll => {
+            let mut offer = Offer::default();
+            if !hand::reroll(hero, &mut offer, rng) {
+                return None;
+            }
+            *hand = offer.choices().to_vec();
+            return Some(hand.clone());
+        }
+        HandDecision::Banish(i) => {
+            let mut offer = Offer::default();
+            offer.deal(hand.clone());
+            if !hand::banish(i, hero, &mut offer, rng) {
+                return None;
+            }
+            *hand = offer.choices().to_vec();
+            return Some(hand.clone());
+        }
+    }
+    // A hand closed: the next is dealt by `serve_hands`; with none left the client is told.
+    Some(if hero.picks > 0 {
+        let next = hud::choices_for(hero, rng);
+        *held = Some(next.clone());
+        next
+    } else {
+        Vec::new()
+    })
+}
+
+/// Each remote player's picks, rerolls, banishes and skips, on its own hero only.
+pub(super) fn hand_actions(
+    mut actions: MessageReader<FromClient<HandAction>>,
+    mut heroes: Query<(&Owner, &mut HeroState, &mut HeldHand), With<party::Remote>>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    mut out: MessageWriter<ToClients<Hand>>,
+) {
+    for a in actions.read() {
+        for (owner, mut hero, mut held) in &mut heroes {
+            if !owns(*owner, a.client_id) {
+                continue;
+            }
+            let next = decide(
+                &mut hero,
+                &mut held.0,
+                a.message.0.decision(),
+                &mut run,
+                &mut rng,
+            );
+            if let Some(next) = next {
+                out.write(ToClients {
+                    targets: SendTargets::Single(a.client_id),
+                    message: hand_for(&hero, &next),
+                });
+            }
+        }
+    }
+}
+
+/// A remote hero with picks banked and no hand out gets one, rolled here and sent to its player.
+pub(super) fn serve_hands(
+    mut heroes: Query<(&Owner, &HeroState, &mut HeldHand), With<party::Remote>>,
+    mut rng: ResMut<Rng>,
+    mut out: MessageWriter<ToClients<Hand>>,
+) {
+    for (owner, hero, mut held) in &mut heroes {
+        if held.0.is_some() || hero.picks == 0 {
+            continue;
+        }
+        let choices = hud::choices_for(hero, &mut rng);
+        out.write(ToClients {
+            targets: SendTargets::Single(ClientId::Client(owner.0)),
+            message: hand_for(hero, &choices),
+        });
+        held.0 = Some(choices);
+    }
+}
+
+/// Once the host's own hero stands in the run, every client's hero joins it, beside it, on that
+/// player's pick and bonuses; a new run respawns them.
+fn spawn_remote_heroes(
+    mut commands: Commands,
+    mut run: ResMut<Run>,
+    local: Query<&Transform, With<LocalHero>>,
+    mut peers: Query<(Entity, &mut Peer)>,
+    heroes: Query<(), With<Hero>>,
+    world: benilla_world::world_point::WorldPoint,
+) {
+    let Ok(tf) = local.single() else { return };
+    for (client, mut peer) in &mut peers {
+        if peer.hero.is_some_and(|h| heroes.contains(h)) {
+            continue;
+        }
+        let a = f32::from(peer.player) / f32::from(party::MAX_PARTY) * std::f32::consts::TAU;
+        let at = tf.translation + Vec3::new(a.cos(), 0.0, a.sin()) * 3.0;
+        let pos = enemies::ground(&world, at, tf.translation.y);
+        let e = spawn_peer_hero(&mut commands, &mut run, client, &peer, pos);
+        peer.hero = Some(e);
+    }
+}
+
+/// `peer`'s hero at `pos`, owned by `client`: in its trainer's look (its dressed look is its own
+/// machine's), on its bonuses.
+pub(super) fn spawn_peer_hero(
+    commands: &mut Commands,
+    run: &mut Run,
+    client: Entity,
+    peer: &Peer,
+    pos: Vec3,
+) -> Entity {
+    let class = usize::from(peer.class).min(data::CLASSES.len() - 1);
+    let state = HeroState::new(
+        peer.player,
+        &data::CLASSES[class],
+        peer.race,
+        peer.bonuses.clone(),
+    );
+    let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
+    commands.entity(e).insert((
+        party::Remote,
+        Owner(client),
+        HeldHand::default(),
+        NetHero {
+            player: peer.player,
+            name: peer.name.clone(),
+            class: class as u8,
+            race: peer.race,
+            sex: peer.sex,
+            trainer: peer.trainer,
+        },
+    ));
+    e
+}
+
+/// A client gone: its hero leaves the run.
+fn drop_departed(
+    mut commands: Commands,
+    heroes: Query<(Entity, &Owner)>,
+    peers: Query<(), With<Peer>>,
+) {
+    for (e, owner) in &heroes {
+        if !peers.contains(owner.0) {
+            info!("survivors: co-op: a player left; their hero goes");
+            commands.entity(e).try_despawn();
+        }
+    }
+}
+
+/// Where `def` stands in the stage's roster: `(boss, index)`.
+pub(super) fn roster_index(stage: usize, def: &data::EnemyDef) -> (bool, u16) {
+    let roster = data::roster(stage);
+    let same = |list: &[data::EnemyDef]| list.iter().position(|d| std::ptr::eq(d, def));
+    let named = |list: &[data::EnemyDef]| list.iter().position(|d| d.name == def.name);
+    if let Some(i) = same(&roster.bosses) {
+        return (true, i as u16);
+    }
+    if let Some(i) = same(&roster.enemies) {
+        return (false, i as u16);
+    }
+    // A def from outside this roster: its namesake, else the roster's first.
+    match named(&roster.bosses) {
+        Some(i) => (true, i as u16),
+        None => (false, named(&roster.enemies).unwrap_or(0) as u16),
+    }
+}
+
+/// Every body of the run, once spawned, replicates: its place, and a hero's or an enemy's own
+/// parts. The host's own hero is described from the menu's pick.
+#[allow(clippy::type_complexity)]
+pub(super) fn tag(
+    mut commands: Commands,
+    selection: Res<Selection>,
+    name: Res<PlayerName>,
+    fresh: Query<
+        (
+            Entity,
+            &Transform,
+            Option<&MovementState>,
+            Option<&Enemy>,
+            Option<&HeroState>,
+            Has<NetHero>,
+        ),
+        (
+            With<super::super::units::Look>,
+            With<RunEntity>,
+            Without<Replicated>,
+        ),
+    >,
+) {
+    for (e, tf, mv, enemy, hero, described) in &fresh {
+        let mut ec = commands.entity(e);
+        ec.try_insert((Replicated, pos_of(tf, mv)));
+        if let Some(hero) = hero {
+            ec.try_insert((vitals_of(hero), build_of(hero)));
+            if !described {
+                let look = selection.look.and_then(|i| selection.looks.get(i));
+                let (trainer, race, sex) = look.copied().unwrap_or((0, 0, 0));
+                ec.try_insert(NetHero {
+                    player: party::LOCAL_PLAYER,
+                    name: name.0.clone(),
+                    class: selection.class.unwrap_or(0) as u8,
+                    race,
+                    sex,
+                    trainer,
+                });
+            }
+        }
+        if let Some(enemy) = enemy {
+            let (boss, index) = roster_index(selection.stage, enemy.def);
+            ec.try_insert((
+                NetEnemy {
+                    boss,
+                    index,
+                    elite: enemy.elite,
+                    guardian: enemy.guardian,
+                    max_hp: enemy.max_hp,
+                },
+                life_of(enemy),
+            ));
+        }
+    }
+}
+
+fn pos_of(tf: &Transform, mv: Option<&MovementState>) -> NetPos {
+    NetPos::new(
+        tf.translation,
+        hero::yaw_of(tf.rotation),
+        mv.map_or(0.0, |m| m.speed),
+        mv.map_or(0, |m| m.flags),
+    )
+}
+
+fn life_of(enemy: &Enemy) -> NetLife {
+    NetLife {
+        hp: enemy.hp.max(0.0).ceil(),
+        dead: enemy.dead,
+    }
+}
+
+fn sync_positions(mut q: Query<(&Transform, Option<&MovementState>, &mut NetPos)>) {
+    for (tf, mv, mut pos) in &mut q {
+        pos.set_if_neq(pos_of(tf, mv));
+    }
+}
+
+fn vitals_of(hero: &HeroState) -> NetVitals {
+    NetVitals {
+        hp: hero.hp.max(0.0),
+        max_hp: hero.stats().max_hp,
+        shield: if hero.shield_t > 0.0 {
+            hero.shield
+        } else {
+            0.0
+        },
+        downed: !hero.alive(),
+    }
+}
+
+pub(super) fn sync_heroes(mut q: Query<(&HeroState, &mut NetVitals, &mut NetBuild)>) {
+    for (hero, mut vitals, mut build) in &mut q {
+        vitals.set_if_neq(vitals_of(hero));
+        build.set_if_neq(build_of(hero));
+    }
+}
+
+fn sync_enemies(mut q: Query<(&Enemy, &mut NetLife)>) {
+    for (enemy, mut life) in &mut q {
+        life.set_if_neq(life_of(enemy));
+    }
+}
+
+pub(super) fn run_of(run: &Run) -> NetRun {
+    NetRun {
+        elapsed: run.elapsed,
+        kills: run.kills,
+        level: run.level,
+        xp: run.xp,
+        gold: run.gold,
+        elites: run.elites,
+        caches: run.caches,
+        bosses: run.bosses,
+        won: run.won,
+        banner: run.banner.as_ref().map(|b| b.0.clone()),
+    }
+}
+
+fn sync_run(run: Res<Run>, mut q: Query<&mut NetRun>) {
+    for mut net in &mut q {
+        net.set_if_neq(run_of(&run));
+    }
+}
+
+/// The spell visuals, swings and numbers the run played this frame, for the clients: only those
+/// whose units replicate (a GO keeps the hits that do).
+#[allow(clippy::too_many_arguments)]
+fn relay_fx(
+    mut casts: MessageReader<CastEvent>,
+    mut gos: MessageReader<SpellGoTargets>,
+    mut swings: MessageReader<SwingMessage>,
+    mut texts: MessageReader<CombatTextSpawn>,
+    replicated: Query<(), With<Replicated>>,
+    mut out: MessageWriter<ToClients<NetFx>>,
+) {
+    let shown = |e: Entity| replicated.contains(e);
+    let mut send = |fx: NetFx| {
+        out.write(ToClients {
+            targets: SendTargets::CLIENTS_ONLY,
+            message: fx,
+        });
+    };
+    // A GO's cast edge travels with its targets.
+    let mut paired = Vec::new();
+    for go in gos.read() {
+        paired.push(go.seq);
+        if !shown(go.caster) {
+            continue;
+        }
+        send(NetFx::Go {
+            caster: Ent(go.caster),
+            spell: go.spell_id,
+            hits: go
+                .hits
+                .iter()
+                .copied()
+                .filter(|&h| shown(h))
+                .map(Ent)
+                .collect(),
+            dest: go.dest.map(|d| d.to_array()),
+        });
+    }
+    for c in casts.read() {
+        if !shown(c.entity) || (c.kind == CastEventKind::Go && paired.contains(&c.seq)) {
+            continue;
+        }
+        let kind = match c.kind {
+            CastEventKind::Start => WireCast::Start,
+            CastEventKind::Go => WireCast::Go,
+            CastEventKind::Fail => WireCast::Fail,
+            CastEventKind::Impact { weapon_visual } => WireCast::Impact { weapon_visual },
+            CastEventKind::GroundImpact { pos } => WireCast::GroundImpact { at: pos.to_array() },
+        };
+        send(NetFx::Cast {
+            entity: Ent(c.entity),
+            spell: c.spell_id,
+            kind,
+        });
+    }
+    for s in swings.read() {
+        if !shown(s.attacker) {
+            continue;
+        }
+        send(NetFx::Swing {
+            attacker: Ent(s.attacker),
+            victim: s.victim.filter(|&v| shown(v)).map(Ent),
+            hit_info: s.hit_info,
+            victim_state: s.victim_state,
+            damage: s.damage,
+        });
+    }
+    for t in texts.read() {
+        if !shown(t.anchor) {
+            continue;
+        }
+        send(NetFx::Text {
+            anchor: Ent(t.anchor),
+            text: t.text.clone(),
+            category: t.category,
+            color: t.color,
+        });
+    }
+}
+
+/// Replication rounds at [`Pace`], on the wall clock.
+fn tick(
+    time: Res<Time<Real>>,
+    pace: Res<Pace>,
+    mut acc: Local<f32>,
+    mut server_tick: ResMut<ServerTick>,
+) {
+    *acc += time.delta_secs();
+    if *acc >= pace.interval {
+        *acc = (*acc - pace.interval).min(pace.interval);
+        server_tick.increment();
+    }
+}
+
+/// A run of the session began here: the clients enter it on the same stage and options.
+fn begin_run(
+    mut commands: Commands,
+    mut session: ResMut<Session>,
+    selection: Res<Selection>,
+    opts: Res<RunOptions>,
+    run: Res<Run>,
+    mut out: MessageWriter<ToClients<StartRun>>,
+) {
+    session.in_run = true;
+    commands.spawn((Replicated, RunCarrier, run_of(&run), RunEntity));
+    out.write(ToClients {
+        targets: SendTargets::CLIENTS_ONLY,
+        message: start_of(&selection, &opts),
+    });
+}
+
+fn end_run(run: Res<Run>, mut out: MessageWriter<ToClients<RunPhase>>) {
+    out.write(ToClients {
+        targets: SendTargets::CLIENTS_ONLY,
+        message: RunPhase::Over { won: run.won },
+    });
+}
+
+/// Back at the menu: the clients go back to theirs, and nothing of the run replicates.
+fn to_lobby(
+    mut commands: Commands,
+    mut session: ResMut<Session>,
+    replicated: Query<Entity, With<Replicated>>,
+    mut out: MessageWriter<ToClients<RunPhase>>,
+) {
+    session.in_run = false;
+    for e in &replicated {
+        commands.entity(e).try_remove::<Replicated>();
+    }
+    out.write(ToClients {
+        targets: SendTargets::CLIENTS_ONLY,
+        message: RunPhase::Lobby,
+    });
+}
+
+/// The bonuses this machine's own hero runs on, as [`hud::start_run`] gives them.
+pub(super) fn own_bonuses(meta: &MetaBonuses) -> super::super::bonus::Bonuses {
+    let mut b = meta.0.clone();
+    b.merge(&env_bonuses());
+    b
+}
+
+/// Stop hosting: the clients are let go, their heroes leave, and nothing replicates.
+pub(super) fn stop(world: &mut World) {
+    use bevy_replicon_renet2::netcode::NetcodeServerTransport;
+    use bevy_replicon_renet2::renet2::RenetServer;
+    if let Some(mut server) = world.remove_resource::<RenetServer>() {
+        if let Some(mut transport) = world.remove_resource::<NetcodeServerTransport>() {
+            transport.disconnect_all(&mut server);
+        }
+    }
+    let mut q = world.query_filtered::<Entity, Or<(With<Owner>, With<RunCarrier>)>>();
+    let gone: Vec<Entity> = q.iter(world).collect();
+    for e in gone {
+        world.despawn(e);
+    }
+    let mut q = world.query_filtered::<Entity, With<Replicated>>();
+    let tagged: Vec<Entity> = q.iter(world).collect();
+    for e in tagged {
+        world.entity_mut(e).remove::<Replicated>();
+    }
+    let mut session = world.resource_mut::<Session>();
+    session.link = Link::Off;
+    session.in_run = false;
+    session.lobby.clear();
+}

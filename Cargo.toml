@@ -34,6 +34,15 @@ bevy = { version = "0.18.1", default-features = false, features = [
 wgpu = "27"
 clap = { version = "4.6.1", features = ["derive"] }
 sha1 = "0.10.6"
+# Online co-op (`benilla-app`'s `coop` feature): replicon 0.40 and its renet2 0.17 transport are the
+# newest pair on Bevy 0.18 (0.41 / 0.18 move to Bevy 0.19).
+bevy_replicon = { version = "0.40.4", default-features = false, features = ["client", "server"] }
+bevy_replicon_renet2 = { version = "0.17.0", default-features = false, features = [
+    "renet_serde",
+    "client",
+    "server",
+    "native_transport",
+] }
 
 # lua-src builds the addon VM's Lua 5.1.5, patched to accept exactly the 1.12 client's grammar;
 # the hunks and the command that checks them: `third_party/lua-src/BENILLA.md`.
