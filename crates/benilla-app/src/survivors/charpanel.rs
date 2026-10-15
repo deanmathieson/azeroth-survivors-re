@@ -110,18 +110,20 @@ pub(super) enum Source {
     Gear,
     Perks,
     Racial,
+    Mount,
     Jewelry,
     Run,
 }
 
 impl Source {
-    pub(super) const ALL: [Source; 8] = [
+    pub(super) const ALL: [Source; 9] = [
         Source::Base,
         Source::Cards,
         Source::Talents,
         Source::Gear,
         Source::Perks,
         Source::Racial,
+        Source::Mount,
         Source::Jewelry,
         Source::Run,
     ];
@@ -134,6 +136,7 @@ impl Source {
             Source::Gear => "Gear",
             Source::Perks => "Perks",
             Source::Racial => "Racials",
+            Source::Mount => "Mount",
             Source::Jewelry => "Jewelry",
             Source::Run => "Run bonuses",
         }
@@ -300,7 +303,7 @@ fn num(v: f32) -> String {
 pub(super) struct Row {
     pub line: Line,
     pub total: f32,
-    pub shares: [f32; 8],
+    pub shares: [f32; 9],
 }
 
 /// `hero`'s stat sheet, every line split by source as the module doc counts it, the meta-progression
@@ -329,6 +332,7 @@ pub(super) fn breakdown(hero: &HeroState, parts: &MetaParts) -> Vec<Row> {
         &parts.gear,
         &parts.perks,
         &parts.race,
+        &parts.mount,
         &jewelry,
     ] {
         layer.bonuses.merge(part);
@@ -340,7 +344,7 @@ pub(super) fn breakdown(hero: &HeroState, parts: &MetaParts) -> Vec<Row> {
         .iter()
         .enumerate()
         .map(|(i, &line)| {
-            let mut shares = [0.0; 8];
+            let mut shares = [0.0; 9];
             shares[0] = steps[0][i];
             for (k, share) in shares.iter_mut().enumerate().skip(1) {
                 *share = steps[k][i] - steps[k - 1][i];

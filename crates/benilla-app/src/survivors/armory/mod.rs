@@ -44,6 +44,7 @@ mod companion;
 mod drop_tables;
 mod quests;
 mod rewards;
+mod stable;
 mod talents;
 
 use bevy::ecs::world::CommandQueue;
@@ -110,10 +111,11 @@ pub(super) enum ArmoryTab {
     Rewards,
     Companion,
     Quests,
+    Stable,
 }
 
 impl ArmoryTab {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::Character,
         Self::Collection,
         Self::DropTables,
@@ -123,6 +125,7 @@ impl ArmoryTab {
         Self::Rewards,
         Self::Companion,
         Self::Quests,
+        Self::Stable,
     ];
 
     /// The tab bar's caption.
@@ -137,6 +140,7 @@ impl ArmoryTab {
             Self::Rewards => "Rewards",
             Self::Companion => "Companion",
             Self::Quests => "Quests",
+            Self::Stable => "Stable",
         }
     }
 
@@ -152,6 +156,7 @@ impl ArmoryTab {
             Self::Rewards => "rewards",
             Self::Companion => "companion",
             Self::Quests => "quests",
+            Self::Stable => "stable",
         }
     }
 
@@ -179,6 +184,7 @@ impl ArmoryTab {
             Self::Rewards => rewards::build(parent, ctx),
             Self::Companion => companion::build(parent, ctx),
             Self::Quests => quests::build(parent, ctx),
+            Self::Stable => stable::build(parent, ctx),
         }
     }
 }

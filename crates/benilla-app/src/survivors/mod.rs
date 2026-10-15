@@ -35,6 +35,7 @@ mod racials;
 mod rewards;
 mod run_options;
 mod sfx;
+mod stable;
 mod talents;
 mod treasure;
 mod units;
@@ -75,6 +76,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(rewards::plugin)
             .add_plugins(quests::plugin)
             .add_plugins(faire::plugin)
+            .add_plugins(stable::plugin)
             .add_plugins(meta::plugin)
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)

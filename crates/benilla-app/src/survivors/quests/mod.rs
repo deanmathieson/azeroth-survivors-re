@@ -28,7 +28,7 @@ use super::armory::ArmoryState;
 use super::{enemies, hero, hud, treasure, Phase};
 use crate::glue::GlueClicks;
 
-pub(super) use catalog::{for_map, QuestDef, Reward};
+pub(super) use catalog::{for_map, QuestDef, Reward, ZONES};
 pub(super) use chain::{Step, CHAIN_QUESTS, STEPS};
 pub(super) use field::MapPin;
 pub(super) use objective::{clock, objective_line};

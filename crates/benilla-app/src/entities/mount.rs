@@ -17,6 +17,25 @@ use bevy::prelude::*;
 use crate::net::{NetEntity, ObjectStore};
 use benilla_world::rig_anim::RigPose;
 
+/// The ItemDisplayInfo id of a cosmetic hat requested for this mount child.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MountHat(pub(crate) u32);
+
+/// The hat that the mount's ordinary equipment path has applied.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AppliedMountHat(Option<u32>);
+
+type MountHatQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static MountHat>,
+        Option<&'static AppliedMountHat>,
+    ),
+    With<MountBody>,
+>;
+
 /// The mount child, the client's `unit+0xdc` second model.
 #[derive(Component)]
 pub(crate) struct MountBody {
@@ -325,6 +344,37 @@ pub(super) fn reseat_mounts(
                 commands.entity(entity).insert(AppliedMount(live));
             }
         }
+    }
+}
+
+/// Feed a mount hat through the normal held-item attachment path. A missing model or attachment
+/// is already a no-op there, which keeps unusual mount rigs harmless.
+pub(super) fn resolve_mount_hats(
+    mut commands: Commands,
+    mounts: MountHatQuery,
+    displays: Option<ResMut<super::equipment::ItemDisplays>>,
+    asset_server: Res<AssetServer>,
+) {
+    let Some(mut displays) = displays else {
+        return;
+    };
+    for (entity, hat, applied) in &mounts {
+        let want = hat.map(|hat| hat.0);
+        if applied.is_some_and(|applied| applied.0 == want) {
+            continue;
+        }
+        if let Some(display) = want {
+            super::equipment::ensure_item_model(
+                &mut displays,
+                display,
+                super::equipment::ItemModelKind::Helm { race: 1, sex: 0 },
+                &asset_server,
+            );
+        }
+        commands.entity(entity).insert((
+            super::equipment::HeldItems::mount_hat(want),
+            AppliedMountHat(want),
+        ));
     }
 }
 

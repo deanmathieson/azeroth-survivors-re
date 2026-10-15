@@ -1,0 +1,255 @@
+//! Stable collection and the small bridge from its saved cosmetic pick to a unit mount field.
+
+use bevy::prelude::*;
+
+use super::armory::ArmoryState;
+use super::bonus::{Bonus, Bonuses, StatKey};
+use super::faire::{catalog, Kind, Prize};
+use super::hero;
+use super::meta::MetaParts;
+use super::profile::Profile;
+use super::LocalHero;
+use crate::glue::GlueClicks;
+use crate::net::ObjectStore;
+
+/// A Stable tile click. `None` is the explicit no-hat tile.
+#[derive(Component, Clone, Debug)]
+pub(in crate::survivors) enum StableAction {
+    Mount(String),
+    Hat(Option<String>),
+}
+
+/// CreatureDisplayInfo rows for the 1.12 riding models. The prize names deliberately remain the
+/// save keys: several rewards (Faire and quest chains) unlock the same entry.
+pub(in crate::survivors) fn mount_display(key: &str) -> Option<u32> {
+    Some(match key {
+        "brown_horse" => 2404,
+        "chestnut_mare" => 2406,
+        "pinto" => 2405,
+        "gray_kodo" => 11641,
+        "brown_ram" => 2784,
+        "striped_frostsaber" => 6448,
+        "red_mechanostrider" => 9473,
+        "red_skeletal_horse" => 10718,
+        "horn_of_the_dire_wolf" => 11422,
+        "horn_of_the_frostwolf_howler" => 11686,
+        "stormpike_battle_charger" => 14776,
+        "black_war_tiger" => 14334,
+        "swift_palomino" => 2402,
+        "swift_white_mechanostrider" => 9476,
+        "reins_of_the_winterspring_frostsaber" => 10720,
+        "blue_qiraji_battle_tank" => 15665,
+        "black_qiraji_battle_tank" => 15666,
+        "deathcharger_s_reins" => 14331,
+        "swift_razzashi_raptor" => 15289,
+        "swift_zulian_tiger" => 14777,
+        _ => return None,
+    })
+}
+
+/// The hat's real `ItemDisplayInfo` model, resolved through its client icon.
+fn hat_display(key: &str, displays: &crate::entities::ItemDisplays) -> Option<u32> {
+    prizes(Kind::MountHat)
+        .find(|prize| prize.key == key)
+        .and_then(|prize| displays.display_for_icon(prize.icon))
+}
+
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(
+        Update,
+        (clicks, apply_mount_bonus, apply_mount_field).chain(),
+    );
+}
+
+fn clicks(
+    clicks: Res<GlueClicks>,
+    actions: Query<(Entity, &StableAction)>,
+    mut profile: ResMut<Profile>,
+    mut armory: ResMut<ArmoryState>,
+) {
+    if !armory.open {
+        return;
+    }
+    let Some(action) = actions.iter().find(|(e, _)| clicks.hit(*e)).map(|(_, a)| a) else {
+        return;
+    };
+    match action {
+        StableAction::Mount(key) if profile.quests.mounts.contains(key) => {
+            profile.stable.mount =
+                (profile.stable.mount.as_deref() != Some(key)).then(|| key.clone());
+        }
+        StableAction::Hat(key)
+            if key
+                .as_ref()
+                .is_none_or(|k| profile.quests.mount_hats.contains(k)) =>
+        {
+            profile.stable.mount_hat = key.clone();
+        }
+        _ => return,
+    }
+    profile.mark_dirty();
+    armory.refresh();
+}
+
+/// A selected, owned mount is a persistent meta source. Clearing a stale selection keeps old
+/// saves harmless and prevents an unowned key from granting speed.
+fn apply_mount_bonus(profile: Res<Profile>, mut parts: ResMut<MetaParts>) {
+    let mut want = Bonuses::default();
+    if profile
+        .stable
+        .mount
+        .as_deref()
+        .is_some_and(|key| profile.quests.mounts.contains(key) && mount_display(key).is_some())
+    {
+        want.add(&Bonus::new(StatKey::MoveSpeed, 0.10));
+    }
+    if parts.mount != want {
+        parts.mount = want;
+    }
+}
+
+/// Keep the currently shown local hero mounted in both the menu preview and a run. The engine
+/// detects this ordinary update field and builds/reseats its mount child itself.
+fn apply_mount_field(
+    mut commands: Commands,
+    profile: Res<Profile>,
+    displays: Option<Res<crate::entities::ItemDisplays>>,
+    mut heroes: Query<
+        (
+            &mut ObjectStore,
+            Option<&crate::entities::mount::MountChild>,
+        ),
+        With<LocalHero>,
+    >,
+) {
+    let display = profile
+        .stable
+        .mount
+        .as_deref()
+        .filter(|key| profile.quests.mounts.contains(*key))
+        .and_then(mount_display)
+        .unwrap_or(0);
+    let hat = profile
+        .stable
+        .mount_hat
+        .as_deref()
+        .filter(|key| profile.quests.mount_hats.contains(*key))
+        .and_then(|key| {
+            displays
+                .as_deref()
+                .and_then(|displays| hat_display(key, displays))
+        });
+    for (mut store, mount) in &mut heroes {
+        if store.0.unit_mount_display_id() != display {
+            hero::set_mount(&mut store, display);
+        }
+        if let Some(mount) = mount {
+            let mut child = commands.entity(mount.0);
+            if let Some(hat) = hat {
+                child.insert(crate::entities::mount::MountHat(hat));
+            } else {
+                child.remove::<crate::entities::mount::MountHat>();
+            }
+        }
+    }
+}
+
+pub(in crate::survivors) fn prizes(kind: Kind) -> impl Iterator<Item = &'static Prize> {
+    catalog().iter().filter(move |p| p.kind == kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_round_trips_and_mount_bonus_needs_an_owned_mount() {
+        let mut profile = Profile::default();
+        profile.stable.mount = Some("brown_horse".into());
+        let text = toml::to_string(&profile).unwrap();
+        assert_eq!(
+            toml::from_str::<Profile>(&text).unwrap().stable,
+            profile.stable
+        );
+
+        let mut app = App::new();
+        app.insert_resource(profile)
+            .init_resource::<MetaParts>()
+            .add_systems(Update, apply_mount_bonus);
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MetaParts>()
+                .mount
+                .get(StatKey::MoveSpeed),
+            0.0
+        );
+        app.world_mut()
+            .resource_mut::<Profile>()
+            .quests
+            .mounts
+            .insert("brown_horse".into());
+        app.update();
+        assert!(
+            (app.world()
+                .resource::<MetaParts>()
+                .mount
+                .get(StatKey::MoveSpeed)
+                - 0.1)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn local_hero_receives_the_selected_mount_field() {
+        let mut profile = Profile::default();
+        profile.quests.mounts.insert("brown_horse".into());
+        profile.stable.mount = Some("brown_horse".into());
+        let mut app = App::new();
+        let hero = app
+            .world_mut()
+            .spawn((LocalHero, ObjectStore::default()))
+            .id();
+        app.insert_resource(profile)
+            .add_systems(Update, apply_mount_field);
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(hero)
+                .get::<ObjectStore>()
+                .unwrap()
+                .0
+                .unit_mount_display_id(),
+            2404
+        );
+    }
+
+    #[test]
+    fn catalog_mounts_and_hats_resolve_to_client_models() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let items = benilla_formats::load_item_display_catalog(&mut chain).expect("items");
+        for prize in prizes(Kind::Mount) {
+            let display = mount_display(&prize.key).expect("catalog mount has a display");
+            assert!(
+                creatures
+                    .model(display)
+                    .is_some_and(|model| !model.model_path.is_empty()),
+                "{} ({display}) has no creature model",
+                prize.name
+            );
+        }
+        for prize in prizes(Kind::MountHat) {
+            let icon = format!("Interface\\Icons\\{}", prize.icon);
+            assert!(
+                items.iter().any(|(_, display)| {
+                    display.icon.as_deref() == Some(&icon) && display.model[0].is_some()
+                }),
+                "{} ({icon}) has no ItemDisplayInfo model",
+                prize.name
+            );
+        }
+    }
+}

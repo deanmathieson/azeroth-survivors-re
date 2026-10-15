@@ -18,13 +18,21 @@ pub(super) struct MetaParts {
     pub(super) perks: Bonuses,
     /// Written only by the race workstream.
     pub(super) race: Bonuses,
+    /// Written only by the Stable.
+    pub(super) mount: Bonuses,
 }
 
 impl MetaParts {
     /// Every part added together.
     pub(super) fn total(&self) -> Bonuses {
         let mut total = Bonuses::default();
-        for part in [&self.talents, &self.gear, &self.perks, &self.race] {
+        for part in [
+            &self.talents,
+            &self.gear,
+            &self.perks,
+            &self.race,
+            &self.mount,
+        ] {
             total.merge(part);
         }
         total

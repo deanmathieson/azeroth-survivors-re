@@ -47,7 +47,7 @@ use item_glow::{attach_item_glows, ItemGlows};
 
 /// Mounts: a second creature visual the rider's model is re-parented onto, never rebuilt.
 pub(crate) mod mount;
-use mount::reseat_mounts;
+use mount::{reseat_mounts, resolve_mount_hats};
 
 /// The corpse object, drawn as the dressed body or, once it turns to bones, a skeleton prop.
 pub(crate) mod corpse;
@@ -640,7 +640,11 @@ impl Plugin for EntitiesPlugin {
                 // Equipment resolution creates the item display entries built the same frame.
                 // The nested tuples are unordered groups: the outer tuple is at `chain()`'s
                 // 20-element ceiling.
-                (resolve_equipment, resolve_corpse_equipment),
+                (
+                    resolve_equipment,
+                    resolve_corpse_equipment,
+                    resolve_mount_hats,
+                ),
                 // Spell effects and missiles create `SpellFx` entries too.
                 resolve_spell_fx,
                 move_missiles,

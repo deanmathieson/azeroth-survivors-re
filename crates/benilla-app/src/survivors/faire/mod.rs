@@ -29,6 +29,7 @@ use super::hud::{NoteKind, ResultsNotes, MAX_NOTES};
 use super::profile::{self, LastRunNews, Profile, RunEnded};
 use super::Phase;
 
+pub(super) use catalog::{catalog, Kind, Prize};
 pub(super) use save::FaireSave;
 pub(super) use screen::{closed, FaireUi};
 

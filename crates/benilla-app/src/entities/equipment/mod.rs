@@ -109,7 +109,7 @@ const COMPOSITE_SLOTS: [(u8, usize); 8] = [
 
 /// The item models a unit shows this frame, in [`ATTACH_SLOT_NAMES`] order.
 #[derive(Component, Default, Clone, PartialEq, Eq)]
-pub(super) struct HeldItems {
+pub(crate) struct HeldItems {
     slots: [Option<HeldSlot>; ATTACH_SLOTS],
 }
 
@@ -160,6 +160,38 @@ impl HeldSlot {
     /// The same model wherever it hangs: a change of attach point alone is a move, not a rebuild.
     fn same_item(&self, other: &Self) -> bool {
         self.display == other.display && self.kind == other.kind && self.visual == other.visual
+    }
+}
+
+impl ItemDisplays {
+    /// The first model-bearing display with this inventory icon. Mount hats name the client icon,
+    /// rather than inventing a second table of ItemDisplayInfo ids.
+    pub(crate) fn display_for_icon(&self, icon: &str) -> Option<u32> {
+        let icon = format!("Interface\\Icons\\{icon}");
+        self.catalog
+            .iter()
+            .filter(|(_, display)| {
+                display.icon.as_deref() == Some(&icon) && display.model[0].is_some()
+            })
+            .map(|(id, _)| id)
+            .min()
+    }
+}
+
+impl HeldItems {
+    /// A cosmetic model on a creature's head attachment. Mount hats deliberately use the
+    /// ordinary equipment spawn path, so a model or attachment that is not ready stays absent.
+    pub(crate) fn mount_hat(display: Option<u32>) -> Self {
+        let mut slots = [None; ATTACH_SLOTS];
+        if let Some(display) = display {
+            slots[3] = Some(HeldSlot {
+                display,
+                kind: ItemModelKind::Helm { race: 1, sex: 0 },
+                attach: attach_id::HELM,
+                visual: NO_GLOW,
+            });
+        }
+        Self { slots }
     }
 }
 

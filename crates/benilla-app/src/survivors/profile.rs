@@ -70,6 +70,15 @@ pub(super) struct ZoneRecord {
     pub best_win_mult: f32,
 }
 
+/// The cosmetic selected from the Armory Stable. Keys are prize keys so quest and Faire awards
+/// share one collection; an absent key means no mount or hat is worn.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct StableSave {
+    pub mount: Option<String>,
+    pub mount_hat: Option<String>,
+}
+
 /// The persistent survivors account. Renaming a class or zone orphans its slugged record.
 #[derive(Resource, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -94,6 +103,9 @@ pub(super) struct Profile {
     /// [`super::faire`].
     #[serde(default)]
     pub faire: FaireSave,
+    /// The Stable's equipped cosmetics.
+    #[serde(default)]
+    pub stable: StableSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -121,6 +133,7 @@ impl Default for Profile {
             quests: QuestSave::default(),
             codex: CodexSave::default(),
             faire: FaireSave::default(),
+            stable: StableSave::default(),
             writable: true,
             dirty: false,
         }

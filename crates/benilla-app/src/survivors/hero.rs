@@ -17,6 +17,7 @@ use super::wowcam::{self, WowFrame};
 use super::{HeroState, LocalHero, Phase, Run, Selection};
 use crate::creature_anim::{ease_strafe_yaw, move_flags, strafe_body_offset, MovementState};
 use crate::net::{FieldChanged, Guid, ObjectStore};
+use benilla_protocol::messages::ObjectFields;
 
 #[derive(Component, Default)]
 pub(super) struct Hero {
@@ -155,6 +156,15 @@ pub(super) fn spawn_hero(
         commands.entity(e).insert(LocalHero);
     }
     e
+}
+
+/// Put the selected mount on a synthetic hero. This is deliberately the normal unit field: the
+/// entities mount system owns model loading, seat attachment and animation composition.
+pub(super) fn set_mount(store: &mut ObjectStore, display: u32) {
+    store.0.merge(ObjectFields::from_pairs(&[(
+        units::FIELD_MOUNTDISPLAYID,
+        display,
+    )]));
 }
 
 /// Midday over the battleground, whatever the clock says.

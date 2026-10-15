@@ -1726,9 +1726,8 @@ fn kind_note(kind: Kind) -> &'static str {
         Kind::CompanionLook => {
             "Dress your companion in it on the Armory's Companion tab, once the Companion perk is bought."
         }
-        Kind::Mount | Kind::MountHat | Kind::Tabard => {
-            "Kept with the quest chains' unlocks, for the mounts and their finery to come."
-        }
+        Kind::Mount | Kind::MountHat => "Equip in the Armory > Stable.",
+        Kind::Tabard => "Kept with the quest chains' unlocks, for tabards to come.",
         Kind::Title => "Recorded for the titles to come.",
         Kind::Toy => "Recorded for the toy box to come.",
         Kind::DarkmoonCard => "Recorded for the Darkmoon decks and their trinkets to come.",

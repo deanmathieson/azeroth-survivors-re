@@ -21,6 +21,8 @@ const FIELD_VIRTUAL_ITEM_INFO: u16 = 40;
 const FIELD_AURA: u16 = 47;
 const FIELD_AURAFLAGS: u16 = 95;
 const FIELD_BYTES_2: u16 = 164;
+/// `UNIT_FIELD_MOUNTDISPLAYID`.
+pub(super) const FIELD_MOUNTDISPLAYID: u16 = 133;
 
 /// `FactionTemplate.dbc`: friendly to players, and the hostile monster template.
 pub(super) const FACTION_FRIENDLY: u32 = 35;

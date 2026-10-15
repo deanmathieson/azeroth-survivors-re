@@ -191,11 +191,8 @@ fn reward(p: &mut ChildSpawnerCommands, ctx: &TabCtx, reward: Reward, earned: bo
             "Pet",
             "A new look for your companion, worn from the Companion tab.",
         ),
-        Reward::Mount(_) => (
-            "Mount",
-            "A mount, kept for when mounts come to the battlegrounds.",
-        ),
-        Reward::MountHat(_) => ("Hat", "A hat for your mount, kept for when mounts arrive."),
+        Reward::Mount(_) => ("Mount", "Equip in the Armory > Stable."),
+        Reward::MountHat(_) => ("Hat", "Equip in the Armory > Stable."),
         Reward::Tabard(_) => ("Tabard", "A tabard, kept for when tabards can be worn."),
     };
     p.spawn((
