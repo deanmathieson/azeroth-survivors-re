@@ -17,7 +17,7 @@
 //! what they pull is saved as any pull is.
 
 mod booth;
-mod catalog;
+pub(in crate::survivors) mod catalog;
 mod reveal;
 mod save;
 mod screen;

@@ -46,6 +46,7 @@ mod quests;
 mod rewards;
 mod stable;
 mod talents;
+mod wardrobe;
 
 use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
@@ -112,6 +113,7 @@ pub(super) enum ArmoryTab {
     Companion,
     Quests,
     Stable,
+    Wardrobe,
 }
 
 impl ArmoryTab {
@@ -126,6 +128,7 @@ impl ArmoryTab {
         Self::Companion,
         Self::Quests,
         Self::Stable,
+        Self::Wardrobe,
     ];
 
     /// The tab bar's caption.
@@ -141,6 +144,7 @@ impl ArmoryTab {
             Self::Companion => "Companion",
             Self::Quests => "Quests",
             Self::Stable => "Stable",
+            Self::Wardrobe => "Wardrobe",
         }
     }
 
@@ -157,6 +161,7 @@ impl ArmoryTab {
             Self::Companion => "companion",
             Self::Quests => "quests",
             Self::Stable => "stable",
+            Self::Wardrobe => "wardrobe",
         }
     }
 
@@ -185,6 +190,7 @@ impl ArmoryTab {
             Self::Companion => companion::build(parent, ctx),
             Self::Quests => quests::build(parent, ctx),
             Self::Stable => stable::build(parent, ctx),
+            Self::Wardrobe => wardrobe::build(parent, ctx),
         }
     }
 }
@@ -312,16 +318,18 @@ pub(super) enum Column {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<ArmoryState>().add_systems(
-        Update,
-        (armory_input, sync_armory, paint_tabs, armory_tooltip)
-            .chain()
-            // After the menu's own input has had its (gated) turn, and before the pick screen is
-            // shown or hidden, so open and close land in one frame.
-            .after(hud::keys)
-            .after(menu::menu_clicks)
-            .before(hud::show_panels),
-    );
+    app.init_resource::<ArmoryState>()
+        .add_systems(Update, wardrobe::input.after(armory_input))
+        .add_systems(
+            Update,
+            (armory_input, sync_armory, paint_tabs, armory_tooltip)
+                .chain()
+                // After the menu's own input has had its (gated) turn, and before the pick screen is
+                // shown or hidden, so open and close land in one frame.
+                .after(hud::keys)
+                .after(menu::menu_clicks)
+                .before(hud::show_panels),
+        );
     if let Some(aid) = DevAid::from_env() {
         app.insert_resource(aid)
             .add_systems(Update, dev_aid.before(armory_input));

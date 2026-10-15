@@ -260,31 +260,50 @@ const HATS: &[(&str, Rarity, &str)] = &[
     ("Crown of the Fire Festival", E, "INV_Crown_02"),
 ];
 
-const TABARDS: &[(&str, Rarity, &str)] = &[
-    ("Stormwind Tabard", C, "INV_Misc_TabardPVP_01"),
-    ("Ironforge Tabard", C, "INV_Misc_TabardPVP_03"),
-    ("Darnassus Tabard", C, "INV_Misc_TabardPVP_01"),
-    ("Gnomeregan Tabard", C, "INV_Misc_TabardPVP_03"),
-    ("Orgrimmar Tabard", C, "INV_Misc_TabardPVP_02"),
-    ("Thunder Bluff Tabard", C, "INV_Misc_TabardPVP_04"),
-    ("Undercity Tabard", C, "INV_Misc_TabardPVP_02"),
-    ("Darkspear Tabard", C, "INV_Misc_TabardPVP_04"),
-    ("People's Militia Tabard", U, "INV_Shirt_GuildTabard_01"),
-    ("Nethergarde Tabard", U, "INV_Shirt_GuildTabard_01"),
-    ("Arathor Battle Tabard", U, "INV_Misc_TabardPVP_03"),
-    ("Battle Tabard of the Defilers", U, "INV_Misc_TabardPVP_04"),
-    ("Stormpike Battle Tabard", R, "INV_Misc_TabardPVP_01"),
-    ("Frostwolf Battle Tabard", R, "INV_Misc_TabardPVP_02"),
-    ("Tabard of the Argent Dawn", R, "INV_Shirt_GuildTabard_01"),
+/// `(name, rarity, icon, ItemDisplayInfo)`.  Unlike most Faire prizes, tabards are worn by the
+/// character compositor, so their display rows are part of the catalog too.
+const TABARDS: &[(&str, Rarity, &str, u32)] = &[
+    ("Stormwind Tabard", C, "INV_Misc_TabardPVP_01", 23914),
+    ("Ironforge Tabard", C, "INV_Misc_TabardPVP_03", 23916),
+    ("Darnassus Tabard", C, "INV_Misc_TabardPVP_01", 23917),
+    ("Gnomeregan Tabard", C, "INV_Misc_TabardPVP_03", 23918),
+    ("Orgrimmar Tabard", C, "INV_Misc_TabardPVP_02", 23913),
+    ("Thunder Bluff Tabard", C, "INV_Misc_TabardPVP_04", 23915),
+    ("Undercity Tabard", C, "INV_Misc_TabardPVP_02", 23919),
+    ("Darkspear Tabard", C, "INV_Misc_TabardPVP_04", 23920),
+    (
+        "People's Militia Tabard",
+        U,
+        "INV_Shirt_GuildTabard_01",
+        15198,
+    ),
+    ("Nethergarde Tabard", U, "INV_Shirt_GuildTabard_01", 15198),
+    ("Arathor Battle Tabard", U, "INV_Misc_TabardPVP_03", 23916),
+    (
+        "Battle Tabard of the Defilers",
+        U,
+        "INV_Misc_TabardPVP_04",
+        23915,
+    ),
+    ("Stormpike Battle Tabard", R, "INV_Misc_TabardPVP_01", 15198),
+    ("Frostwolf Battle Tabard", R, "INV_Misc_TabardPVP_02", 15198),
+    (
+        "Tabard of the Argent Dawn",
+        R,
+        "INV_Shirt_GuildTabard_01",
+        15198,
+    ),
     (
         "Tabard of the Cenarion Circle",
         R,
         "INV_Shirt_GuildTabard_01",
+        15198,
     ),
     (
         "Tabard of the Darkmoon Faire",
         E,
         "INV_Shirt_GuildTabard_01",
+        15198,
     ),
 ];
 
@@ -303,7 +322,6 @@ const TITLES: &[(&str, Rarity, &str)] = &[
     ("the Flamewaker", L, "Spell_Fire_Fire"),
 ];
 
-/// Toys are a feature still to come: these record their keys.
 const TOYS: &[(&str, Rarity, &str)] = &[
     ("Noggenfogger Elixir", C, "INV_Potion_83"),
     ("Goblin Gumbo", C, "INV_Misc_Food_63"),
@@ -331,6 +349,101 @@ const SUITS: &[(&str, &str)] = &[
 const RANKS: [&str; 8] = [
     "Ace", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight",
 ];
+
+/// The completed deck's genuine 1.12 trinket.  The suit names are the classic cards' sets.
+const DECKS: &[(&str, &str, u32, &str)] = &[
+    (
+        "beasts",
+        "Darkmoon Card: Blue Dragon",
+        19288,
+        "INV_Misc_Ticket_Tarot_BlueDragon_01",
+    ),
+    (
+        "elementals",
+        "Darkmoon Card: Maelstrom",
+        19289,
+        "INV_Misc_Ticket_Tarot_Maelstrom_01",
+    ),
+    (
+        "portals",
+        "Darkmoon Card: Twisting Nether",
+        19290,
+        "INV_Misc_Ticket_Tarot_TwistingNether_01",
+    ),
+    (
+        "warlords",
+        "Darkmoon Card: Heroism",
+        19287,
+        "INV_Misc_Ticket_Tarot_Heroism_01",
+    ),
+];
+
+/// The deck a suit completes, including its 1.12 item id and client icon.
+pub(in crate::survivors) fn deck(suit: &str) -> Option<(&'static str, u32, &'static str)> {
+    DECKS
+        .iter()
+        .find(|(key, ..)| *key == suit)
+        .map(|&(_, name, item, icon)| (name, item, icon))
+}
+
+/// The equipped tabard's compositing display, only while the prize remains owned.
+pub(in crate::survivors) fn equipped_tabard(profile: &Profile) -> Option<u32> {
+    let key = profile.faire.wardrobe.tabard.as_deref()?;
+    profile.quests.tabards.contains(key).then(|| {
+        TABARDS
+            .iter()
+            .find(|(name, ..)| slug(name) == key)
+            .expect("saved tabard key belongs to the Faire catalog")
+            .3
+    })
+}
+
+/// Whether all eight cards in `suit` are owned.
+pub(in crate::survivors) fn deck_complete(profile: &Profile, suit: &str) -> bool {
+    RANKS.iter().all(|rank| {
+        profile
+            .faire
+            .cards
+            .contains(&slug(&format!("{rank} of {suit}")))
+    })
+}
+
+/// Every supported completed-deck key.
+pub(in crate::survivors) fn deck_keys() -> impl Iterator<Item = &'static str> {
+    DECKS.iter().map(|(key, ..)| *key)
+}
+
+/// Decorate `name` as WoW displays this title.  Articles and prepositions read after the name;
+/// honorifics and achievement names read before it.
+pub(in crate::survivors) fn titled_name(name: &str, title: Option<&str>) -> String {
+    let Some(title) = title else {
+        return name.into();
+    };
+    if matches!(
+        title,
+        "Carnie"
+            | "Ticket Hoarder"
+            | "Champion of the Faire"
+            | "Scourgebane"
+            | "Jenkins"
+            | "Scarab Lord"
+    ) {
+        format!("{title} {name}")
+    } else {
+        format!("{name} {title}")
+    }
+}
+
+/// The selected title's display text, only while it is still owned.
+pub(in crate::survivors) fn equipped_title(profile: &Profile) -> Option<&'static str> {
+    let key = profile.faire.wardrobe.title.as_deref()?;
+    profile.faire.titles.contains(key).then(|| {
+        by_id(&format!("title:{key}"))
+            .expect("saved title key belongs to the Faire catalog")
+            .name
+            .as_str()
+    })
+}
 
 fn prize(kind: Kind, key: String, name: String, rarity: Rarity, icon: &'static str) -> Prize {
     Prize {
@@ -390,13 +503,21 @@ fn build() -> Vec<Prize> {
     for (kind, seeds) in [
         (Kind::Mount, MOUNTS),
         (Kind::MountHat, HATS),
-        (Kind::Tabard, TABARDS),
         (Kind::Title, TITLES),
         (Kind::Toy, TOYS),
     ] {
         for &(name, rarity, icon) in seeds {
             all.push(prize(kind, slug(name), name.to_string(), rarity, icon));
         }
+    }
+    for &(name, rarity, icon, _) in TABARDS {
+        all.push(prize(
+            Kind::Tabard,
+            slug(name),
+            name.to_string(),
+            rarity,
+            icon,
+        ));
     }
     for &(suit, icon) in SUITS {
         for (i, rank) in RANKS.iter().enumerate() {
@@ -452,7 +573,15 @@ pub(in crate::survivors) fn grant(profile: &mut Profile, prize: &Prize) -> bool 
         Kind::Tabard => profile.quests.tabards.insert(key),
         Kind::Title => profile.faire.titles.insert(key),
         Kind::Toy => profile.faire.toys.insert(key),
-        Kind::DarkmoonCard => profile.faire.cards.insert(key),
+        Kind::DarkmoonCard => {
+            let fresh = profile.faire.cards.insert(key);
+            for suit in deck_keys() {
+                if deck_complete(profile, suit) {
+                    profile.faire.darkmoon_trinkets.insert(suit.into());
+                }
+            }
+            fresh
+        }
     }
 }
 
@@ -583,6 +712,29 @@ mod tests {
     }
 
     #[test]
+    fn a_complete_deck_awards_its_trinket_once() {
+        let mut profile = Profile::default();
+        for rank in RANKS {
+            let prize = by_id(&format!("card:{}", slug(&format!("{rank} of Beasts")))).unwrap();
+            assert!(grant(&mut profile, prize));
+        }
+        assert!(deck_complete(&profile, "beasts"));
+        assert!(profile.faire.darkmoon_trinkets.contains("beasts"));
+        let ace = by_id("card:ace_of_beasts").unwrap();
+        assert!(!grant(&mut profile, ace));
+        assert_eq!(profile.faire.darkmoon_trinkets.len(), 1);
+    }
+
+    #[test]
+    fn titles_use_wow_prefixes_and_suffixes() {
+        assert_eq!(titled_name("Thrall", Some("Carnie")), "Carnie Thrall");
+        assert_eq!(
+            titled_name("Thrall", Some("the Faire-Goer")),
+            "Thrall the Faire-Goer"
+        );
+    }
+
+    #[test]
     fn icons_are_in_the_client_data() {
         let data = benilla_formats::wow_data_or_skip!();
         let chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -591,6 +743,20 @@ mod tests {
         for icon in icons {
             let path = format!("Interface\\Icons\\{icon}.blp");
             assert!(chain.contains(&path), "{path}");
+        }
+    }
+
+    #[test]
+    fn tabard_displays_are_in_the_client_data() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let displays =
+            benilla_formats::load_item_display_catalog(&mut chain).expect("ItemDisplayInfo");
+        for &(name, _, _, display) in TABARDS {
+            assert!(
+                displays.get(display).is_some(),
+                "{name}: no display {display}"
+            );
         }
     }
 }
