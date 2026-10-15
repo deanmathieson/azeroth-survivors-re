@@ -24,25 +24,25 @@ pub(in crate::survivors) enum StableAction {
 pub(in crate::survivors) fn mount_display(key: &str) -> Option<u32> {
     Some(match key {
         "brown_horse" => 2404,
-        "chestnut_mare" => 2406,
-        "pinto" => 2405,
-        "gray_kodo" => 11641,
-        "brown_ram" => 2784,
-        "striped_frostsaber" => 6448,
+        "chestnut_mare" => 2405,
+        "pinto" => 2409,
+        "gray_kodo" => 12246,
+        "brown_ram" => 2785,
+        "striped_frostsaber" => 6444,
         "red_mechanostrider" => 9473,
-        "red_skeletal_horse" => 10718,
-        "horn_of_the_dire_wolf" => 11422,
-        "horn_of_the_frostwolf_howler" => 11686,
-        "stormpike_battle_charger" => 14776,
-        "black_war_tiger" => 14334,
-        "swift_palomino" => 2402,
-        "swift_white_mechanostrider" => 9476,
-        "reins_of_the_winterspring_frostsaber" => 10720,
-        "blue_qiraji_battle_tank" => 15665,
-        "black_qiraji_battle_tank" => 15666,
-        "deathcharger_s_reins" => 14331,
+        "red_skeletal_horse" => 10670,
+        "horn_of_the_dire_wolf" => 247,
+        "horn_of_the_frostwolf_howler" => 14776,
+        "stormpike_battle_charger" => 14777,
+        "black_war_tiger" => 14330,
+        "swift_palomino" => 2408,
+        "swift_white_mechanostrider" => 10666,
+        "reins_of_the_winterspring_frostsaber" => 6080,
+        "swift_stormsaber" => 14632,
+        "horn_of_the_black_war_wolf" => 14334,
+        "deathcharger_s_reins" => 10718,
         "swift_razzashi_raptor" => 15289,
-        "swift_zulian_tiger" => 14777,
+        "swift_zulian_tiger" => 15290,
         _ => return None,
     })
 }
@@ -241,15 +241,15 @@ mod tests {
                 prize.name
             );
         }
+        let mut missing = Vec::new();
         for prize in prizes(Kind::MountHat) {
             let icon = format!("Interface\\Icons\\{}", prize.icon);
-            assert!(
-                items.iter().any(|(_, display)| {
-                    display.icon.as_deref() == Some(&icon) && display.model[0].is_some()
-                }),
-                "{} ({icon}) has no ItemDisplayInfo model",
-                prize.name
-            );
+            if !items.iter().any(|(_, display)| {
+                display.icon.as_deref() == Some(&icon) && display.model[0].is_some()
+            }) {
+                missing.push(format!("{} ({icon})", prize.name));
+            }
         }
+        assert!(missing.is_empty(), "no ItemDisplayInfo model: {missing:?}");
     }
 }

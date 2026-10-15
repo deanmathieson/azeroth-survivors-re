@@ -117,7 +117,7 @@ pub(super) enum ArmoryTab {
 }
 
 impl ArmoryTab {
-    pub(super) const ALL: [Self; 10] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::Character,
         Self::Collection,
         Self::DropTables,

@@ -346,7 +346,7 @@ pub(in crate::survivors) static ZONES: &[ZoneQuests] = &[
         chain: chain(
             "The Scepter of the Shifting Sands",
             "Prove yourself before the Scarab Wall, and its gates will remember your name.",
-            Reward::Mount("Black Qiraji Battle Tank"),
+            Reward::Mount("Horn of the Black War Wolf"),
         ),
     },
     ZoneQuests {

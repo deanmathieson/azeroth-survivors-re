@@ -241,8 +241,12 @@ const MOUNTS: &[(&str, Rarity, &str)] = &[
         E,
         "Ability_Mount_PinkTiger",
     ),
-    ("Blue Qiraji Battle Tank", E, "INV_Misc_QirajiCrystal_04"),
-    ("Black Qiraji Battle Tank", L, "INV_Misc_QirajiCrystal_05"),
+    ("Swift Stormsaber", E, "Ability_Mount_BlackPanther"),
+    (
+        "Horn of the Black War Wolf",
+        L,
+        "Ability_Mount_BlackDireWolf",
+    ),
     ("Deathcharger's Reins", L, "Ability_Mount_Undeadhorse"),
     ("Swift Razzashi Raptor", L, "Ability_Mount_Raptor"),
     ("Swift Zulian Tiger", L, "Ability_Mount_JungleTiger"),
@@ -253,10 +257,10 @@ const HATS: &[(&str, Rarity, &str)] = &[
     ("Pirate Hat", C, "INV_Helmet_66"),
     ("Red Winter Hat", C, "INV_Helmet_67"),
     ("Green Winter Hat", U, "INV_Helmet_68"),
-    ("Dapper Top Hat", U, "INV_Helmet_65"),
+    ("Dapper Top Hat", U, "INV_Helmet_69"),
     ("Tiny Pith Helmet", U, "INV_Helmet_50"),
     ("Wizard Hat", R, "INV_Helmet_53"),
-    ("Jack-o'-Lantern Hat", R, "INV_Misc_Food_59"),
+    ("Jack-o'-Lantern Hat", R, "INV_Helmet_70"),
     ("Crown of the Fire Festival", E, "INV_Crown_02"),
 ];
 
@@ -639,7 +643,7 @@ mod tests {
         for id in [
             "mount:brown_horse",
             "mount:gray_kodo",
-            "mount:black_qiraji_battle_tank",
+            "mount:horn_of_the_black_war_wolf",
             "mount:swift_razzashi_raptor",
             "hat:tiny_party_hat",
             "hat:tiny_pith_helmet",

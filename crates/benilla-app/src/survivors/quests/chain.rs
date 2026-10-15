@@ -326,7 +326,7 @@ mod tests {
         judge(&mut p, &done(index("Gates of Ahn'Qiraj")));
         judge(&mut p, &done(index("Westfall")));
         assert!(p.quests.mount_hats.contains("tiny_party_hat"));
-        assert!(p.quests.mounts.contains("black_qiraji_battle_tank"));
+        assert!(p.quests.mounts.contains("horn_of_the_black_war_wolf"));
         assert!(p.quests.tabards.contains("people_s_militia_tabard"));
         // Nothing leaked elsewhere: the other classes and the perks are untouched.
         assert_eq!(p.classes.len(), 1);

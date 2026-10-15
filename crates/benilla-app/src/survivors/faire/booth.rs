@@ -61,9 +61,9 @@ pub(in crate::survivors) static BANNERS: &[Banner] = &[
         emblem: "INV_Misc_QirajiCrystal_05",
         tint: 0xd9a64a,
         featured: &[
-            "mount:black_qiraji_battle_tank",
+            "mount:horn_of_the_black_war_wolf",
             "title:scarab_lord",
-            "mount:blue_qiraji_battle_tank",
+            "mount:swift_stormsaber",
             "tabard:tabard_of_the_cenarion_circle",
             "hat:tiny_pith_helmet",
         ],
@@ -643,7 +643,7 @@ mod tests {
         let aq = banner_at(5);
         let mut p = Profile::default();
         p.faire.favor = 1_500;
-        let tank = by_id("mount:black_qiraji_battle_tank").unwrap();
+        let tank = by_id("mount:horn_of_the_black_war_wolf").unwrap();
         assert_eq!(price(tank, scourge), 1_000);
         assert_eq!(price(tank, aq), 800, "20% off on its banner");
         assert_eq!(
@@ -653,7 +653,7 @@ mod tests {
         );
         assert_eq!(buy(&mut p, &tank.id, aq), Ok(800));
         assert_eq!(p.faire.favor, 700);
-        assert!(p.quests.mounts.contains("black_qiraji_battle_tank"));
+        assert!(p.quests.mounts.contains("horn_of_the_black_war_wolf"));
         assert_eq!(buy(&mut p, &tank.id, aq), Err(Refusal::Owned));
         let raptor = by_id("mount:swift_razzashi_raptor").unwrap();
         assert_eq!(buy(&mut p, &raptor.id, aq), Err(Refusal::Short(300)));
