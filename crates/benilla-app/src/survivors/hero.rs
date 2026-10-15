@@ -227,7 +227,7 @@ pub(super) fn drive_hero(
     aim: Res<AimPoint>,
     world: (
         WorldPoint,
-        WorldCollision,
+        Option<WorldCollision>,
         Res<crate::player::PlayerCapsule>,
         Res<crate::loading_screen::LoadingScreen>,
     ),
@@ -247,10 +247,11 @@ pub(super) fn drive_hero(
             let mut feet = hm.body.start(tf.translation);
             if flat(feet - center).length() > map.leash * 2.0 {
                 // Just entered another battleground: start at its centre.
-                feet = Vec3::new(
-                    center.x,
-                    points.terrain_height_under(center).unwrap_or(feet.y),
-                    center.z,
+                feet = super::enemies::ground_on_collision(
+                    collide.as_ref(),
+                    points,
+                    center,
+                    map.floor,
                 );
                 hm.body.placed(feet);
             }
@@ -272,13 +273,17 @@ pub(super) fn drive_hero(
             let vel = leash_velocity(center, map.leash, feet, vel, dt);
             let vel = hm.body.air_velocity(vel, wow);
             let terrain = points.terrain_height_under(feet);
-            let mut out = if loading.covering() {
-                // The world is not in under a loading screen: the body waits on the heightfield.
-                let held = Vec3::new(feet.x, terrain.unwrap_or(feet.y), feet.z);
-                hm.body.placed(held);
-                held
-            } else {
-                body::step(collide, capsule, &mut hm.body, feet, vel, jump, dt, terrain)
+            let mut out = match collide.as_ref().filter(|_| !loading.covering()) {
+                Some(collide) => {
+                    body::step(collide, capsule, &mut hm.body, feet, vel, jump, dt, terrain)
+                }
+                // The world is not in (under a loading screen, or no collision yet): the body
+                // waits on the heightfield.
+                None => {
+                    let held = Vec3::new(feet.x, terrain.unwrap_or(feet.y), feet.z);
+                    hm.body.placed(held);
+                    held
+                }
             };
             // The leash holds whatever the slide did.
             let off = flat(out - center);
@@ -309,13 +314,12 @@ pub(super) fn drive_hero(
             }
             out
         }
-        Err(_) => {
-            let mut p = arena(selection.stage_def());
-            if let Some(h) = points.terrain_height_under(p) {
-                p.y = h;
-            }
-            p
-        }
+        Err(_) => super::enemies::ground_on_collision(
+            collide.as_ref(),
+            points,
+            arena(selection.stage_def()),
+            selection.stage_def().floor,
+        ),
     };
     // The terrain streams and the loading screen waits on the ground under this.
     player.active = true;

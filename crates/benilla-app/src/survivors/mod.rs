@@ -391,6 +391,39 @@ pub(super) const REVIVE_HP: f32 = 0.5;
 /// Seconds an extra life keeps the hero untouchable.
 pub(super) const REVIVE_IMMUNE_SECS: f32 = 2.0;
 
+/// An uncapped level-up bonus offered after every ability and passive slot is mastered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Overcharge {
+    Damage,
+    Haste,
+    MaxHp,
+    Speed,
+    Magnet,
+    Gold,
+}
+
+impl Overcharge {
+    pub(super) const ALL: [Self; 6] = [
+        Self::Damage,
+        Self::Haste,
+        Self::MaxHp,
+        Self::Speed,
+        Self::Magnet,
+        Self::Gold,
+    ];
+
+    pub(super) const fn index(self) -> usize {
+        match self {
+            Self::Damage => 0,
+            Self::Haste => 1,
+            Self::MaxHp => 2,
+            Self::Speed => 3,
+            Self::Magnet => 4,
+            Self::Gold => 5,
+        }
+    }
+}
+
 impl Stats {
     /// What gets through of a `raw` hit: the flat block and the fraction together remove at most
     /// [`ARMOR_CAP`] of it, and at least 1 always lands.
@@ -540,6 +573,13 @@ impl HeroState {
         let mut hp_pct = 0.0;
         let mut speed_pct = b.get(StatKey::MoveSpeed);
         let mut magnet_pct = b.get(StatKey::Pickup);
+        let overcharge = |kind: Overcharge| self.overcharges[kind.index()] as f32;
+        s.might += overcharge(Overcharge::Damage) * 0.04;
+        s.haste += overcharge(Overcharge::Haste) * 0.03;
+        hp_pct += overcharge(Overcharge::MaxHp) * 0.05;
+        speed_pct += overcharge(Overcharge::Speed) * 0.04;
+        magnet_pct += overcharge(Overcharge::Magnet) * 0.10;
+        s.gold += overcharge(Overcharge::Gold) * 0.10;
         // Tanky classes start tougher, cloth starts quicker.
         match self.class.id {
             1 | 2 => s.max_hp += 40.0,
@@ -696,6 +736,25 @@ mod tests {
         assert!(close(s.crit, 0.05) && close(s.crit_damage, BASE_CRIT_DAMAGE));
         assert!(close(s.gold, 1.0) && close(s.luck, 1.0));
         assert_eq!((s.targets, s.revives), (0, 0));
+    }
+
+    #[test]
+    fn overcharge_stacks_apply_without_a_cap() {
+        let base = HeroState::default().stats();
+        let mut hero = HeroState::default();
+        hero.overcharges[Overcharge::Damage.index()] = 3;
+        hero.overcharges[Overcharge::Haste.index()] = 2;
+        hero.overcharges[Overcharge::MaxHp.index()] = 4;
+        hero.overcharges[Overcharge::Speed.index()] = 5;
+        hero.overcharges[Overcharge::Magnet.index()] = 6;
+        hero.overcharges[Overcharge::Gold.index()] = 7;
+        let stats = hero.stats();
+        assert!(close(stats.might, base.might + 0.12));
+        assert!(close(stats.haste, base.haste + 0.06));
+        assert!(close(stats.max_hp, base.max_hp * 1.20));
+        assert!(close(stats.speed, base.speed * 1.20));
+        assert!(close(stats.magnet, base.magnet * 1.60));
+        assert!(close(stats.gold, base.gold + 0.70));
     }
 
     #[test]

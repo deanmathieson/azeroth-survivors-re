@@ -37,6 +37,7 @@ pub(super) fn struck(choice: Choice, hero: &HeroState) -> Option<Struck> {
         Choice::Upgrade(k) => hero.abilities.get(k).map(|o| Struck::Ability(o.def.key)),
         Choice::NewPassive(p) => Some(Struck::Passive(p.key)),
         Choice::UpPassive(k) => hero.passives.get(k).map(|(p, _)| Struck::Passive(p.key)),
+        Choice::Overcharge(_) => None,
         Choice::Heal => None,
     }
 }

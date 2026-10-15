@@ -75,6 +75,8 @@ pub(super) struct HeroState {
     /// The build each hero picks for itself at level-ups.
     pub abilities: Vec<Owned>,
     pub passives: Vec<(&'static PassiveDef, u8)>,
+    /// Uncapped bonuses picked after every ability and passive slot is mastered.
+    pub overcharges: [u32; 6],
     /// The permanent bonuses this hero started with: its player's [`super::MetaBonuses`] and the
     /// env test aid.
     pub(super) bonuses: Bonuses,
@@ -126,6 +128,7 @@ impl Default for HeroState {
             hp: BASE_HP,
             abilities: Vec::new(),
             passives: Vec::new(),
+            overcharges: [0; 6],
             bonuses: Bonuses::default(),
             revives_used: 0,
             shield: 0.0,
@@ -286,6 +289,7 @@ pub(super) fn fill_party(
     mut run: ResMut<Run>,
     local: Query<(&Transform, &HeroState), With<LocalHero>>,
     heroes: Query<&HeroState, With<Hero>>,
+    collide: Option<benilla_world::collision::WorldCollision>,
     world: benilla_world::world_point::WorldPoint,
     mut dresser: super::gear::Dresser,
 ) {
@@ -304,7 +308,12 @@ pub(super) fn fill_party(
         }
         let a = f32::from(player - 1) / f32::from(extras) * std::f32::consts::TAU;
         let at = tf.translation + Vec3::new(a.cos(), 0.0, a.sin()) * EXTRA_SPACING;
-        let pos = super::enemies::ground(&world, at, tf.translation.y);
+        let pos = super::enemies::ground_on_collision(
+            collide.as_ref(),
+            &world,
+            at,
+            selection.stage_def().floor,
+        );
         let state = HeroState::new(player, me.class, me.race, super::env_bonuses());
         let serial = run.guid();
         // The local hero's dress: the extras share its class and look.

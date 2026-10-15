@@ -13,6 +13,7 @@
 //! dressed anew as soon as a look is picked ([`menu_companions`]); the run then takes them over.
 //! They are run entities: they go with the run, and the menu brings them back.
 
+use benilla_world::collision::WorldCollision;
 use benilla_world::schedule::WorldStage;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
@@ -403,6 +404,7 @@ fn menu_companions(
     mut commands: Commands,
     profile: Res<Profile>,
     mut run: ResMut<Run>,
+    collide: Option<WorldCollision>,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<LocalHero>, Without<Companion>)>,
     mut pets: Query<(Entity, &mut Transform, &mut Companion), Without<LocalHero>>,
@@ -428,7 +430,12 @@ fn menu_companions(
         if pet.skills != skills {
             pet.train(skills);
         }
-        let at = enemies::ground(&world, menu_spot(h, pet.slot), h.translation.y);
+        let at = enemies::ground_on_collision(
+            collide.as_ref(),
+            &world,
+            menu_spot(h, pet.slot),
+            h.translation.y,
+        );
         if tf.translation.distance_squared(at) > 1e-6 {
             tf.translation = at;
         }
@@ -440,7 +447,12 @@ fn menu_companions(
         return;
     };
     for slot in (0..want).filter(|&s| !seated[s as usize]) {
-        let at = enemies::ground(&world, menu_spot(h, slot), h.translation.y);
+        let at = enemies::ground_on_collision(
+            collide.as_ref(),
+            &world,
+            menu_spot(h, slot),
+            h.translation.y,
+        );
         let e = spawn_pet(
             &mut commands,
             run.guid(),

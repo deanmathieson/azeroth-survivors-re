@@ -135,6 +135,7 @@ pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
             2 => Rarity::Common,
             _ => Rarity::Uncommon,
         },
+        Choice::Overcharge(_) => Rarity::Epic,
         Choice::Heal => Rarity::Common,
     }
 }

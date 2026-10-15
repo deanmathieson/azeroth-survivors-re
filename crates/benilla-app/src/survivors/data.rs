@@ -2566,16 +2566,69 @@ pub(crate) fn damage_scale(elapsed: f32) -> f32 {
     1.0 + progress(elapsed) * 0.9
 }
 
-/// The experience to go from `level` to the next: Vampire Survivors' curve, cheap early.
+/// The experience to go from `level` to the next: cheap early, then a steady climb that leaves a
+/// normal-density run enough picks to finish every slot and keep growing.
 pub(crate) fn xp_to_next(level: u32) -> f32 {
     let l = level as f32;
     if level < 20 {
         5.0 + (l - 1.0) * 10.0
-    } else if level < 40 {
-        195.0 + (l - 20.0) * 13.0
     } else {
-        455.0 + (l - 40.0) * 16.0
+        195.0 + (l - 20.0) * 3.0
     }
+}
+
+/// A normal-density run's expected experience at `seconds`: five turns of the opening live horde
+/// per minute from the replenisher, plus its scheduled elites and bosses. The pool and every XP
+/// value come from the default roster, so the pacing test follows the live spawn table rather than
+/// a hand-made curve.
+#[cfg(test)]
+fn normal_run_xp(seconds: f32) -> f32 {
+    const TARGET_REFRESHES_PER_MINUTE: f32 = 5.0;
+    const ELITES_PER_MINUTE: f32 = 60.0 / 75.0;
+    let roster = roster(0);
+    let horde_kills_per_minute = target_alive(0.0) as f32 * TARGET_REFRESHES_PER_MINUTE;
+    let whole_minutes = (seconds / 60.0).floor() as u32;
+    let partial = (seconds / 60.0).fract();
+    let minute_xp = |minute: u32| {
+        let elapsed = (minute as f32 + 0.5) * 60.0;
+        let pool = wave_pool(elapsed, roster.enemies.len());
+        let horde_xp = pool
+            .iter()
+            .map(|&i| roster.enemies[i].xp as f32)
+            .sum::<f32>()
+            / pool.len() as f32;
+        (horde_kills_per_minute + ELITES_PER_MINUTE) * horde_xp * XP_RATE
+    };
+    let horde = (0..whole_minutes).map(minute_xp).sum::<f32>() + minute_xp(whole_minutes) * partial;
+    let bosses = roster
+        .bosses
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| (*i as f32 + 1.0) * BOSS_EVERY_SECS <= seconds)
+        .map(|(_, boss)| boss.xp as f32 * XP_RATE)
+        .sum::<f32>();
+    horde + bosses
+}
+
+#[cfg(test)]
+fn level_at_xp(mut xp: f32) -> u32 {
+    let mut level = 1;
+    while xp >= xp_to_next(level) {
+        xp -= xp_to_next(level);
+        level += 1;
+    }
+    level
+}
+
+#[cfg(test)]
+#[test]
+fn normal_density_reaches_a_full_build_without_rushing_the_opening() {
+    for minute in [3.0, 5.0, 10.0, 15.0] {
+        let level = level_at_xp(normal_run_xp(minute * 60.0));
+        eprintln!("normal density: level {level} at {minute}:00");
+    }
+    assert!(level_at_xp(normal_run_xp(180.0)) < 20);
+    assert!((80..=90).contains(&level_at_xp(normal_run_xp(VICTORY_SECS))));
 }
 
 /// A creature on a battleground's roster: who it is, its pace and its size. Its health, damage
@@ -2618,6 +2671,8 @@ pub(crate) struct MapDef {
     pub map: u32,
     /// Where the hero starts (WoW coordinates).
     pub center: [f32; 3],
+    /// Ground used while the WMO/terrain collider is still streaming.
+    pub floor: f32,
     /// How far from the centre the hero may walk.
     pub leash: f32,
     /// The results screen's line on a win.
@@ -2635,6 +2690,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // The plains south of the Crossroads.
         center: [-950.0, -2700.0, 92.0],
+        floor: 92.0,
         leash: 150.0,
         victory: "The Barrens are yours.",
         foes: &[],
@@ -2646,6 +2702,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // The basin before the Portal, ringed by cliffs.
         center: [-11840.0, -3197.0, -30.0],
+        floor: -30.0,
         leash: 75.0,
         victory: "The Dark Portal stands silent.",
         foes: &[
@@ -2678,6 +2735,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // The sands before the Scarab Wall.
         center: [-8180.0, 1536.0, 5.0],
+        floor: 5.0,
         leash: 80.0,
         victory: "The Qiraji retreat behind the Scarab Wall.",
         foes: &[
@@ -2716,6 +2774,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         // The summit plateau, its lava lake on the west rim; the crater floor's canopy would
         // hide the fight from above.
         center: [-7136.0, -1309.0, -184.0],
+        floor: -184.0,
         leash: 32.0,
         victory: "Even King Mosh has fallen.",
         foes: &[
@@ -2753,9 +2812,11 @@ pub(crate) static MAPS: &[MapDef] = &[
         name: "Gurubashi Arena",
         zone: "Stranglethorn Vale",
         map: 0,
-        // The arena floor; the stands ring it.
-        center: [-13205.0, 272.0, 22.0],
-        leash: 30.0,
+        // The arena pit: its floor is the open ADT terrain, ringed by the arena WMO's wall 42-48
+        // yd out; the leash is the largest circle inside the wall less 2 yd (`arena_probe`).
+        center: [-13203.5, 275.5, 21.9],
+        floor: 21.9,
+        leash: 40.0,
         victory: "The arena roars your name.",
         foes: &[
             foe("Shadowmaw Panther", 11452, 37, 5.6, 1.4),
@@ -2793,6 +2854,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Elwynn Forest's own creatures: no building or big prop near.
         center: [-9548.5, 115.0, 60.0],
+        floor: 60.0,
         leash: 150.0,
         victory: "Elwynn Forest is safe once more.",
         foes: &[
@@ -2828,6 +2890,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // Open, level ground among Durotar's own creatures: no building or big prop near.
         center: [587.5, -4311.4, 19.0],
+        floor: 19.0,
         leash: 150.0,
         victory: "Durotar is quiet again.",
         foes: &[
@@ -2863,6 +2926,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // Open, level ground among Teldrassil's own creatures: no building or big prop near.
         center: [9737.5, 649.8, 1298.5],
+        floor: 1298.5,
         leash: 150.0,
         victory: "Teldrassil blooms again.",
         foes: &[
@@ -2898,6 +2962,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Dun Morogh's own creatures: no building or big prop near.
         center: [-5400.8, -739.9, 396.7],
+        floor: 396.7,
         leash: 150.0,
         victory: "Dun Morogh thaws in your wake.",
         foes: &[
@@ -2930,6 +2995,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // Open, level ground among Mulgore's own creatures: no building or big prop near.
         center: [-1809.9, -220.6, -8.4],
+        floor: -8.4,
         leash: 150.0,
         victory: "Mulgore's herds roam free.",
         foes: &[
@@ -2964,6 +3030,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Tirisfal Glades's own creatures: no building or big prop near.
         center: [1993.0, -153.3, 35.4],
+        floor: 35.4,
         leash: 150.0,
         victory: "Tirisfal is at peace.",
         foes: &[
@@ -2998,6 +3065,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Westfall's own creatures: no building or big prop near.
         center: [-10252.2, 1483.5, 41.6],
+        floor: 41.6,
         leash: 150.0,
         victory: "Westfall's fields are safe.",
         foes: &[
@@ -3033,6 +3101,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Duskwood's own creatures: no building or big prop near.
         center: [-10051.8, -792.5, 36.5],
+        floor: 36.5,
         leash: 150.0,
         victory: "Duskwood's curse lifts.",
         foes: &[
@@ -3068,6 +3137,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Open, level ground among Redridge Mountains's own creatures: no building or big prop near.
         center: [-9199.8, -2767.5, 91.0],
+        floor: 91.0,
         leash: 150.0,
         victory: "Redridge is safe once more.",
         foes: &[
@@ -3103,6 +3173,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 1,
         // A plateau below the World Tree.
         center: [5478.0, -3729.0, 1593.0],
+        floor: 1593.0,
         leash: 70.0,
         victory: "Nordrassil endures.",
         foes: &[
@@ -3139,6 +3210,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         map: 0,
         // Plaguewood, under the necropolis.
         center: [3010.0, -3790.0, 124.0],
+        floor: 124.0,
         leash: 80.0,
         victory: "Kel'Thuzad's necropolis falls dark.",
         foes: &[
@@ -3241,4 +3313,139 @@ fn ladder(foes: &[Foe], tuned: &[EnemyDef]) -> Vec<EnemyDef> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod arena_probe {
+    use std::collections::HashSet;
+
+    use benilla_assets::coords::{placement_rotation, wow_to_bevy};
+    use bevy::math::{Affine3A, Vec3};
+
+    use super::MAPS;
+
+    /// The Gurubashi pit measured from the MPQs: its floor is the ADT terrain (the arena WMO has
+    /// no floor there) and its wall is the WMO's walking collision. The stage's centre stands on
+    /// that floor, and its leash circle plus a 2 yd margin stays inside the wall in 32 directions.
+    #[test]
+    fn gurubashi_leash_fills_the_pit_inside_its_wall() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let arena = MAPS.iter().find(|m| m.name == "Gurubashi Arena").unwrap();
+        let center = wow_to_bevy(arena.center);
+        let near = |p: Vec3| (p - center).with_y(0.0).length() < 150.0;
+        let mut seen = HashSet::new();
+        let (mut wmo, mut terrain) = (Vec::new(), Vec::new());
+        let tiles = benilla_formats::load_tiles_around(
+            &mut chain,
+            "Azeroth",
+            arena.center[0],
+            arena.center[1],
+            1,
+        )
+        .expect("load arena tiles");
+        for (_, tile) in tiles {
+            for chunk in &tile.chunks {
+                for &tri in chunk.indices.as_chunks::<3>().0 {
+                    let tri = tri.map(|i| wow_to_bevy(chunk.positions[i as usize]));
+                    if near(tri[0]) {
+                        terrain.push(tri);
+                    }
+                }
+            }
+            for placed in tile.wmos {
+                if !placed
+                    .model
+                    .to_ascii_lowercase()
+                    .contains("stranglegladiatorarena")
+                    || !seen.insert(placed.unique_id)
+                {
+                    continue;
+                }
+                let world_from_local = Affine3A::from_rotation_translation(
+                    placement_rotation(placed.rotation),
+                    wow_to_bevy(placed.position),
+                );
+                let mesh = benilla_formats::load_wmo_collision_tris(&mut chain, &placed.model)
+                    .expect("load the arena's walking collision");
+                for &tri in mesh.indices.as_chunks::<3>().0 {
+                    wmo.push(tri.map(|i| {
+                        world_from_local.transform_point3(wow_to_bevy(mesh.positions[i as usize]))
+                    }));
+                }
+            }
+        }
+        assert!(!wmo.is_empty(), "the Gurubashi Arena WMO is placed here");
+
+        // The floor under the centre and round the leash is the flat terrain, open to the sky.
+        for p in std::iter::once(center).chain((0..8).map(|i| {
+            let a = i as f32 / 8.0 * std::f32::consts::TAU;
+            center + Vec3::new(a.cos(), 0.0, a.sin()) * arena.leash
+        })) {
+            let top = p.with_y(arena.floor + 200.0);
+            let floor = terrain
+                .iter()
+                .filter_map(|tri| ray_hit(top, Vec3::NEG_Y, tri))
+                .map(|d| top.y - d)
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                (floor - arena.floor).abs() < 0.25,
+                "the pit floor at {p:?} is {floor}, not the stage's {}",
+                arena.floor
+            );
+            assert!(
+                wmo.iter()
+                    .all(|tri| ray_hit(top, Vec3::NEG_Y, tri)
+                        .is_none_or(|d| top.y - d < floor - 0.5)),
+                "the arena WMO covers the pit floor at {p:?}"
+            );
+        }
+
+        let origin = center.with_y(arena.floor + 1.5);
+        let distances = (0..32)
+            .map(|i| {
+                let a = i as f32 / 32.0 * std::f32::consts::TAU;
+                let dir = Vec3::new(a.cos(), 0.0, a.sin());
+                wmo.iter()
+                    .filter_map(|tri| ray_hit(origin, dir, tri))
+                    .fold(f32::INFINITY, f32::min)
+            })
+            .collect::<Vec<_>>();
+        eprintln!("Gurubashi pit wall distances: {distances:.2?}");
+        for (i, distance) in distances.into_iter().enumerate() {
+            assert!(
+                distance >= arena.leash + 2.0,
+                "leash plus margin crosses the pit wall at direction {i}: {distance} yd"
+            );
+            assert!(
+                distance < 60.0,
+                "direction {i} escapes the pit: {distance} yd"
+            );
+        }
+    }
+
+    /// MÃ¶ller-Trumbore: the distance along `direction` to `tri`, either face.
+    fn ray_hit(origin: Vec3, direction: Vec3, tri: &[Vec3; 3]) -> Option<f32> {
+        let [a, b, c] = *tri;
+        let edge_ab = b - a;
+        let edge_ac = c - a;
+        let p = direction.cross(edge_ac);
+        let det = edge_ab.dot(p);
+        if det.abs() < 1e-7 {
+            return None;
+        }
+        let inv_det = det.recip();
+        let to_origin = origin - a;
+        let u = to_origin.dot(p) * inv_det;
+        if !(0.0..=1.0).contains(&u) {
+            return None;
+        }
+        let q = to_origin.cross(edge_ab);
+        let v = direction.dot(q) * inv_det;
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+        let distance = edge_ac.dot(q) * inv_det;
+        (distance >= 0.0).then_some(distance)
+    }
 }
