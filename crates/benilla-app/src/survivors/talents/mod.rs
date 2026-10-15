@@ -27,8 +27,8 @@ use rules::{bonuses, can_learn, can_unlearn};
 pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;
 pub(super) use tab::{
-    check_learn, check_reset, check_unlearn, describe_rank, unmet, why_text, TalentAction,
-    TalentArt, TalentFocus, TalentSlot,
+    check_learn, check_reset, check_unlearn, describe_rank, shade, unmet, why_text, TalentAction,
+    TalentArt, TalentFocus, TalentShade, TalentSlot,
 };
 
 pub(super) fn plugin(app: &mut App) {

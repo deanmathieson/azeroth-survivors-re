@@ -12,6 +12,7 @@ mod anim_events;
 mod cinematic;
 mod combat;
 mod creature;
+mod cue;
 mod death_thud;
 mod emitter_pool;
 mod emote;
@@ -41,6 +42,7 @@ mod probe;
 mod reverb;
 mod sheathe;
 mod spell;
+mod spell_throttle;
 mod ui;
 mod vocal;
 mod water;
@@ -50,6 +52,7 @@ mod web_backend;
 #[cfg(target_arch = "wasm32")]
 mod web_load;
 mod zone;
+pub(crate) use cue::SoundCue;
 pub(crate) use emote::EmoteSounds;
 /// First-play kit decodes so far, for the probe's tail line.
 pub(crate) fn kit_decodes() -> u32 {
@@ -62,6 +65,9 @@ pub(crate) use greeting::NpcGreetingRequest;
 pub(crate) use kit::SoundKits;
 pub(crate) use message::MessageSounds;
 pub(crate) use mixer::Mixer;
+pub(crate) use spell_throttle::{
+    SpellSfxGain, SpellSfxThrottle, GAIN_BOSS, GAIN_ELITE, GAIN_EXTRA,
+};
 pub(crate) use ui::{AutoEquipSound, LootPickupSound};
 pub(crate) use zone::ExplorationSounds;
 
@@ -122,6 +128,11 @@ pub(crate) struct SoundConfig {
     /// it would save music off for a player who quits mid-cinematic. So the reference's restore
     /// latch (`[0xb4e278]`), needed there because its flag is the CVar itself, is not carried.
     pub music_suppressed: bool,
+    /// Not a CVar: set while a mode built on the client shows its menu over the world (the
+    /// survivors mode's pick screen). The glue theme plays as on the login screen, and the zone
+    /// track fades out ([`zone`]); the zone's music returns at once when the menu goes, while the
+    /// theme takes its 3.0 s fade ([`glue`]). Ambience is untouched: the world is on screen.
+    pub menu_music: bool,
     /// Deviation: `SoundOutputLimiter`, not a 1.12 CVar, default on, so overlapping full-scale
     /// kits are limited rather than clipped. The reference has no headroom mechanism and clips at
     /// full scale, as kira's hard clamp would (see [`limiter`]).
@@ -173,6 +184,7 @@ impl Default for SoundConfig {
             reverb: false,
             world_hold: false,
             music_suppressed: false,
+            menu_music: false,
             limiter: true,
             // The reference's registered defaults: "1", "1", "0".
             listener_at_character: true,
@@ -314,6 +326,12 @@ impl Default for AudioListener {
     }
 }
 
+/// A body the ears ride on when no avatar is embodied: the survivors mode's hero, whose camera
+/// hangs far overhead. With [`SoundConfig::listener_at_character`] the listener sits at its head,
+/// turned as the camera is, so what is left on screen is heard on the left.
+#[derive(Component)]
+pub(crate) struct ListenerAnchor;
+
 /// The world soundscape is live: in the world and seated on the avatar. The seat check matters
 /// after a logout, when the camera still sits at the old spot until the next take-control.
 fn world_audio_live(
@@ -424,6 +442,7 @@ impl Plugin for SoundPlugin {
         anim_events::plugin(app);
         emitter_pool::plugin(app);
         spell::plugin(app);
+        cue::plugin(app);
         missile::plugin(app);
         creature::plugin(app);
         combat::plugin(app);
@@ -456,6 +475,7 @@ fn update_audio_listener(
     cinematic: Option<Res<crate::cinematic::Cinematic>>,
     self_av: Query<(&Transform, Option<&CameraPivot>), With<Embodied>>,
     cam: Query<&Transform, (With<WorldCamera>, Without<Embodied>)>,
+    anchors: Query<&Transform, With<ListenerAnchor>>,
 ) {
     // A cinematic puts the listener on the camera ahead of the CVar (`0x483112`: `camera+0x50`,
     // armed by the cinematic start `0x48ee55`, cleared at the stop by `0x50ca50`).
@@ -467,6 +487,17 @@ fn update_audio_listener(
         if let Ok((t, pivot)) = self_av.single() {
             listener.pos = player.pos + Vec3::Y * head_height(pivot, t.scale.x);
             listener.rot = Quat::from_rotation_y(player.facing());
+            if let Some(mixer) = out.mixer.as_mut() {
+                mixer.set_listener(listener.pos, listener.rot);
+            }
+            return;
+        }
+    }
+    // No avatar but an anchored body: at its head, with the camera's basis.
+    if config.listener_at_character && !flying {
+        if let (Ok(body), Ok(t)) = (anchors.single(), cam.single()) {
+            listener.pos = body.translation + Vec3::Y * head_height(None, body.scale.x);
+            listener.rot = t.rotation;
             if let Some(mixer) = out.mixer.as_mut() {
                 mixer.set_listener(listener.pos, listener.rot);
             }

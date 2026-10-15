@@ -12,9 +12,8 @@ use crate::net::NetEntity;
 use benilla_assets::WorldAssets;
 use benilla_world::schedule::WorldStage;
 
-use super::kit::{
-    kit_looping, play_kit, play_kit_ext, KitRef, PlayExtras, SoundCategory, SoundKits,
-};
+use super::kit::{kit_looping, play_kit_ext, KitRef, PlayExtras, SoundCategory, SoundKits, Volume};
+use super::spell_throttle::{budget, SpellSfxGain, SpellSfxThrottle};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
 fn route_spell_kit_sounds(
@@ -28,6 +27,10 @@ fn route_spell_kit_sounds(
     // Each unit's live hold-loop kit, so StopHold reaps only that kit's channels.
     mut hold_loops: Local<EntityHashMap<u32>>,
     mut despawned: RemovedComponents<NetEntity>,
+    // The survivors mode's budget, absent in the client ([`super::spell_throttle`]).
+    mut throttle: Option<ResMut<SpellSfxThrottle>>,
+    gains: Query<&SpellSfxGain>,
+    time: Res<Time<Real>>,
 ) {
     for entity in despawned.read() {
         hold_loops.remove(&entity); // the channel dies with the source-channel despawn reaper
@@ -39,6 +42,7 @@ fn route_spell_kit_sounds(
         return;
     };
     let listener = listener.pos;
+    let now = time.elapsed_secs_f64();
     // One ring per unit and kit per frame: the impact flash and the aura watcher's add edge can
     // both play a state kit in one packet burst. Plays in different frames both ring.
     let mut played_now: Vec<(Entity, u32)> = Vec::new();
@@ -49,6 +53,14 @@ fn route_spell_kit_sounds(
                     continue;
                 }
                 played_now.push((entity, kit_sound));
+                let Some(volume) = budget(
+                    throttle.as_deref_mut(),
+                    kit_sound,
+                    now,
+                    gains.get(entity).ok(),
+                ) else {
+                    continue;
+                };
                 let pos = transforms.get(entity).map(|t| t.translation).ok();
                 let looping = kit_looping(&kits, kit_sound);
                 // The line a headless probe greps to prove a spell's sound fired.
@@ -65,11 +77,12 @@ fn route_spell_kit_sounds(
                         SoundCategory::Sfx,
                         PlayExtras {
                             source: Some(entity),
+                            volume_mult: Volume(volume),
                             ..default()
                         },
                     )
                 } else {
-                    play_kit(
+                    play_kit_ext(
                         &mut kits,
                         &assets,
                         &mut out,
@@ -78,6 +91,10 @@ fn route_spell_kit_sounds(
                         KitRef::Id(kit_sound),
                         pos,
                         SoundCategory::Sfx,
+                        PlayExtras {
+                            volume_mult: Volume(volume),
+                            ..default()
+                        },
                     )
                 };
                 match played {
@@ -92,7 +109,10 @@ fn route_spell_kit_sounds(
                 // A bare positional one-shot with no owner or dedup: its one caller is a
                 // missile's ground arrival.
                 debug!("spell kit sound {kit_sound} at {pos:?}");
-                if let Err(e) = play_kit(
+                let Some(volume) = budget(throttle.as_deref_mut(), kit_sound, now, None) else {
+                    continue;
+                };
+                if let Err(e) = play_kit_ext(
                     &mut kits,
                     &assets,
                     &mut out,
@@ -101,6 +121,10 @@ fn route_spell_kit_sounds(
                     KitRef::Id(kit_sound),
                     Some(pos),
                     SoundCategory::Sfx,
+                    PlayExtras {
+                        volume_mult: Volume(volume),
+                        ..default()
+                    },
                 ) {
                     warn!("spell kit sound {kit_sound}: {e:#}");
                 }

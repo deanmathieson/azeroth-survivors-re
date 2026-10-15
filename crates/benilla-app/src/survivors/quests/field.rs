@@ -870,11 +870,7 @@ mod tests {
                 ..HeroState::default()
             };
             world
-                .spawn((
-                    Hero::default(),
-                    Transform::from_xyz(x, 0.0, 0.0),
-                    state,
-                ))
+                .spawn((Hero::default(), Transform::from_xyz(x, 0.0, 0.0), state))
                 .id()
         };
         let a = hero(&mut world, 0, 0.0);
@@ -996,7 +992,7 @@ mod tests {
         }
         assert_eq!(run.caches, 2, "the Caches tile counts caches opened");
         assert_eq!(treasure::chest_cost(run.caches), price);
-        assert_eq!(run.pending_levels, 3, "each still deals its hand");
+        assert_eq!(run.pending_jewelry, 3, "each still offers its jewelry");
     }
 
     #[test]

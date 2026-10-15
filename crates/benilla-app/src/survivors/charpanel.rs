@@ -947,6 +947,7 @@ mod tests {
         world.init_resource::<Run>();
         world.init_resource::<MetaBonuses>();
         world.insert_resource(zones::Unlocks::default());
+        world.init_resource::<hud::Replay>();
         world.run_system_once(hud::keys).unwrap();
         match *world.resource::<NextState<Phase>>() {
             NextState::Pending(p) | NextState::PendingIfNeq(p) => Some(p),

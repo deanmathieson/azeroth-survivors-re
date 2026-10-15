@@ -425,7 +425,7 @@ mod tests {
             ("cockatiel", ("creature\\parrot\\parrot.", "")),
             ("great_horned_owl", ("creature\\owl\\owl.", "")),
             ("hawk_owl", ("creature\\owl\\owl.", "")),
-            ("tree_frog", ("creature\\frog\\frog.", "frog")),
+            ("tree_frog", ("creature\\frog\\frog.", "frogtropical")),
             ("crimson_snake", ("creature\\snake\\snake.", "")),
             (
                 "crimson_whelpling",
@@ -435,38 +435,53 @@ mod tests {
                 "dark_whelpling",
                 ("creature\\dragonwhelp\\dragonwhelp.", ""),
             ),
-            ("pet_bombling", ("creature\\petbombling\\petbombling.", "")),
-            ("lil_smoky", ("creature\\petbombling\\petbombling.", "")),
-            ("smolderweb_hatchling", ("creature\\spider\\spider.", "")),
-            ("disgusting_oozeling", ("creature\\ooze\\ooze.", "")),
+            (
+                "pet_bombling",
+                ("creature\\gnomespidertank\\gnomebombot.", ""),
+            ),
+            ("lil_smoky", ("creature\\gnomespidertank\\gnomebot.", "")),
+            (
+                "smolderweb_hatchling",
+                ("creature\\tarantula\\tarantula.", ""),
+            ),
+            ("disgusting_oozeling", ("creature\\slime\\slimelesser.", "")),
         ]
         .into_iter()
         .collect();
         assert_eq!(want.len(), all_looks().count(), "every look is checked");
+        let mut wrong = Vec::new();
         for look in all_looks() {
             let (model, skin) = want[look.key];
-            let found = catalog
-                .model(look.display)
-                .unwrap_or_else(|| panic!("{}: display {} has no model", look.key, look.display));
+            let Some(found) = catalog.model(look.display) else {
+                wrong.push(format!(
+                    "{}: display {} has no model",
+                    look.key, look.display
+                ));
+                continue;
+            };
             let path = found.model_path.to_ascii_lowercase().replace('/', "\\");
-            assert!(
-                path.starts_with(model),
-                "{}: display {} is {path}",
-                look.key,
-                look.display
-            );
             let skins: Vec<String> = found
                 .textures
                 .iter()
                 .flatten()
                 .map(|t| t.to_ascii_lowercase())
                 .collect();
-            assert!(
-                skin.is_empty() || skins.iter().any(|t| t.ends_with(skin)),
-                "{}: display {} wears {skins:?}",
-                look.key,
-                look.display
-            );
+            if !path.starts_with(model)
+                || !(skin.is_empty() || skins.iter().any(|t| t.ends_with(skin)))
+            {
+                wrong.push(format!(
+                    "{}: display {} is {path} wearing {skins:?}",
+                    look.key, look.display
+                ));
+            }
         }
+        assert!(
+            wrong.is_empty(),
+            "{}",
+            wrong.join(
+                "
+"
+            )
+        );
     }
 }

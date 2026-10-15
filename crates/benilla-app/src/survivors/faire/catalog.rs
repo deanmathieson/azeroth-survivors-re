@@ -348,7 +348,8 @@ fn build() -> Vec<Prize> {
     let mut all = Vec::new();
     // The companion's starting looks are every account's already: only the earned ones are prizes.
     let starting = RewardsSave::default();
-    for look in all_looks().filter(|l| !offered(l, &starting)) {
+    let none = super::super::achievements::AchievementSave::default();
+    for look in all_looks().filter(|l| !offered(l, &starting, &none)) {
         let (rarity, icon) = LOOK_SEEDS
             .iter()
             .find(|(key, ..)| *key == look.key)
