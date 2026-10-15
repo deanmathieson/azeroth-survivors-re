@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 
+use benilla_world::collision::WorldCollision;
 use benilla_world::rig_anim::GlobalSeqDrive;
 use benilla_world::world_point::WorldPoint;
+use bevy::math::Dir3;
 use bevy::prelude::*;
 
 use super::abilities::Hit;
@@ -220,9 +222,39 @@ pub(super) fn spawn_enemy(
     ));
 }
 
+/// Ground an object on the terrain heightfield where it has no walking body.
 pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p.y = world.terrain_height_under(p).unwrap_or(fallback);
     p
+}
+
+/// Ground a walking body on collision first, falling back to terrain while the collider streams.
+pub(super) fn ground_on_collision(
+    collide: Option<&WorldCollision>,
+    world: &WorldPoint,
+    mut p: Vec3,
+    fallback: f32,
+) -> Vec3 {
+    let from = p.with_y(p.y.max(fallback) + 64.0);
+    p.y = collide
+        .and_then(|collide| collide.ray_body(from, Dir3::NEG_Y, 128.0))
+        .map(|hit| from.y - hit.distance)
+        .or_else(|| world.terrain_height_under(p))
+        .unwrap_or(fallback);
+    p
+}
+
+/// A horde ring never steps beyond the battle circle, even when its target is already at the edge.
+fn spawn_site(map: &data::MapDef, hero_pos: Vec3, angle: f32, radius: f32) -> Vec3 {
+    let mut site = hero_pos + Vec3::new(angle.cos(), 0.0, angle.sin()) * radius;
+    let center = hero::arena(map);
+    let offset = flat(site - center);
+    let limit = (map.leash - 1.0).max(0.0);
+    if offset.length() > limit {
+        site = center + offset.normalize_or_zero() * limit;
+        site.y = hero_pos.y;
+    }
+    site
 }
 
 /// Keep the horde topped up on a ring outside the view, round the heroes still standing, with the
@@ -237,6 +269,7 @@ pub(super) fn spawn_enemies(
     opts: Res<RunOptions>,
     heroes: Query<(&Transform, &HeroState), With<Hero>>,
     enemies: Query<&Enemy>,
+    collide: Option<WorldCollision>,
     world: WorldPoint,
 ) {
     let standing = heroes.iter().filter(|(_, h)| h.alive());
@@ -244,6 +277,7 @@ pub(super) fn spawn_enemies(
         return;
     };
     let elapsed = run.elapsed;
+    let map = selection.stage_def();
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
 
@@ -251,10 +285,11 @@ pub(super) fn spawn_enemies(
     while run.bosses < due_bosses {
         let def = &roster.bosses[run.bosses as usize];
         let a = rng.range(0.0, std::f32::consts::TAU);
-        let pos = ground(
+        let pos = ground_on_collision(
+            collide.as_ref(),
             &world,
-            hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
-            hpos.y,
+            spawn_site(map, hpos, a, 30.0),
+            map.floor,
         );
         spawn_enemy(
             &mut commands,
@@ -278,10 +313,11 @@ pub(super) fn spawn_enemies(
         let n = opts.crowd(28 + (data::progress(elapsed) * 60.0) as usize);
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let pos = ground(
+            let pos = ground_on_collision(
+                collide.as_ref(),
                 &world,
-                hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 26.0,
-                hpos.y,
+                spawn_site(map, hpos, a, 26.0),
+                map.floor,
             );
             spawn_enemy(
                 &mut commands,
@@ -315,7 +351,12 @@ pub(super) fn spawn_enemies(
         let def = &roster.enemies[pool[rng.index(pool.len())]];
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(34.0, 42.0);
-        let pos = ground(&world, hpos + Vec3::new(a.cos(), 0.0, a.sin()) * r, hpos.y);
+        let pos = ground_on_collision(
+            collide.as_ref(),
+            &world,
+            spawn_site(map, hpos, a, r),
+            map.floor,
+        );
         spawn_enemy(
             &mut commands,
             &mut run,
@@ -371,6 +412,7 @@ pub(super) fn move_enemies(
     time: Res<Time>,
     mut run: ResMut<Run>,
     selection: Res<Selection>,
+    collide: Option<WorldCollision>,
     world: WorldPoint,
     mut heroes: Query<(Entity, &Transform, &mut HeroState), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
@@ -394,8 +436,9 @@ pub(super) fn move_enemies(
     if seen.is_empty() {
         return;
     }
+    let map = selection.stage_def();
     let hero_down = seen.iter().all(|h| !h.up);
-    let wake = treasure::wake_radius(selection.stage_def().leash);
+    let wake = treasure::wake_radius(map.leash);
 
     // Separation over a coarse grid: only neighbours in the same or adjacent cells push.
     const CELL: f32 = 3.0;
@@ -486,8 +529,8 @@ pub(super) fn move_enemies(
 
         // Strays far behind are brought back in front, as the reference genre does.
         if dist > 75.0 {
-            let back = hpos + to_hero.normalize_or_zero() * 38.0;
-            tf.translation = ground(&world, back, hpos.y);
+            let back = spawn_site(map, hpos, to_hero.z.atan2(to_hero.x), 38.0);
+            tf.translation = ground_on_collision(collide.as_ref(), &world, back, map.floor);
             continue;
         }
 
@@ -517,7 +560,7 @@ pub(super) fn move_enemies(
         }
         let shove = push.get(&ent).copied().unwrap_or_default();
         let mut next = pos + step * dt + shove * (dt * 8.0).min(0.5);
-        next = ground(&world, next, pos.y);
+        next = ground_on_collision(collide.as_ref(), &world, next, map.floor);
         tf.translation = next;
         if speed > 0.0 {
             mv.speed = speed;

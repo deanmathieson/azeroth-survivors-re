@@ -17,7 +17,9 @@ use super::minimap::{self, MiniMap};
 use super::party;
 use super::profile::{LastRunNews, Profile};
 use super::units::Marks;
-use super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
+use super::{
+    HeroState, LocalHero, MetaBonuses, Overcharge, Owned, Phase, Rng, Run, Selection, Stats,
+};
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 /// The mobility button's edge, an action button's 36 units.
@@ -254,6 +256,7 @@ pub(super) enum Choice {
     Upgrade(usize),
     NewPassive(&'static PassiveDef),
     UpPassive(usize),
+    Overcharge(Overcharge),
     Heal,
 }
 
@@ -1029,6 +1032,7 @@ pub(super) fn menu_preview(
     mut run: ResMut<Run>,
     heroes: Query<Entity, With<Hero>>,
     next: Res<NextState<Phase>>,
+    collide: Option<benilla_world::collision::WorldCollision>,
     world: benilla_world::world_point::WorldPoint,
     mut dresser: super::gear::Dresser,
     mut shown: Local<Option<(usize, u32, usize, u32)>>,
@@ -1058,10 +1062,12 @@ pub(super) fn menu_preview(
         return;
     };
     let display = dresser.display(class, (trainer, race, sex));
-    let mut pos = hero::arena(selection.stage_def());
-    if let Some(h) = world.terrain_height_under(pos) {
-        pos.y = h;
-    }
+    let pos = super::enemies::ground_on_collision(
+        collide.as_ref(),
+        &world,
+        hero::arena(selection.stage_def()),
+        selection.stage_def().floor,
+    );
     let serial = run.guid();
     // The local player's hero, out of a run until one begins on it ([`start_run`]).
     let state = HeroState {
@@ -1195,10 +1201,19 @@ pub(super) fn draw(mut pool: Vec<(Choice, f32)>, n: usize, rng: &mut Rng) -> Vec
     out
 }
 
-/// A level-up hand for `hero`: three choices, or the healthstone once everything is mastered.
+/// A level-up hand for `hero`: three choices, or repeatable Overcharges and a healthstone once
+/// everything is mastered.
 pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
     let mut out = draw(offer_pool(hero), 3, rng);
     if out.is_empty() {
+        out = draw(
+            Overcharge::ALL
+                .into_iter()
+                .map(|kind| (Choice::Overcharge(kind), 1.0))
+                .collect(),
+            2,
+            rng,
+        );
         out.push(Choice::Heal);
     }
     out
@@ -1242,6 +1257,7 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
         }
         Choice::NewPassive(p) => hero.passives.push((p, 1)),
         Choice::UpPassive(k) => hero.passives[k].1 += 1,
+        Choice::Overcharge(kind) => hero.overcharges[kind.index()] += 1,
         Choice::Heal => hero.hp = hero.stats().max_hp,
     }
 }
@@ -1517,6 +1533,26 @@ pub(super) fn describe_card(
                     fmt(p.per_level * f32::from(level + 1)),
                 ),
                 ranks: Some((level, data::MAX_PASSIVE_LEVEL)),
+                legendary: None,
+            }
+        }
+        Choice::Overcharge(kind) => {
+            let stack = hero.overcharges[kind.index()];
+            let (name, desc) = match kind {
+                Overcharge::Damage => ("Overcharge: Damage", "Increases all damage by 4%."),
+                Overcharge::Haste => ("Overcharge: Haste", "Reduces cooldowns by 3%."),
+                Overcharge::MaxHp => ("Overcharge: Vitality", "Increases maximum health by 5%."),
+                Overcharge::Speed => ("Overcharge: Speed", "Increases movement speed by 4%."),
+                Overcharge::Magnet => ("Overcharge: Magnet", "Increases pickup radius by 10%."),
+                Overcharge::Gold => ("Overcharge: Gold", "Increases gold found by 10%."),
+            };
+            CardText {
+                spell: 0,
+                name: name.into(),
+                tag: format!("Stack {stack} » {}", stack + 1),
+                tag_color: super::cards::EPIC,
+                desc: desc.into(),
+                ranks: None,
                 legendary: None,
             }
         }
@@ -2803,6 +2839,33 @@ mod tests {
                 assert_ne!(a.color(), b.color(), "{a:?} and {b:?}");
             }
         }
+    }
+
+    #[test]
+    fn mastered_build_hands_offer_overcharges_and_a_healthstone() {
+        let mut hero = HeroState::default();
+        hero.abilities = hero.class.pool[..data::MAX_ABILITIES]
+            .iter()
+            .map(|key| Owned {
+                def: data::ability(key),
+                level: data::MAX_ABILITY_LEVEL,
+                cd: 0.0,
+            })
+            .collect();
+        hero.passives = data::PASSIVES[..data::MAX_PASSIVES]
+            .iter()
+            .map(|passive| (passive, data::MAX_PASSIVE_LEVEL))
+            .collect();
+        let mut rng = Rng::default();
+        let hand = choices_for(&hero, &mut rng);
+        assert_eq!(hand.len(), 3);
+        assert!(hand.iter().any(|choice| matches!(choice, Choice::Heal)));
+        assert_eq!(
+            hand.iter()
+                .filter(|choice| matches!(choice, Choice::Overcharge(_)))
+                .count(),
+            2
+        );
     }
 
     /// The results and their ways out: the keys and buttons, the record on GameOver and the reset

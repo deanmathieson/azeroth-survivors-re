@@ -10,6 +10,7 @@
 
 use benilla_protocol::field::FIELD_GAMEOBJECT_STATE;
 use benilla_protocol::messages::{ObjectFields, ObjectType};
+use benilla_world::collision::WorldCollision;
 use benilla_world::model_fade::DespawnFade;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
@@ -425,12 +426,15 @@ pub(super) fn place_guardians(
     opts: Res<RunOptions>,
     mut spawner: ResMut<Spawner>,
     hero: Query<&Transform, With<LocalHero>>,
+    collide: Option<WorldCollision>,
     world: WorldPoint,
 ) {
     if run.guarded {
         return;
     }
-    let Ok(h) = hero.single() else { return };
+    if hero.single().is_err() {
+        return;
+    }
     run.guarded = true;
     let map = selection.stage_def();
     let center = hero::arena(map);
@@ -438,7 +442,7 @@ pub(super) fn place_guardians(
     let posts = guardian_posts(map.leash);
     for (i, off) in posts.iter().enumerate() {
         let def = &roster.enemies[guardian_tier(i, posts.len(), roster.enemies.len())];
-        let pos = enemies::ground(&world, center + *off, h.translation.y);
+        let pos = enemies::ground_on_collision(collide.as_ref(), &world, center + *off, map.floor);
         enemies::spawn_enemy(
             &mut commands,
             &mut run,
@@ -451,7 +455,7 @@ pub(super) fn place_guardians(
         );
     }
     for off in chest_posts(map.leash) {
-        let pos = enemies::ground(&world, center + off, h.translation.y);
+        let pos = enemies::ground_on_collision(collide.as_ref(), &world, center + off, map.floor);
         spawn_cache(&mut commands, run.guid(), pos, true);
     }
 }
@@ -466,6 +470,7 @@ pub(super) fn spawn_elites(
     opts: Res<RunOptions>,
     mut spawner: ResMut<Spawner>,
     heroes: Query<(&Transform, &HeroState), With<Hero>>,
+    collide: Option<WorldCollision>,
     world: WorldPoint,
 ) {
     let standing = heroes.iter().filter(|(_, h)| h.alive());
@@ -480,10 +485,11 @@ pub(super) fn spawn_elites(
     let pool = data::wave_pool(run.elapsed, roster.enemies.len());
     let def = &roster.enemies[pool[rng.index(pool.len())]];
     let a = rng.range(0.0, std::f32::consts::TAU);
-    let pos = enemies::ground(
+    let pos = enemies::ground_on_collision(
+        collide.as_ref(),
         &world,
-        hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
-        hpos.y,
+        elite_site(selection.stage_def(), hpos, a),
+        selection.stage_def().floor,
     );
     enemies::spawn_enemy(
         &mut commands,
@@ -496,6 +502,19 @@ pub(super) fn spawn_elites(
         &mut spawner.xp_carry,
     );
     run.banner = Some((format!("Elite {} approaches!", def.name), 3.0));
+}
+
+/// Elites use the same inside-the-leash placement as the horde rings.
+fn elite_site(map: &data::MapDef, hero_pos: Vec3, angle: f32) -> Vec3 {
+    let mut site = hero_pos + Vec3::new(angle.cos(), 0.0, angle.sin()) * 30.0;
+    let center = hero::arena(map);
+    let offset = flat(site - center);
+    let limit = (map.leash - 1.0).max(0.0);
+    if offset.length() > limit {
+        site = center + offset.normalize_or_zero() * limit;
+        site.y = hero_pos.y;
+    }
+    site
 }
 
 /// Walking into a cache opens it, a locked one only for its price (from the party's purse): its lid

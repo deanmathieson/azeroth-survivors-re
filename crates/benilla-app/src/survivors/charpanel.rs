@@ -325,6 +325,7 @@ pub(super) fn breakdown(hero: &HeroState, parts: &MetaParts) -> Vec<Row> {
     };
     let mut steps = vec![numbers(&layer)];
     layer.passives = hero.passives.clone();
+    layer.overcharges = hero.overcharges;
     steps.push(numbers(&layer));
     let jewelry = hero.jewelry.bonuses();
     for part in [
