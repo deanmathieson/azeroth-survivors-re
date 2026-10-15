@@ -37,7 +37,8 @@ Each step only starts when the one before is verified. Nothing is pushed unless 
    - **Ready check** in the lobby, with the real ready-check pop-up and sound; the lobby shows each player's class, title and mount.
    - **Spectate while downed:** cycle the camera through living allies.
    - **Personal boss loot:** each player rolls for their own class; everyone sees the party's loot banners.
-5. **Docs and page:** "How to play online" in `docs/MULTIPLAYER.md`, this roadmap, the README, and the toast.house page. Leave a morning summary.
+5. **Two-window smoke test:** with the PC free overnight, launch the game twice (one hosting, one joining on 127.0.0.1), take screenshots of the lobby and a shared run, and check they connect, see each other and level up without pausing.
+6. **Docs and page:** "How to play online" in `docs/MULTIPLAYER.md`, this roadmap, the README, and the toast.house page. Leave a morning summary.
 
 **Rules for the night:**
 - one build folder per worktree;
@@ -62,4 +63,3 @@ Each step only starts when the one before is verified. Nothing is pushed unless 
 - Clients see enemy debuff marks, hero auras and mounts.
 - The hero blinks for a few frames on a gear change.
 - Better hat icons for the Dapper Top Hat and Jack-o'-Lantern Hat; double-check the Gray Kodo, Striped/Winterspring Frostsaber and Swift White Mechanostrider skins.
-- Tidy: delete merged remote branches (`wip/*`, `wave3-*`, `mp-groundwork`, feature branches) once everything is on `progression`.
