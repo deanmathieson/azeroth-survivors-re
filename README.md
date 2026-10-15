@@ -17,6 +17,14 @@ from-scratch WoW 1.12.1 client engine (Rust + [Bevy](https://bevy.org)).**
 > · [Discord](https://discord.gg/UzxaZuSAk)). This repository is a from-source local build of the
 > game, running on the [benilla](#how-its-built) / [wenilla](#how-its-built) engine, for personal use.
 
+> **This fork** ([deanmathieson/azeroth-survivors-re](https://github.com/deanmathieson/azeroth-survivors-re),
+> branch `progression`) adds meta-progression and co-op for playing with friends: profile saves,
+> talents with real 10/20/30-point effects, real WoW gear that shows on your hero, achievements and
+> perks, zone unlocks and racials, quests, a companion pet, in-run jewelry and a character panel,
+> legendary skill transforms, the Darkmoon Faire (tickets only, never real money), a Stable for
+> mounts, a Wardrobe, and online co-op (in progress). See [docs/ROADMAP.md](docs/ROADMAP.md) and the
+> [status page](https://toast.house/azeroth-survivors-re/).
+
 Pick a class and a battleground, then survive: WASD to move, your abilities cast themselves,
 enemies swarm in waves, you level up and pick upgrades, and a boss shows up every couple of
 minutes. **No server, no login, no account** — fully offline and self-contained.
