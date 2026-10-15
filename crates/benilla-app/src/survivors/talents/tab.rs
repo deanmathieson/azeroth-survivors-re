@@ -72,29 +72,16 @@ pub(in crate::survivors) fn check_learn(
     Ok(())
 }
 
-/// How a talent's button reads, as WoW colours it.
+/// How the tab colours a talent, as WoW's talent frame does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::survivors) enum SlotState {
-    /// Green: a rank can be learned now (a point to spend, its tier open, its prerequisite met).
-    Learnable,
-    /// Gold: at its last rank.
+pub(in crate::survivors) enum TalentShade {
+    /// At its last rank: gold.
     Maxed,
-    /// Grey: anything else, including no points left, and the first reason why.
-    Locked(Why),
-}
-
-/// `talent`'s state on the tab for one class's save (`dev` is [`TalentDevXp`]).
-pub(in crate::survivors) fn slot_state(
-    catalog: &TalentCatalog,
-    save: &TalentSave,
-    dev: u64,
-    talent: u32,
-) -> SlotState {
-    match check_learn(catalog, save, dev, talent) {
-        Ok(()) => SlotState::Learnable,
-        Err(Why::MaxRank) => SlotState::Maxed,
-        Err(why) => SlotState::Locked(why),
-    }
+    /// Learnable right now: a point to spend, its tier open, its prerequisite met. Green.
+    Open,
+    /// Anything else, no points left included: grey. With ranks in it, its badge keeps the normal
+    /// gold; with none, it is dimmed too.
+    Closed,
 }
 
 /// Every reason a talent cannot take a rank now, in tooltip words: its unmet tier and
@@ -105,7 +92,7 @@ pub(in crate::survivors) fn locked_reasons(
     dev: u64,
     talent: &Talent,
 ) -> Vec<String> {
-    let SlotState::Locked(why) = slot_state(catalog, save, dev, talent.id) else {
+    let Err(why) = check_learn(catalog, save, dev, talent.id) else {
         return Vec::new();
     };
     let mut out = unmet(catalog, &save.allocation(), talent);
@@ -116,6 +103,23 @@ pub(in crate::survivors) fn locked_reasons(
         out.push(why_text(catalog, talent.id, why));
     }
     out
+}
+
+/// `talent`'s [`TalentShade`] for the class's save (`dev` is [`TalentDevXp`]); the Learn button
+/// asks the same [`check_learn`].
+pub(in crate::survivors) fn shade(
+    catalog: &TalentCatalog,
+    save: &TalentSave,
+    dev: u64,
+    talent: &Talent,
+) -> TalentShade {
+    if save.allocation().rank(talent.id) >= talent.max_rank {
+        TalentShade::Maxed
+    } else if check_learn(catalog, save, dev, talent.id).is_ok() {
+        TalentShade::Open
+    } else {
+        TalentShade::Closed
+    }
 }
 
 /// Whether the class can give back one rank of `talent`.
@@ -377,6 +381,44 @@ mod tests {
         assert_eq!(
             act(&cat, &mut save, 0, TalentAction::Reset),
             Err(Why::NotLearned)
+        );
+    }
+
+    #[test]
+    fn talents_shade_as_wow_colours_them() {
+        let cat = catalog();
+        let t = |id: u32| cat.talent(id).unwrap();
+        // No points at all: even an open tier-0 talent is grey.
+        let mut save = TalentSave::default();
+        assert_eq!(shade(&cat, &save, 0, t(9000)), TalentShade::Closed);
+        assert_eq!(check_learn(&cat, &save, 0, 9000), Err(Why::NoPoints));
+        // The dev XP counts as earned.
+        assert_eq!(
+            shade(&cat, &save, xp_for_points(1), t(9000)),
+            TalentShade::Open
+        );
+        // Points to spend: tier 0 is green, tier 1 grey until its tier and prerequisite are met.
+        save.xp = xp_for_points(6);
+        assert_eq!(shade(&cat, &save, 0, t(9000)), TalentShade::Open);
+        assert_eq!(shade(&cat, &save, 0, t(9010)), TalentShade::Closed);
+        // At its last rank, gold, points or none.
+        for _ in 0..3 {
+            act(&cat, &mut save, 0, TalentAction::Learn(9001)).unwrap();
+        }
+        assert_eq!(shade(&cat, &save, 0, t(9001)), TalentShade::Maxed);
+        for _ in 0..2 {
+            act(&cat, &mut save, 0, TalentAction::Learn(9000)).unwrap();
+        }
+        assert_eq!(shade(&cat, &save, 0, t(9010)), TalentShade::Open);
+        act(&cat, &mut save, 0, TalentAction::Learn(9010)).unwrap();
+        // Every point spent: the half-learned talent goes grey, and the reason reads as WoW's.
+        assert_eq!(shade(&cat, &save, 0, t(9000)), TalentShade::Closed);
+        assert_eq!(shade(&cat, &save, 0, t(9010)), TalentShade::Maxed);
+        assert_eq!(shade(&cat, &save, 0, t(9001)), TalentShade::Maxed);
+        assert_eq!(check_learn(&cat, &save, 0, 9000), Err(Why::NoPoints));
+        assert_eq!(
+            why_text(&cat, 9000, Why::NoPoints),
+            "No talent points available"
         );
     }
 

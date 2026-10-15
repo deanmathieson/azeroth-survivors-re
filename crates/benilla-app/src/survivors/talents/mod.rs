@@ -30,13 +30,15 @@ use rules::{bonuses, can_learn, can_unlearn};
 pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;
 pub(super) use tab::{
-    check_learn, check_reset, check_unlearn, describe_rank, locked_reasons, slot_state, unmet,
-    why_text, SlotState, TalentAction, TalentArt, TalentFocus, TalentSlot,
+    check_learn, check_reset, check_unlearn, describe_rank, locked_reasons, shade, unmet, why_text,
+    TalentAction, TalentArt, TalentFocus, TalentShade, TalentSlot,
 };
 
 pub(in crate::survivors) fn mechanic_description(talent: u32, rank: u8) -> Vec<String> {
     mechanics::describe(talent, rank)
 }
+
+pub(in crate::survivors) use mechanics::milestones;
 
 pub(in crate::survivors) fn is_headline(talent: u32) -> bool {
     mechanics::entry(talent).is_some_and(|entry| entry.headline)
@@ -63,7 +65,6 @@ pub(super) fn plugin(app: &mut App) {
 
 /// Give the local hero the learned talents' active mechanics after `start_run` replaces its state.
 fn grant_talents(
-    catalog: Option<Res<TalentCatalog>>,
     profile: Option<Res<Profile>>,
     selection: Res<Selection>,
     phase: Res<State<super::Phase>>,
@@ -72,7 +73,7 @@ fn grant_talents(
     if *phase.get() != super::Phase::Playing {
         return;
     }
-    let (Some(catalog), Some(profile), Some(class)) = (catalog, profile, selection.class) else {
+    let (Some(profile), Some(class)) = (profile, selection.class) else {
         return;
     };
     let Some(save) = saved(&profile, class) else {
@@ -85,7 +86,7 @@ fn grant_talents(
 
 /// Put every learned active talent on a freshly created hero.  Kept separate from the ECS query
 /// so the exact run-start grant set remains small and directly testable.
-fn grant_learned(hero: &mut HeroState, ranks: &HashMap<u32, u8>) {
+fn grant_learned(hero: &mut HeroState, ranks: &[(u32, u8)]) {
     for (id, rank) in ranks {
         let specs = mechanics::at_rank(*id, *rank);
         if !specs.is_empty() {
@@ -549,7 +550,7 @@ mod tests {
     #[test]
     fn learned_mechanics_are_granted_under_their_talent_ids() {
         let mut hero = HeroState::default();
-        let ranks = [(133, 1), (30, 3), (130, 5)].into_iter().collect();
+        let ranks = vec![(133, 1), (30, 3), (130, 5)];
         grant_learned(&mut hero, &ranks);
         assert!(game_mechanics::has(&hero, MechanicId::Talent(133)));
         assert!(game_mechanics::has(&hero, MechanicId::Talent(30)));

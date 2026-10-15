@@ -97,7 +97,7 @@ fn orbit_limit(distance_max: f32, factor: f32) -> f32 {
 /// at a constant `cameraDistanceMoveSpeed`, as the reference's does. `scroll` is this frame's net
 /// zoom-in in notches (positive is closer). `max` is [`ZoomLimit::max`], CVar-fed, so it bounds by
 /// `max`/`min`, never `f32::clamp`, which panics on a NaN or inverted bound.
-pub(super) fn apply_zoom_scroll(scroll: f32, dt: f32, rig: &mut CameraControl, max: f32) {
+pub(crate) fn apply_zoom_scroll(scroll: f32, dt: f32, rig: &mut CameraControl, max: f32) {
     if scroll != 0.0 {
         rig.target_distance = (rig.target_distance - scroll * CAM_ZOOM_STEP)
             .max(CAM_DIST_MIN)

@@ -2,21 +2,27 @@
 //! [`crate::run_survivors`]. There is no server: the hero, the enemies and the spells are local
 //! entities dressed by the same attach, animation and spell-visual systems a streamed unit gets,
 //! on a battleground picked at the menu ([`data::MAPS`]), with the player controller and FrameXML
-//! off ([`crate::run_mode::CaptureMode`]).
+//! off ([`crate::run_mode::CaptureMode`]). The local hero walks through the world's collision
+//! ([`body`]) and, by default, under WoW's own camera and controls ([`wowcam`], [`view`]).
 
 mod abilities;
 mod achievements;
 mod armory;
 mod auto;
+mod body;
 mod bonus;
+mod bossbar;
 mod cards;
+mod charpanel;
 mod data;
 mod enemies;
+mod faire;
 mod gear;
 mod grade;
 mod hand;
 mod hero;
 mod hud;
+mod jewelry;
 mod mechanics;
 mod menu;
 mod meta;
@@ -28,9 +34,12 @@ mod quests;
 mod racials;
 mod rewards;
 mod run_options;
+mod sfx;
 mod talents;
 mod treasure;
 mod units;
+mod view;
+mod wowcam;
 mod zones;
 
 use benilla_world::schedule::WorldStage;
@@ -65,12 +74,17 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(achievements::plugin)
             .add_plugins(rewards::plugin)
             .add_plugins(quests::plugin)
+            .add_plugins(faire::plugin)
             .add_plugins(meta::plugin)
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)
+            .add_plugins(jewelry::plugin)
+            .add_plugins(charpanel::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
             .add_plugins(mechanics::plugin)
+            .add_plugins(sfx::plugin)
+            .add_plugins(bossbar::plugin)
             .init_state::<Phase>()
             .init_resource::<Rng>()
             .init_resource::<Selection>()
@@ -80,9 +94,13 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<MetaBonuses>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
+            .init_resource::<view::View>()
+            .init_resource::<wowcam::WowFrame>()
             .init_resource::<abilities::PendingHits>()
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
+            .init_resource::<hud::Replay>()
+            .init_resource::<treasure::BossRolls>()
             .init_resource::<cards::PendingPick>()
             .init_resource::<hand::HandMode>()
             .add_message::<abilities::Hit>()
@@ -90,18 +108,32 @@ impl Plugin for SurvivorsPlugin {
             .add_message::<profile::RunEnded>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_systems(Startup, (profile::load_profile, hud::setup_hud).chain())
+            .add_systems(Startup, view::load_view)
             .add_systems(Update, hero::daylight)
             .add_systems(PostUpdate, profile::save_if_dirty)
+            // The HUD's hover reaches the world-mouse latch as UI, so a click on it starts no
+            // mouselook.
+            .add_systems(
+                Update,
+                wowcam::hud_takes_pointer
+                    .in_set(WorldStage::Input)
+                    .before(crate::player::camera::latch_world_mouse),
+            )
+            // After the latch: the look session reads which buttons the world owns.
             .add_systems(
                 Update,
                 (
+                    view::toggle_view,
                     hero::aim_cursor,
+                    wowcam::wow_look,
                     mobility::cast_mobility,
                     hero::drive_hero,
                     hero::place_camera,
+                    wowcam::wow_camera,
                 )
                     .chain()
-                    .in_set(WorldStage::Input),
+                    .in_set(WorldStage::Input)
+                    .after(crate::player::camera::latch_world_mouse),
             )
             .add_systems(
                 Update,
@@ -113,6 +145,7 @@ impl Plugin for SurvivorsPlugin {
                     abilities::apply_hits,
                     enemies::tick_marks,
                     enemies::drop_loot,
+                    treasure::drop_boss_chests,
                     enemies::collect_gems,
                     hero::hero_vitals,
                 )
@@ -156,15 +189,18 @@ impl Plugin for SurvivorsPlugin {
                     hero::follow_map,
                     hud::menu_preview,
                     hud::buttons,
-                    // The Armory and the Run Options panel, either open over the menu, take its
-                    // keys and clicks.
-                    hud::keys.run_if(armory::closed).run_if(run_options::closed),
+                    // An overlay panel takes the menu's keys and clicks while it is open.
+                    hud::keys
+                        .run_if(armory::closed)
+                        .run_if(run_options::closed)
+                        .run_if(faire::closed),
                     hud::refresh_menu,
                     menu::restore_pick,
                     menu::build_menu,
                     menu::menu_clicks
                         .run_if(armory::closed)
-                        .run_if(run_options::closed),
+                        .run_if(run_options::closed)
+                        .run_if(faire::closed),
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     cards::deal_cards,
                     cards::choose_card,
@@ -200,9 +236,17 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(OnEnter(Phase::Paused), pause)
             .add_systems(
                 OnEnter(Phase::GameOver),
-                (unpause, profile::record_finished).chain(),
+                (
+                    unpause,
+                    treasure::open_leftover_chests,
+                    profile::record_finished,
+                )
+                    .chain(),
             )
-            .add_systems(OnEnter(Phase::Menu), (unpause, reset_run));
+            .add_systems(
+                OnEnter(Phase::Menu),
+                (unpause, reset_run, hud::start_replay).chain(),
+            );
         if let Some(auto) = auto::from_env() {
             app.insert_resource(auto)
                 .add_systems(
@@ -233,6 +277,10 @@ pub(super) enum Phase {
     LevelUp,
     Paused,
     GameOver,
+    /// The jewelry choice a cache or a quest turn-in opens, paused ([`jewelry`]).
+    Jewelry,
+    /// The Character panel over the paused run, opened by C ([`charpanel`]).
+    Character,
 }
 
 /// Everything spawned for a run, despawned when the next begins.
@@ -431,6 +479,9 @@ pub(super) struct Run {
     pub quests: u32,
     /// Whether the zone's last boss fell, for the quest chains' second step.
     pub final_boss: bool,
+    /// Jewelry choices banked by caches and quest turn-ins, not yet dealt: [`jewelry::deal`] gives
+    /// every hero one for each as the picker opens.
+    pub pending_jewelry: u32,
 }
 
 impl Default for Run {
@@ -457,6 +508,7 @@ impl Default for Run {
             reward_mult: 1.0,
             quests: 0,
             final_boss: false,
+            pending_jewelry: 0,
         }
     }
 }
@@ -587,7 +639,7 @@ fn unpause(mut time: ResMut<Time<Virtual>>) {
 /// Back at the menu: everything the last run spawned goes, and the run starts over.
 fn reset_run(
     mut commands: Commands,
-    spawned: Query<Entity, With<RunEntity>>,
+    spawned: Query<Entity, (With<RunEntity>, Without<LocalHero>)>,
     mut run: ResMut<Run>,
     mut pending: ResMut<abilities::PendingHits>,
     mut spawner: ResMut<enemies::Spawner>,

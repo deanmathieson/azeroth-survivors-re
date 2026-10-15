@@ -92,7 +92,7 @@ pub(in crate::survivors) static PERKS: &[Perk] = &[
     Perk {
         id: "companion",
         name: "Companion",
-        desc: "A critter follows you and fetches pickups.",
+        desc: "A critter follows you, fetches pickups, and levels to learn skills.",
         costs: &[25],
         effect: Effect::Companion,
     },

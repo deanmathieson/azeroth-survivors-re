@@ -1,29 +1,27 @@
 //! The Armory's Rewards tab. On the left, the reward points to spend, where they came from, and
-//! Reset perks with the resets left. In the middle, every perk: what it does now and at its next
+//! Reset perks with the resets left. On the right, every perk: what it does now and at its next
 //! rank, its rank pips, the next rank's cost, Buy, and Refund for a rank bought since the tab
-//! opened. On the right, the companion: what it does, and its looks to pick from once unlocked.
+//! opened. The Companion perk's card links to the Companion tab, where the pet it brings is
+//! dressed, named and trained ([`super::companion`]).
 
 use bevy::prelude::*;
-use bevy::ui_render::ui_material::MaterialNode;
 
-use super::{panel, para, text, TabCtx};
+use super::{panel, para, text, ArmoryAction, ArmoryTab, TabCtx};
 use crate::glue::art::{DIM, GOLD};
-use crate::glue::widgets::{
-    glue_button, overlay, GlueBtnKind, GlueDisabled, Hilight, LockHighlight,
-};
+use crate::glue::widgets::{glue_button, GlueBtnKind, GlueDisabled};
 use crate::survivors::achievements::earned_points;
 use crate::survivors::profile::Profile;
 use crate::survivors::rewards::{
-    all_looks, companion_unlocked, look_for, offered, points, DevPoints, Perk, PerkSession,
-    RewardsAction, RewardsSave, FETCH_EVERY, FETCH_REACH, PERKS,
+    points, DevPoints, Perk, PerkEffect, PerkSession, RewardsAction, RewardsSave, PERKS,
 };
 
-/// The side columns, as wide as the Armory's own.
+/// The side column, as wide as the Armory's own.
 const SIDE_W: f32 = 250.0;
 const PERK_H: f32 = 58.0;
-const ROW_H: f32 = 24.0;
 const BUTTON_W: f32 = 62.0;
 const BUTTON_H: f32 = 24.0;
+/// The Companion perk's link to its tab.
+const LINK_W: f32 = 92.0;
 
 /// A description's parchment.
 const DESC: Color = Color::srgb(0.85, 0.82, 0.72);
@@ -59,9 +57,6 @@ pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
         for (i, perk) in PERKS.iter().enumerate() {
             perk_row(p, ctx, i, perk, &profile.rewards, session, left);
         }
-    });
-    panel(parent, ctx, side(), Some("Companion"), |p| {
-        companion(p, ctx, &profile.rewards)
     });
 }
 
@@ -232,6 +227,19 @@ fn perk_row(
                 if !session.can_refund(save, perk) {
                     b.commands().entity(refund).insert(GlueDisabled(true));
                 }
+                if perk.effect == PerkEffect::Companion {
+                    glue_button(
+                        b,
+                        ctx.art,
+                        ctx.font,
+                        ArmoryAction::Tab(ArmoryTab::Companion),
+                        "Companion",
+                        LINK_W,
+                        BUTTON_H,
+                        GlueBtnKind::Small,
+                        1.0,
+                    );
+                }
             });
         });
     });
@@ -259,69 +267,6 @@ fn pips(p: &mut ChildSpawnerCommands, rank: u32, max: u32) {
             ));
         }
     });
-}
-
-/// The right column: what the companion does, and, once the perk is bought, its looks.
-fn companion(p: &mut ChildSpawnerCommands, ctx: &TabCtx, save: &RewardsSave) {
-    let does = format!(
-        "Every {FETCH_EVERY} seconds it fetches the nearest gem or coin within {FETCH_REACH} \
-         yards that lies past your pickup range."
-    );
-    if !companion_unlocked(save) {
-        para(
-            p,
-            ctx,
-            &format!("Buy the Companion perk and a critter joins every run. {does}"),
-            12.0,
-            DESC,
-        );
-        gap(p, 10.0);
-        text(p, ctx, "Looks to pick from", 13.0, DIM);
-        for look in all_looks().filter(|l| offered(l, save)) {
-            text(p, ctx, look.name, 13.0, DIM);
-        }
-        return;
-    }
-    para(
-        p,
-        ctx,
-        &format!("Your companion follows you on every run. {does}"),
-        12.0,
-        DESC,
-    );
-    gap(p, 10.0);
-    text(p, ctx, "Look", 13.0, GOLD);
-    gap(p, 4.0);
-    let worn = look_for(&save.companion).key;
-    // Indexed over every look, so a quest chain's look keeps its place once unlocked.
-    for (i, look) in all_looks().enumerate().filter(|(_, l)| offered(l, save)) {
-        let picked = look.key == worn;
-        p.spawn((
-            Button,
-            RewardsAction::Look(i),
-            LockHighlight(picked),
-            Node {
-                height: Val::Px(ROW_H),
-                flex_shrink: 0.0,
-                align_items: AlignItems::Center,
-                padding: UiRect::horizontal(Val::Px(6.0)),
-                ..default()
-            },
-        ))
-        .with_children(|r| {
-            let art = ctx.art;
-            if let Some(hi) = art.quest_hilight.as_ref().or(art.select_highlight.as_ref()) {
-                r.spawn((
-                    Hilight,
-                    Visibility::Hidden,
-                    MaterialNode(hi.clone()),
-                    overlay(),
-                ));
-            }
-            let color = if picked { Color::WHITE } else { GOLD };
-            text(r, ctx, look.name, 13.0, color);
-        });
-    }
 }
 
 /// A label and its value on one line.

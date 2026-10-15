@@ -4,18 +4,25 @@
 //! shared [`Bonus`] vocabulary, scaled by rarity so a full Legendary set about doubles a hero's
 //! output.
 //!
-//! A slain roster boss rolls its drop ([`loot`]); new pieces join the class's collection in its
+//! A slain roster boss's chest rolls its drop as it opens ([`loot`]); new pieces join the class's collection in its
 //! profile record ([`save`], through [`store`]) and go on when they beat what the slot wears. What
 //! the picked class wears is its share of the meta bonuses ([`MetaParts::gear`]), and its main
 //! hand is the hero's weapon. The Armory's Collection, Drop Tables and Character tabs show it all
 //! ([`view`], [`ui`]).
+//!
+//! The hero wears it too: its body is the race's character model dressed in every worn armour
+//! piece over its class trainer's outfit ([`outfit`]), with the name and features the class keeps
+//! beside its gear ([`looks`]), picked in the Character tab's Appearance panel ([`looks_ui`]).
 //!
 //! `WOW_SURVIVORS_GEAR=all|<n>` collects every piece of each class, or its first `n` in catalog
 //! order (Common first), and wears the best of them, in memory only: nothing of it is saved.
 
 mod catalog;
 mod drops;
+mod looks;
+mod looks_ui;
 mod loot;
+mod outfit;
 mod save;
 mod store;
 mod ui;
@@ -26,7 +33,10 @@ use bevy::prelude::*;
 use super::bonus::{Bonus, Bonuses};
 pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
-use super::{enemies, hud, Phase, Selection};
+use super::{enemies, hud, profile, treasure, Phase, Selection};
+pub(super) use looks::results_title;
+pub(super) use looks_ui::{hero_name, looks_panel, HeroNameText, HeroNames};
+pub(super) use outfit::Dresser;
 pub(super) use save::GearSave;
 pub(super) use store::class_gear;
 pub(super) use ui::{GearAction, GearView, ItemIcon};
@@ -39,7 +49,22 @@ pub(super) use view::{
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<loot::LootToasts>()
         .init_resource::<GearView>()
+        .init_resource::<outfit::Wardrobe>()
+        .init_resource::<looks_ui::NameEdit>()
         .add_systems(Startup, shadow_for_auto)
+        // The name box takes its keys before any other reader sees them.
+        .add_systems(
+            PreUpdate,
+            looks_ui::type_name.after(bevy::input::InputSystems),
+        )
+        .add_systems(
+            Update,
+            (
+                outfit::dress_bodies::<crate::entities::Creatures>,
+                looks_ui::add_menu_name,
+                (looks_ui::looks_clicks, looks_ui::refresh_looks).chain(),
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -57,7 +82,14 @@ pub(super) fn plugin(app: &mut App) {
                 ui::fill_item_icons,
             ),
         )
-        .add_systems(OnEnter(Phase::Menu), loot::clear_toasts);
+        .add_systems(OnEnter(Phase::Menu), loot::clear_toasts)
+        // The chests the run's end opened roll ahead of its record, so their gold is in it.
+        .add_systems(
+            OnEnter(Phase::GameOver),
+            loot::roll_loot
+                .after(treasure::open_leftover_chests)
+                .before(profile::record_finished),
+        );
     let Some(text) = crate::webenv::var("WOW_SURVIVORS_GEAR") else {
         return;
     };

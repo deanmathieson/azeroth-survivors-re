@@ -70,9 +70,9 @@ pub(in crate::survivors) fn add_xp(save: &mut TalentSave, xp: u64) -> u32 {
     points_for_xp(save.xp) - before
 }
 
-/// `WOW_SURVIVORS_TALENT_XP=<n>`, a screenshot aid: `n` more talent XP for every class, so the
-/// Talents tab has points to spend; `max` is exactly the XP for all [`MAX_POINTS`]. Never saved:
-/// it is counted where points are, not written to the profile (the ranks it buys are, like any
+/// `WOW_SURVIVORS_TALENT_XP=<n>|max`, a screenshot aid: `n` more talent XP for every class, or
+/// exactly what all [`MAX_POINTS`] cost, so the Talents tab has points to spend. Never saved: it
+/// is counted where points are, not written to the profile (the ranks it buys are, like any
 /// others).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::survivors) struct TalentDevXp(pub u64);
@@ -92,7 +92,7 @@ impl TalentDevXp {
         }
     }
 
-    /// The variable's value: a number of XP, or `max` for every point.
+    /// A whole number of XP, or `max` for every point.
     fn parse(raw: &str) -> Option<Self> {
         let raw = raw.trim();
         if raw.eq_ignore_ascii_case("max") {
@@ -311,15 +311,19 @@ mod tests {
     }
 
     #[test]
-    fn the_dev_xp_reads_a_number_or_max() {
+    fn the_dev_xp_takes_a_number_or_max() {
+        assert_eq!(TalentDevXp::parse(" 1200 "), Some(TalentDevXp(1200)));
         let max = TalentDevXp::parse("max").unwrap();
-        assert_eq!(max, TalentDevXp::parse(" MAX ").unwrap());
-        // Exactly enough for every point, and not one XP more.
+        assert_eq!(TalentDevXp::parse(" MAX "), Some(max));
         assert_eq!(max.0, xp_for_points(MAX_POINTS));
-        assert_eq!(points_for_xp(max.0), MAX_POINTS);
+        assert_eq!(
+            points_for_xp(max.0),
+            MAX_POINTS,
+            "all 51, where 100000 buys fewer"
+        );
         assert_eq!(points_for_xp(max.0 - 1), MAX_POINTS - 1);
         assert_eq!(earned_points(&TalentSave::default(), max.0), MAX_POINTS);
-        assert_eq!(TalentDevXp::parse("1200"), Some(TalentDevXp(1200)));
+        assert!(points_for_xp(100_000) < MAX_POINTS);
         assert_eq!(TalentDevXp::parse("lots"), None);
         assert_eq!(TalentDevXp::parse("-5"), None);
     }

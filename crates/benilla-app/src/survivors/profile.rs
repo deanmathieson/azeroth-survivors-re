@@ -7,7 +7,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::achievements::AchievementSave;
+use super::faire::FaireSave;
 use super::gear::GearSave;
+use super::jewelry::CodexSave;
 use super::quests::QuestSave;
 use super::rewards::RewardsSave;
 use super::talents::TalentSave;
@@ -16,9 +18,12 @@ use super::{data, Run, Selection};
 /// The newest profile shape this build knows how to write. 1: the account, class and zone records,
 /// with the feature sections empty. 2: the talents, gear, achievements and rewards sections hold
 /// data, which a version 1 build would drop on its next save, so it opens a version 2 save
-/// read-only instead. Each version only adds fields, so an older save loads as it is and is written
-/// back as this version.
-pub(super) const PROFILE_VERSION: u32 = 2;
+/// read-only instead. 3: the quests section, and the rewards section's unlocked looks and
+/// companion (its XP, skills, name and second look), which a version 2 build would drop, so it
+/// opens a version 3 save read-only. 4: the codex and Faire sections, which a version 3 build
+/// would drop, so it opens a version 4 save read-only. Each version only adds fields, so an older
+/// save loads as it is and is written back as this version.
+pub(super) const PROFILE_VERSION: u32 = 4;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
 
@@ -82,6 +87,13 @@ pub(super) struct Profile {
     /// [`super::quests`].
     #[serde(default)]
     pub quests: QuestSave,
+    /// Every piece of jewelry offered and taken, defined and edited in [`super::jewelry`].
+    #[serde(default)]
+    pub codex: CodexSave,
+    /// The Darkmoon Faire's tickets, Favor, pity and recorded unlocks, defined and edited in
+    /// [`super::faire`].
+    #[serde(default)]
+    pub faire: FaireSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -107,6 +119,8 @@ impl Default for Profile {
             achievements: AchievementSave::default(),
             rewards: RewardsSave::default(),
             quests: QuestSave::default(),
+            codex: CodexSave::default(),
+            faire: FaireSave::default(),
             writable: true,
             dirty: false,
         }
@@ -564,16 +578,17 @@ mod tests {
         assert_eq!(again.profile, profile);
     }
 
+    /// What the flush hands the writer, as text.
+    fn saved(profile: &mut Profile) -> String {
+        let mut text = None;
+        profile.mark_dirty();
+        assert!(profile.flush(|p| text = Some(toml::to_string_pretty(p).unwrap())));
+        text.unwrap()
+    }
+
     #[test]
-    fn version_1_saves_load_writable_and_save_as_version_2() {
-        assert_eq!(PROFILE_VERSION, 2);
-        // What the flush hands the writer, as text.
-        let saved = |profile: &mut Profile| {
-            let mut text = None;
-            profile.mark_dirty();
-            assert!(profile.flush(|p| text = Some(toml::to_string_pretty(p).unwrap())));
-            text.unwrap()
-        };
+    fn version_1_saves_load_writable_and_save_as_this_version() {
+        let current = format!("version = {PROFILE_VERSION}\n");
 
         // Before the features: no sections at all.
         let bare = "version = 1\n\n[account]\nruns = 3\n\n[classes.mage]\nruns = 3\n";
@@ -586,7 +601,7 @@ mod tests {
         assert_eq!(profile.classes["mage"].talents, TalentSave::default());
         assert_eq!(profile.rewards, RewardsSave::default());
         let text = saved(&mut profile);
-        assert!(text.starts_with("version = 2\n"), "{text}");
+        assert!(text.starts_with(&current), "{text}");
         assert_eq!(load_text(&text).profile, profile);
 
         // With the feature sections: empty as the version 1 build wrote them, and holding data as
@@ -625,12 +640,96 @@ mod tests {
         assert_eq!(profile.rewards.companion, "frog");
         assert_eq!(profile.rewards.perks.get("hardy"), Some(&1));
         let text = saved(&mut profile);
-        assert!(text.starts_with("version = 2\n"), "{text}");
+        assert!(text.starts_with(&current), "{text}");
         let again = load_text(&text);
         assert!(again.corrupt_text.is_none() && again.profile.writable);
         assert_eq!(again.profile, profile);
         // A reload ahead of recording a run upgrades it the same way.
         assert_eq!(clean_profile_from_text(sections).unwrap(), profile);
+    }
+
+    #[test]
+    fn version_2_saves_load_writable_and_save_as_this_version() {
+        // From before quests and the earned looks: neither is in the save.
+        let bare = "version = 2\n\n[account]\nruns = 4\n\n\
+                    [rewards]\nspent = 25\ncompanion = \"cat\"\n\n\
+                    [rewards.perks]\ncompanion = 1\n";
+        let loaded = load_text(bare);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.version, PROFILE_VERSION);
+        assert_eq!(profile.account.runs, 4);
+        assert_eq!(profile.rewards.companion, "cat");
+        assert_eq!(profile.rewards.perks.get("companion"), Some(&1));
+        assert!(profile.rewards.unlocked_looks.is_empty());
+        assert_eq!(profile.quests, QuestSave::default());
+        let text = saved(&mut profile);
+        assert!(
+            text.starts_with(&format!("version = {PROFILE_VERSION}\n")),
+            "{text}"
+        );
+        assert_eq!(load_text(&text).profile, profile);
+
+        // Written by a version 2 build that had them: the quests and the looks they unlocked
+        // survive, and go out again as this version.
+        let with = "version = 2\n\n[account]\nruns = 9\n\n\
+                    [rewards]\nspent = 25\nunlocked_looks = [1206, 6291]\n\n\
+                    [rewards.perks]\ncompanion = 1\n\n\
+                    [quests]\nmounts = [\"brown_horse\"]\n\n\
+                    [quests.zones.elwynn_forest]\ncompleted = 5\nsteps = 3\n";
+        let loaded = load_text(with);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.version, PROFILE_VERSION);
+        assert!(profile.rewards.unlocked_looks.contains(&1206));
+        assert!(profile.rewards.unlocked_looks.contains(&6291));
+        let zone = profile.quests.zone("elwynn_forest");
+        assert_eq!((zone.completed, zone.steps), (5, 3));
+        assert!(profile.quests.mounts.contains("brown_horse"));
+        let text = saved(&mut profile);
+        assert!(
+            text.starts_with(&format!("version = {PROFILE_VERSION}\n")),
+            "{text}"
+        );
+        let again = load_text(&text);
+        assert!(again.corrupt_text.is_none() && again.profile.writable);
+        assert_eq!(again.profile, profile);
+        // A reload ahead of recording a run upgrades it the same way.
+        assert_eq!(clean_profile_from_text(with).unwrap(), profile);
+    }
+
+    #[test]
+    fn version_3_saves_with_companion_and_quests_load_writable_and_save_as_this_version() {
+        let text = "version = 3\n\n[rewards]\ncompanion = \"bombay\"\nunlocked_looks = [5556]\n\
+                    pet_xp = 1234\npet_name = \"Whiskers\"\nsecond_look = \"frog\"\n\n\
+                    [rewards.perks]\ncompanion = 1\n\n\
+                    [rewards.pet_skills]\nswiftness = 2\n\n\
+                    [quests]\nmounts = [\"brown_horse\"]\n\n\
+                    [quests.zones.elwynn_forest]\ncompleted = 5\nsteps = 3\n";
+        let loaded = load_text(text);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert!(profile.writable);
+        assert_eq!(profile.version, PROFILE_VERSION);
+        assert_eq!(profile.rewards.companion, "bombay");
+        assert!(profile.rewards.unlocked_looks.contains(&5556));
+        assert_eq!(profile.rewards.pet_xp, 1234);
+        assert_eq!(profile.rewards.pet_name, "Whiskers");
+        assert_eq!(profile.rewards.second_look, "frog");
+        assert_eq!(profile.rewards.perks.get("companion"), Some(&1));
+        assert_eq!(profile.rewards.pet_skills.get("swiftness"), Some(&2));
+        assert_eq!(profile.quests.zone("elwynn_forest").completed, 5);
+        assert!(profile.quests.mounts.contains("brown_horse"));
+        assert_eq!(profile.codex, CodexSave::default());
+        assert_eq!(profile.faire, FaireSave::default());
+        let saved = saved(&mut profile);
+        assert!(
+            saved.starts_with(&format!("version = {PROFILE_VERSION}\n")),
+            "{saved}"
+        );
+        assert_eq!(load_text(&saved).profile, profile);
     }
 
     #[test]

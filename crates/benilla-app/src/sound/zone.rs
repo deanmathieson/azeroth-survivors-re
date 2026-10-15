@@ -164,6 +164,8 @@ pub(super) struct ZoneAudio {
     unplayable: std::collections::HashSet<String>,
     /// Last frame's [`SoundConfig::music_suppressed`], for its edges.
     music_suppressed: bool,
+    /// Last frame's [`SoundConfig::menu_music`], for its edges.
+    menu_music: bool,
     /// The looping ambience kit last asked for (0 = none): the bed playing, or the one opening.
     ambience_kit: u32,
     /// The bed playing and its base volume.
@@ -204,6 +206,7 @@ impl Default for ZoneAudio {
             next_track_at: None,
             unplayable: std::collections::HashSet::new(),
             music_suppressed: false,
+            menu_music: false,
             ambience_kit: 0,
             ambience: None,
             ambience_kit_vol: 1.0,
@@ -318,6 +321,7 @@ fn zone_audio(
     // The cinematic's music stop: a cut, then a resume at +3.000 s; ambience is untouched.
     // Ahead of the cover's hold arm, which returns, so the edge is not deferred to the reveal.
     apply_music_suppression(zone, config.music_suppressed, now);
+    apply_menu_music(zone, config.menu_music, now);
 
     // The loading cover kills the world soundscape, as the reference's loading screen sits over
     // a torn-down world; resetting `area`/`interior` makes the reveal a fresh zone entry.
@@ -487,6 +491,31 @@ fn apply_music_suppression(zone: &mut ZoneAudio, suppressed: bool, now: f64) {
     }
 }
 
+/// The two edges of [`SoundConfig::menu_music`] on the music slot: down, the zone track fades
+/// out under the glue theme coming in; up, the zone's track starts at once, as on a zone change,
+/// under the theme's own fade. A load in flight is dropped, so it cannot land at the menu.
+fn apply_menu_music(zone: &mut ZoneAudio, menu: bool, now: f64) {
+    if menu == zone.menu_music {
+        return;
+    }
+    zone.menu_music = menu;
+    if menu {
+        if let Some(mut h) = zone.music.take() {
+            h.stop(mixer::fade(MUSIC_FADE_OUT_MS));
+            info!("zone music: fades for the menu's theme");
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            zone.pending_music = None;
+        }
+        zone.music_watch.reset();
+        zone.next_track_at = None;
+    } else {
+        zone.next_track_at = Some(now);
+        info!("zone music: back from the menu");
+    }
+}
+
 fn zone_music_row(cat: &AreaSoundCatalog, _id: u32) -> Option<&benilla_formats::ZoneMusicEntry> {
     cat.zone_music(_id)
 }
@@ -594,6 +623,10 @@ fn start_music_stream(
     // first instruction (`0x460040`, `[0xb06cc8]`). Refusing here also keeps an intro from being
     // stamped as played.
     if config.music_suppressed {
+        return false;
+    }
+    // Nor under a mode's menu, whose theme holds the music ([`SoundConfig::menu_music`]).
+    if config.menu_music {
         return false;
     }
     // Nor while a Lua track holds the override slot: the reference gates on the slot itself in

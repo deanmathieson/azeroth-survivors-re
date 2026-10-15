@@ -54,6 +54,9 @@ const ELITE_RING_COLOR: [f32; 3] = [255.0, 210.0, 0.0];
 const GUARDIAN_RING_COLOR: [f32; 3] = [200.0, 90.0, 255.0];
 /// A treasure cache not yet opened: a gold diamond this many dots across, rimmed dark.
 const CACHE_MARK: f32 = 1.4;
+/// A boss's chest: a bigger diamond, pale gold at the heart, pinned to the rim while out of view.
+const BOSS_CHEST_MARK: f32 = 2.4;
+const BOSS_CHEST_COLOR: [f32; 3] = [255.0, 245.0, 170.0];
 /// Every other hero in the party: a blue disc this many dots across, rimmed dark, over the horde.
 /// The local hero is the arrow.
 const ALLY_DOT: f32 = 1.3;
@@ -572,15 +575,25 @@ pub(super) fn compose(
             }
         }
         for (tf, cache) in &caches {
-            let off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
-            if cache.is_open() || off.length() > radius {
+            let mut off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+            let boss = cache.tier().is_boss();
+            if cache.is_open() || (off.length() > radius && !boss) {
                 continue;
             }
-            let mark = size * CACHE_MARK;
+            if off.length() > radius {
+                off = off.normalize() * radius * 0.88;
+            }
+            let (mark, heart) = if boss {
+                (size * BOSS_CHEST_MARK, BOSS_CHEST_COLOR)
+            } else {
+                (size * CACHE_MARK, ELITE_RING_COLOR)
+            };
             blit(buf, center + off / yd_per_px, mark, |q| {
                 let d = (q.x.abs() + q.y.abs()) / (mark / 2.0);
                 let a = ((1.0 - d) * mark / 2.0).clamp(0.0, 1.0);
                 let rgb = if d < 0.6 {
+                    heart
+                } else if boss && d < 0.8 {
                     ELITE_RING_COLOR
                 } else {
                     [60.0, 40.0, 0.0]

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::looks::HeroLooks;
 use super::{item, Item, Slot};
 
 /// One class's saved gear. Every field must read a save without it as its default.
@@ -16,6 +17,9 @@ pub(in crate::survivors) struct GearSave {
     /// What each slot wears: a [`Slot::key`] to an [`Item::id`]. Keyed by string, so a slot this
     /// build does not know is skipped rather than failing the whole profile.
     pub equipped: BTreeMap<String, u16>,
+    /// The class hero's name and features ([`super::looks`]); a save from before them reads as no
+    /// name and the class trainer's features.
+    pub looks: HeroLooks,
 }
 
 /// What collecting a piece came to.
@@ -38,6 +42,7 @@ impl GearSave {
     pub const EMPTY: Self = Self {
         collected: BTreeSet::new(),
         equipped: BTreeMap::new(),
+        looks: HeroLooks::EMPTY,
     };
 
     pub fn has(&self, id: u16) -> bool {

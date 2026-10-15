@@ -1,41 +1,35 @@
-//! The hero: its body, WASD movement over the terrain, the top-down camera, and its health.
+//! The hero: its body and walk over the world, the classic top-down camera, and its health.
+//! WoW's camera and controls, a run's default, are [`super::wowcam`]'s.
 
+use benilla_world::collision::WorldCollision;
 use benilla_world::view::WorldCamera;
 use benilla_world::world_point::WorldPoint;
-use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
+use super::body::{self, Body};
 use super::data;
 use super::enemies::Enemy;
 use super::party;
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
+use super::view::{self, View};
+use super::wowcam::{self, WowFrame};
 use super::{HeroState, LocalHero, Phase, Run, Selection};
-use crate::creature_anim::{move_flags, MovementState};
+use crate::creature_anim::{ease_strafe_yaw, move_flags, strafe_body_offset, MovementState};
 use crate::net::{FieldChanged, Guid, ObjectStore};
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub(super) struct Hero {
-    /// Vertical velocity in yards/second while airborne; 0 on the ground.
-    pub(super) vy: f32,
-    /// Height above the ground while airborne. Kept here, not in the transform: the creature
-    /// ground clamp (`net::motion::ground_clamp_creatures`) re-seats every unit on the floor at
-    /// the top of the frame, so the arc is re-applied over the ground each frame.
-    pub(super) air: f32,
+    /// The body against the world: its feet, its jump and its fall ([`body::step`]).
+    pub(super) body: Body,
+    /// The facing (radians, benilla's yaw: 0 faces −Z, left positive) WoW's keys turn and walk
+    /// along; the classic view keeps it on the model's, so a swap carries it over.
+    pub(super) face: f32,
 }
 
 /// The body radius enemies stop at.
 pub(super) const HERO_RADIUS: f32 = 0.7;
 
-/// The hop's initial upward speed and the gravity that brings it back down — the reference
-/// `CMovement` jump seed and gravity (`player/state.rs`'s `JUMP_SPEED` / `GRAVITY`).
-const JUMP_SPEED: f32 = 7.955_547;
-const GRAVITY: f32 = 19.291_105;
-
-/// Radians of orbit per raw mouse unit while right-dragging.
-const ORBIT_RATE: f32 = 0.008;
-/// Elevation clamp (radians): ~10°..~83° above the horizon, so the camera never dives underground.
-const PITCH_MIN: f32 = 0.18;
-const PITCH_MAX: f32 = 1.45;
 /// The locked view's tilt.
 const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
 /// Wheel zoom range, yards from the hero's shoulders.
@@ -51,9 +45,7 @@ const FOCUS_TAU_Y: f32 = 0.3;
 const SNAP_GAP: f32 = 20.0;
 /// Zoom ease (s) toward the distance the wheel asked for.
 const ZOOM_TAU: f32 = 0.15;
-/// Orbit ease (s) toward the dragged yaw and pitch: light, so a drag still feels direct.
-const ORBIT_TAU: f32 = 0.05;
-/// The swing (s) back to the top-down view when `C` locks the camera again.
+/// The ease (s) toward the view's yaw and tilt.
 const RELOCK_TAU: f32 = 0.2;
 /// The lens's hard floor over the terrain beneath it (yards).
 const GROUND_CLEARANCE: f32 = 0.6;
@@ -64,27 +56,16 @@ const LIFT_RISE_TAU: f32 = 0.05;
 /// Lift ease (s) once the terrain falls away: slow, so the view settles rather than drops.
 const LIFT_FALL_TAU: f32 = 0.4;
 
-/// Whether the camera is locked; `C` toggles it.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum CamMode {
-    /// Locked top-down (58°), laptop-friendly — the original feel.
-    #[default]
-    Fixed,
-    /// Unlocked: a mouse drag swings and tilts it around the hero.
-    Orbit,
-}
-
-/// The camera's targets, which input sets, and what it shows, eased toward them.
+/// The classic camera's targets, which input sets, and what it shows, eased toward them.
 #[derive(Resource)]
 pub(super) struct CamRig {
     /// The zoom the wheel asked for, yards; the shown distance eases toward it.
     pub dist: f32,
     pub orbit: f32,
-    /// Orbit azimuth (radians) around the hero; right-drag swings it during play.
+    /// Azimuth (radians) around the hero: north up.
     pub yaw: f32,
-    /// Elevation above the horizon (radians), clamped so the camera never dives underground.
+    /// Elevation above the horizon (radians).
     pub pitch: f32,
-    pub mode: CamMode,
     /// Last frame's view; `None` cuts straight to the targets.
     shown: Option<Shown>,
 }
@@ -96,7 +77,6 @@ impl Default for CamRig {
             orbit: 0.6,
             yaw: 0.0,
             pitch: FIXED_PITCH,
-            mode: CamMode::Fixed,
             shown: None,
         }
     }
@@ -170,7 +150,7 @@ pub(super) fn spawn_hero(
     );
     commands
         .entity(e)
-        .insert((Hero { vy: 0.0, air: 0.0 }, Marks::buffs(), state));
+        .insert((Hero::default(), Marks::buffs(), state));
     if local {
         commands.entity(e).insert(LocalHero);
     }
@@ -188,8 +168,8 @@ pub(super) fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState
     }
 }
 
-/// The ground under the mouse cursor, `None` with the cursor off the window. The locked camera's
-/// hero faces it, and the aimed mobility spells (Blink, Charge) go toward it.
+/// The ground under the mouse cursor, `None` with the cursor off the window. The classic view's
+/// hero faces it, and the aimed mobility spells go toward it ([`super::mobility::aiming`]).
 #[derive(Resource, Default)]
 pub(super) struct AimPoint(pub(super) Option<Vec3>);
 
@@ -232,124 +212,106 @@ pub(super) fn aim_cursor(
     }
 }
 
-/// WASD over the terrain within the battleground's leash, and the streaming focus on the local
-/// hero; no input reaches the others yet.
-#[allow(clippy::too_many_arguments)]
+/// The local hero's walk and the streaming focus on him. In WoW's view 1.12's keys turn him and
+/// walk him along his facing ([`wowcam`]); in the classic view WASD moves him over the ground,
+/// facing the cursor (or the auto runner steers). Either way he moves through the body's
+/// collision ([`body::step`]) within the battleground's leash. No input reaches the others yet.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn drive_hero(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     phase: Res<State<Phase>>,
     selection: Res<Selection>,
-    rig: Res<CamRig>,
+    view: Res<View>,
+    rig: Res<crate::player::camera::CameraControl>,
     aim: Res<AimPoint>,
-    world: WorldPoint,
+    world: (
+        WorldPoint,
+        WorldCollision,
+        Res<crate::player::PlayerCapsule>,
+        Res<crate::loading_screen::LoadingScreen>,
+    ),
     auto: Option<Res<super::auto::Auto>>,
+    mut frame: ResMut<WowFrame>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero, &HeroState), With<LocalHero>>,
 ) {
+    let (points, collide, capsule, loading) = (&world.0, &world.1, &world.2 .0, &world.3);
     let focus = match hero.single_mut() {
         Ok((mut tf, mut mv, mut hm, me)) => {
             let dt = time.delta_secs();
-            let mut dir = Vec3::ZERO;
-            if let Some(auto) = auto
-                .as_deref()
-                .filter(|_| *phase.get() == Phase::Playing && me.dead_t.is_none())
-            {
-                dir = super::auto::steer(auto);
-            } else if *phase.get() == Phase::Playing && me.dead_t.is_none() {
-                if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-                    dir.z -= 1.0;
-                }
-                if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-                    dir.z += 1.0;
-                }
-                if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-                    dir.x -= 1.0;
-                }
-                if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-                    dir.x += 1.0;
-                }
-                // In orbit mode WASD is camera-relative; in fixed mode it stays world-relative.
-                if rig.mode == CamMode::Orbit {
-                    let (sy, cy) = rig.yaw.sin_cos();
-                    dir = Vec3::new(dir.x * cy + dir.z * sy, 0.0, dir.z * cy - dir.x * sy);
-                }
-            }
-            let mut pos = tf.translation;
-            // Locked, the hero faces the cursor and WASD moves him under it, so he backpedals and
-            // strafes as a player does; unlocked (or driven), he faces where he runs.
-            let face = (rig.mode == CamMode::Fixed
-                && auto.is_none()
-                && *phase.get() == Phase::Playing
-                && me.dead_t.is_none())
-            .then(|| aim.0.map(|a| flat(a - pos)))
-            .flatten()
-            .filter(|d| d.length() > 0.5)
-            .map(|d| d.normalize());
-            if let Some(look) = face {
-                let target = Quat::from_rotation_y(yaw_toward(look));
-                tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-            }
-            if dir != Vec3::ZERO && dt > 0.0 {
-                let dir = dir.normalize();
-                let speed = me.stats().speed * me.haste_mult();
-                pos += dir * speed * dt;
-                mv.speed = speed;
-                mv.flags = match face {
-                    Some(look) => gait(look, dir),
-                    None => {
-                        let target = Quat::from_rotation_y(yaw_toward(dir));
-                        tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-                        move_flags::FORWARD
-                    }
-                };
-            } else if mv.speed != 0.0 || mv.flags != 0 {
-                mv.speed = 0.0;
-                mv.flags = 0;
-            }
+            let playing = *phase.get() == Phase::Playing && me.dead_t.is_none();
+            let wow = view::wow_in_play(*phase.get(), view.mode, auto.is_some());
             let map = selection.stage_def();
             let center = arena(map);
-            let off = flat(pos - center);
-            if off.length() > map.leash * 2.0 {
+            let mut feet = hm.body.start(tf.translation);
+            if flat(feet - center).length() > map.leash * 2.0 {
                 // Just entered another battleground: start at its centre.
-                pos = center;
-            } else if off.length() > map.leash {
-                let held = center + off.normalize() * map.leash;
-                pos.x = held.x;
-                pos.z = held.z;
+                feet = Vec3::new(
+                    center.x,
+                    points.terrain_height_under(center).unwrap_or(feet.y),
+                    center.z,
+                );
+                hm.body.placed(feet);
             }
-            let ground = world.terrain_height_under(pos).unwrap_or(pos.y);
-            let playing = *phase.get() == Phase::Playing && me.dead_t.is_none();
-            // Space hops: lift off the terrain, then gravity brings the hero back down.
-            if playing && keys.just_pressed(KeyCode::Space) && hm.vy == 0.0 && hm.air == 0.0 {
-                hm.vy = JUMP_SPEED;
-            }
-            if playing && (hm.vy != 0.0 || hm.air > 0.0) {
-                hm.vy -= GRAVITY * dt;
-                hm.air += hm.vy * dt;
-                if hm.air <= 0.0 {
-                    hm.air = 0.0;
-                    hm.vy = 0.0;
-                }
+            let speed = me.stats().speed * me.haste_mult();
+            let (vel, flags, pace) = if wow {
+                walk_wow(
+                    &keys, &rig, playing, speed, dt, &mut tf, &mut hm, &mut frame,
+                )
             } else {
-                hm.air = 0.0;
-                hm.vy = 0.0;
+                if frame.turn_delta != 0.0 || frame.command != 0 {
+                    frame.turn_delta = 0.0;
+                    frame.command = 0;
+                }
+                let auto = auto.as_deref().filter(|_| playing);
+                walk_classic(&keys, &aim, auto, playing, speed, dt, &mut tf, &mut hm)
+            };
+            // Space hops: WoW's jump keeps its launch; the classic hop steers in the air.
+            let jump = playing && keys.just_pressed(KeyCode::Space);
+            let vel = leash_velocity(center, map.leash, feet, vel, dt);
+            let vel = hm.body.air_velocity(vel, wow);
+            let terrain = points.terrain_height_under(feet);
+            let mut out = if loading.covering() {
+                // The world is not in under a loading screen: the body waits on the heightfield.
+                let held = Vec3::new(feet.x, terrain.unwrap_or(feet.y), feet.z);
+                hm.body.placed(held);
+                held
+            } else {
+                body::step(collide, capsule, &mut hm.body, feet, vel, jump, dt, terrain)
+            };
+            // The leash holds whatever the slide did.
+            let off = flat(out - center);
+            if off.length() > map.leash {
+                let held = center + off.normalize() * map.leash;
+                out.x = held.x;
+                out.z = held.z;
+                hm.body.feet = Some(out);
             }
-            pos.y = ground + hm.air;
             // Feed the animation driver: `vertical_speed`'s sign and the `FALLING` flag are what
             // select the Jump (37/38) / Fall (40) animation (`creature_anim::select`).
-            mv.vertical_speed = hm.vy;
-            if hm.vy != 0.0 {
-                mv.flags |= move_flags::FALLING;
+            let word = if hm.body.airborne {
+                flags | move_flags::FALLING
+            } else {
+                flags
+            };
+            if mv.speed != pace || mv.flags != word || mv.vertical_speed != hm.body.vy {
+                mv.speed = pace;
+                mv.flags = word;
+                mv.vertical_speed = hm.body.vy;
             }
-            if tf.translation != pos {
-                tf.translation = pos;
+            if wow {
+                frame.flags = word;
+                frame.speed = pace;
             }
-            pos
+            if tf.translation != out {
+                tf.translation = out;
+            }
+            out
         }
         Err(_) => {
             let mut p = arena(selection.stage_def());
-            if let Some(h) = world.terrain_height_under(p) {
+            if let Some(h) = points.terrain_height_under(p) {
                 p.y = h;
             }
             p
@@ -363,46 +325,166 @@ pub(super) fn drive_hero(
     player.pos = focus;
 }
 
-/// A slow orbit at the menu; in play, top-down until `C` unlocks it to swing and tilt. The view
-/// eases toward the hero, the zoom and the dragged angles, and cuts straight to them when a run
-/// starts or ends, the hero is respawned, a loading screen covers a worldport, or he is suddenly
-/// far away.
+/// WoW's keys: the keyboard turn, the walk along the facing (backpedalling slower), and the model
+/// turned into a strafe as WoW's is, the facing staying put. Returns the velocity, the movement
+/// word and the pace.
+#[allow(clippy::too_many_arguments)]
+fn walk_wow(
+    keys: &ButtonInput<KeyCode>,
+    rig: &crate::player::camera::CameraControl,
+    playing: bool,
+    speed: f32,
+    dt: f32,
+    tf: &mut Transform,
+    hm: &mut Hero,
+    frame: &mut WowFrame,
+) -> (Vec3, u32, f32) {
+    let held = if playing {
+        wowcam::Keys::read(keys)
+    } else {
+        wowcam::Keys::default()
+    };
+    let axes = wowcam::axes(
+        held,
+        wowcam::mouselooking(rig),
+        playing && rig.world_mouse.both(),
+    );
+    frame.turn_delta = wowcam::turn(axes, hm.body.airborne, dt);
+    frame.command = wowcam::command(held, rig);
+    hm.face += frame.turn_delta;
+    let flags = axes.flags();
+    let offset = strafe_body_offset(flags);
+    let yaw = if offset != 0.0 {
+        ease_strafe_yaw(yaw_of(tf.rotation), hm.face, offset, dt)
+    } else {
+        hm.face
+    };
+    let turned = Quat::from_rotation_y(yaw);
+    if tf.rotation != turned {
+        tf.rotation = turned;
+    }
+    let dir = wowcam::heading(hm.face, axes);
+    if dir == Vec3::ZERO {
+        return (Vec3::ZERO, flags, 0.0);
+    }
+    let pace = if axes.fwd < 0 {
+        speed * wowcam::RUN_BACK_RATIO
+    } else {
+        speed
+    };
+    (dir * pace, flags, pace)
+}
+
+/// The classic view's walk, as it always was: world-relative WASD (or the auto runner's steer).
+/// The hero faces the cursor and backpedals and strafes under it, or, driven, faces where he runs.
+/// Returns the velocity, the movement word and the pace.
+#[allow(clippy::too_many_arguments)]
+fn walk_classic(
+    keys: &ButtonInput<KeyCode>,
+    aim: &AimPoint,
+    auto: Option<&super::auto::Auto>,
+    playing: bool,
+    speed: f32,
+    dt: f32,
+    tf: &mut Transform,
+    hm: &mut Hero,
+) -> (Vec3, u32, f32) {
+    let mut dir = Vec3::ZERO;
+    if let Some(auto) = auto {
+        dir = super::auto::steer(auto);
+    } else if playing {
+        if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
+            dir.z -= 1.0;
+        }
+        if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+            dir.z += 1.0;
+        }
+        if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
+            dir.x -= 1.0;
+        }
+        if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
+            dir.x += 1.0;
+        }
+    }
+    let pos = tf.translation;
+    let face = (auto.is_none() && playing)
+        .then(|| aim.0.map(|a| flat(a - pos)))
+        .flatten()
+        .filter(|d| d.length() > 0.5)
+        .map(|d| d.normalize());
+    if let Some(look) = face {
+        let target = Quat::from_rotation_y(yaw_toward(look));
+        tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
+    }
+    let mut out = (Vec3::ZERO, 0, 0.0);
+    if dir != Vec3::ZERO && dt > 0.0 {
+        let dir = dir.normalize();
+        let flags = match face {
+            Some(look) => gait(look, dir),
+            None => {
+                let target = Quat::from_rotation_y(yaw_toward(dir));
+                tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
+                move_flags::FORWARD
+            }
+        };
+        out = (dir * speed, flags, speed);
+    }
+    // WoW's view picks up from where he faces, should `V` swap to it.
+    hm.face = yaw_of(tf.rotation);
+    out
+}
+
+/// `vel` with its outward part taken off where this frame's walk would cross the leash, so a run
+/// along the edge slides round it; [`drive_hero`] still holds whatever the slide did.
+fn leash_velocity(center: Vec3, leash: f32, at: Vec3, vel: Vec3, dt: f32) -> Vec3 {
+    let off = flat(at + vel * dt - center);
+    if off.length() <= leash {
+        return vel;
+    }
+    let out = off.normalize_or_zero();
+    let outward = vel.dot(out);
+    if outward > 0.0 {
+        vel - out * outward
+    } else {
+        vel
+    }
+}
+
+/// The yaw of a rotation about Y, benilla's convention.
+pub(super) fn yaw_of(rotation: Quat) -> f32 {
+    rotation.to_euler(EulerRot::YXZ).0
+}
+
+/// A slow orbit at the menu; in a run in the classic view, top-down. The view eases toward the
+/// hero and the zoom, and cuts straight to them when a run starts or ends, the hero is respawned,
+/// a loading screen covers a worldport, the view is swapped back to, or he is suddenly far away.
+/// WoW's view has its own camera ([`wowcam::wow_camera`]).
 ///
 /// Chained after `drive_hero`, the last writer of the hero's transform in the frame, so the view
 /// is this frame's; nothing interpolates the hero (he has no rigid body, and avian's
 /// interpolation is off).
-#[allow(clippy::type_complexity)] // one Bevy system's full input set
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // one Bevy system's full input set
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
+    view: Res<View>,
+    auto: Option<Res<super::auto::Auto>>,
     mut rig: ResMut<CamRig>,
     mut wheel: MessageReader<MouseWheel>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
-    keys: Res<ButtonInput<KeyCode>>,
     player: Res<crate::player::Player>,
     loading: Option<Res<crate::loading_screen::LoadingScreen>>,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<LocalHero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
 ) {
-    let dt = time.delta_secs();
-    // `C` unlocks the camera to swing and tilt; locking it again swings back to the top-down view,
-    // so world-relative WASD lines up with the screen again.
-    if keys.just_pressed(KeyCode::KeyC) {
-        rig.mode = match rig.mode {
-            CamMode::Fixed => CamMode::Orbit,
-            CamMode::Orbit => {
-                rig.yaw = 0.0;
-                rig.pitch = FIXED_PITCH;
-                // Home the short way round, however many turns the drags wound up.
-                if let Some(shown) = rig.shown.as_mut() {
-                    shown.yaw = wrap_angle(shown.yaw);
-                }
-                CamMode::Fixed
-            }
-        };
+    if view::wow_in_play(*phase.get(), view.mode, auto.is_some()) {
+        wheel.clear();
+        if rig.shown.is_some() {
+            rig.shown = None;
+        }
+        return;
     }
+    let dt = time.delta_secs();
     // With no hero yet, the focus `drive_hero` grounded.
     let (hero_id, focus) = hero
         .single()
@@ -417,27 +499,17 @@ pub(super) fn place_camera(
     let menu = *phase.get() == Phase::Menu;
     if menu {
         rig.orbit += dt * 0.2;
-    } else if rig.mode == CamMode::Orbit
-        && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
-    {
-        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
-        rig.yaw -= motion.delta.x * ORBIT_RATE;
-        rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
     }
     let cut = loading.is_some_and(|l| l.covering())
         || rig
             .shown
             .is_none_or(|s| s.menu != menu || s.hero != hero_id);
-    let angle_tau = match rig.mode {
-        CamMode::Fixed => RELOCK_TAU,
-        CamMode::Orbit => ORBIT_TAU,
-    };
     let mut shown = match rig.shown.filter(|_| !cut) {
         Some(s) => Shown {
             focus: follow_focus(s.focus, focus, dt),
             dist: ease_zoom(s.dist, rig.dist, dt),
-            yaw: ease(s.yaw, rig.yaw, dt, angle_tau),
-            pitch: ease(s.pitch, rig.pitch, dt, angle_tau),
+            yaw: ease(s.yaw, rig.yaw, dt, RELOCK_TAU),
+            pitch: ease(s.pitch, rig.pitch, dt, RELOCK_TAU),
             ..s
         },
         None => Shown {
@@ -528,11 +600,6 @@ fn clear_ground(lift: f32, eye_y: f32, ground: Option<f32>, dt: f32) -> (f32, f3
     let lift = ease(lift, need, dt, tau);
     let y = eye_y + lift;
     (lift, ground.map_or(y, |h| y.max(h + GROUND_CLEARANCE)))
-}
-
-/// `a` brought into [−π, π), the same direction.
-fn wrap_angle(a: f32) -> f32 {
-    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 /// Damage a hero takes from one blow, after immunity, armour and the shield; returns what got
@@ -703,7 +770,6 @@ pub(super) fn reach(hero: Vec3, other: Vec3) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::{PI, TAU};
 
     const FRAME: f32 = 1.0 / 60.0;
 
@@ -731,7 +797,7 @@ mod tests {
                     ..HeroState::default()
                 };
                 let store = ObjectStore(Default::default());
-                let hero = Hero { vy: 0.0, air: 0.0 };
+                let hero = Hero::default();
                 let body = (Guid(i as u64 + 1), Transform::default(), store);
                 world.spawn((hero, body, Marks::buffs(), state)).id()
             })
@@ -796,7 +862,7 @@ mod tests {
 
     #[test]
     fn one_long_frame_eases_as_far_as_two_short_ones() {
-        for tau in [FOCUS_TAU_XZ, FOCUS_TAU_Y, ZOOM_TAU, ORBIT_TAU, RELOCK_TAU] {
+        for tau in [FOCUS_TAU_XZ, FOCUS_TAU_Y, ZOOM_TAU, RELOCK_TAU] {
             let once = ease(0.0, 10.0, 2.0 * FRAME, tau);
             let twice = ease(ease(0.0, 10.0, FRAME, tau), 10.0, FRAME, tau);
             assert!((once - twice).abs() < 1e-4, "τ {tau}: {once} vs {twice}");
@@ -924,23 +990,5 @@ mod tests {
         let (cut, y) = clear_ground(0.0, 0.0, Some(5.0), f32::INFINITY);
         assert!((cut - (5.0 + GROUND_CLEARANCE + GROUND_CUSHION)).abs() < 1e-5);
         assert!(y >= 5.0 + GROUND_CLEARANCE);
-    }
-
-    #[test]
-    fn relocking_swings_home_the_short_way() {
-        for wound in [4.0 * TAU + 0.3, -(4.0 * TAU + 0.3), 3.0, -3.0, PI] {
-            let w = wrap_angle(wound);
-            assert!((-PI..PI).contains(&w), "{wound} -> {w}");
-            assert!((w.sin() - wound.sin()).abs() < 1e-4, "{wound} -> {w}");
-            assert!((w.cos() - wound.cos()).abs() < 1e-4, "{wound} -> {w}");
-        }
-        // Eased home, the swing never passes through more than a half turn.
-        let mut yaw = wrap_angle(4.0 * TAU + 3.0);
-        for _ in 0..120 {
-            let next = ease(yaw, 0.0, FRAME, RELOCK_TAU);
-            assert!(next.abs() <= yaw.abs() && next.abs() <= PI);
-            yaw = next;
-        }
-        assert!(yaw.abs() < 1e-3, "{yaw}");
     }
 }

@@ -256,6 +256,27 @@ impl CreatureCatalog {
         Some((row.race, row.sex))
     }
 
+    /// Register `display_id` as display `base` worn with `look`: `base`'s row (model, scale,
+    /// sounds, blood) under an appearance row of the caller's own, so [`Self::model`] resolves it
+    /// as a character-model NPC dressed from any `ItemDisplayInfo` ids. A `look` with no
+    /// `bake_name` composites live. The appearance is keyed by `display_id` too, so the id must lie
+    /// outside both DBCs' id ranges. Overwrites an earlier registration; false, and nothing
+    /// registered, when `base` has no row.
+    pub fn insert_dressed(&mut self, display_id: u32, base: u32, look: NpcAppearance) -> bool {
+        let Some(row) = self.display.get(&base).cloned() else {
+            return false;
+        };
+        self.extra.insert(display_id, look);
+        self.display.insert(
+            display_id,
+            DisplayRow {
+                extended_id: display_id,
+                ..row
+            },
+        );
+        true
+    }
+
     /// Number of display entries (for logging/diagnostics).
     pub fn len(&self) -> usize {
         self.display.len()
@@ -451,6 +472,75 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dressed display is its base's row under its own appearance; the base is untouched, and a
+    /// missing base registers nothing.
+    #[test]
+    fn a_dressed_display_wears_its_own_appearance_on_the_base_row() {
+        let mut cat = CreatureCatalog::default();
+        cat.models.insert(
+            7,
+            ModelRow {
+                path: "Character\\Human\\Male\\HumanMale.mdx".into(),
+                scale: 1.0,
+                flags: 0,
+                size_class: 1,
+                blood: -1,
+                footprint_texture: -1,
+                footprint_length: 0.0,
+                footprint_width: 0.0,
+                collision_height: 2.0,
+                foley_material: 0,
+                footstep_shake: 0,
+                death_thud_shake: 0,
+            },
+        );
+        cat.display.insert(
+            49,
+            DisplayRow {
+                model_id: 7,
+                extended_id: 0,
+                scale: 1.0,
+                textures: Default::default(),
+                blood_level: 0,
+                size_class: -1,
+                model_alpha: 255,
+            },
+        );
+        let look = NpcAppearance {
+            race: 1,
+            sex: 0,
+            skin: 2,
+            face: 3,
+            hair_style: 4,
+            hair_color: 5,
+            facial_hair: 6,
+            equipment: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            bake_name: None,
+        };
+        let id = 0x7D00_0001;
+        assert!(cat.insert_dressed(id, 49, look.clone()));
+        let m = cat.model(id).expect("the dressed display resolves");
+        assert_eq!(m.model_path, "Character\\Human\\Male\\HumanMale.mdx");
+        let npc = m.npc_appearance.expect("with its appearance");
+        assert_eq!(
+            (
+                npc.skin,
+                npc.face,
+                npc.hair_style,
+                npc.hair_color,
+                npc.facial_hair
+            ),
+            (2, 3, 4, 5, 6)
+        );
+        assert_eq!(npc.equipment, look.equipment);
+        assert!(npc.bake_name.is_none());
+        assert_eq!(cat.display_race_sex(id), Some((1, 0)));
+        assert_eq!(cat.collision_height(id), Some(2.0));
+        assert!(cat.model(49).unwrap().npc_appearance.is_none(), "base kept");
+        assert!(!cat.insert_dressed(id + 1, 50, look));
+        assert!(cat.model(id + 1).is_none());
+    }
 
     /// `BloodID = −1` is a tier-2 miss, so 595 displays reach tier 3 and bleed red.
     #[test]

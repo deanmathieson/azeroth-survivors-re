@@ -38,6 +38,7 @@ pub(super) enum Listen {
     Own,
     /// Only these, by their keys in `data::ABILITIES`, named in the tooltip as `label` ("Fire",
     /// "Shadow Bolt"): each listening trigger is granted once per key.
+    #[allow(dead_code)]
     To(&'static str, &'static [&'static str]),
 }
 
@@ -56,6 +57,13 @@ pub(super) struct TalentMechanics {
 /// `talent`'s mechanics, if the table has it.
 pub(super) fn entry(talent: u32) -> Option<&'static TalentMechanics> {
     MECHANICS.iter().find(|m| m.id == talent)
+}
+
+/// The three talent ids named by the tree's 10/20/30-point footer, if it is a class tree.
+pub(in crate::survivors) fn milestones(tree: u32) -> Option<&'static [u32; 3]> {
+    MILESTONES
+        .iter()
+        .find_map(|(id, talents)| (*id == tree).then_some(talents))
 }
 
 /// The three landmark talents, at 10, 20, and 30 points, for every TalentTab id.  This is kept
@@ -97,6 +105,7 @@ pub(super) fn at_rank(talent: u32, rank: u8) -> Vec<M> {
     let Some(entry) = entry(talent).filter(|_| rank > 0) else {
         return Vec::new();
     };
+    let _ = entry.name;
     let mut out = Vec::new();
     for spec in entry.specs {
         let spec = scaled(*spec, entry.per_rank, rank);
@@ -302,8 +311,8 @@ fn effect_text(effect: Mech, at: Aim, proc: bool) -> String {
         Mech::Echo { extra_casts } => format!("the ability casts {extra_casts} more times"),
         Mech::Execute { threshold, mult } => {
             let times = match mult {
-                m if m == 2.0 => "double".to_string(),
-                m if m == 3.0 => "triple".to_string(),
+                2.0 => "double".to_string(),
+                3.0 => "triple".to_string(),
                 m => format!("{}×", num(m)),
             };
             format!(

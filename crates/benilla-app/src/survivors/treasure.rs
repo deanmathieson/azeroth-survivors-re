@@ -1,7 +1,12 @@
 //! The run's spoils: the gold the dead drop, the elites that walk out of the horde from the second
 //! minute, the guardians holding posts around the battleground, and the treasure caches, each worth
-//! a burst of gold and a level-up hand that needs no experience. Elites and guardians leave theirs
+//! a burst of gold and a jewelry choice ([`super::jewelry`]). Elites and guardians leave theirs
 //! free; the chests set out at the start are locked, and cost more gold for every cache opened.
+//!
+//! A roster boss leaves a chest of its own where it dies ([`ChestTier::Boss`], the last boss's
+//! grander still), glowing gold and marked on the minimap: its gear rolls as it opens, the reveal
+//! ([`super::gear`]), with a bigger burst of gold and a hand. A run that ends with one still shut
+//! opens it for the results ([`open_leftover_chests`]).
 
 use benilla_protocol::field::FIELD_GAMEOBJECT_STATE;
 use benilla_protocol::messages::{ObjectFields, ObjectType};
@@ -17,6 +22,7 @@ use super::run_options::RunOptions;
 use super::units::{self, flat, Fx};
 use super::{HeroState, LocalHero, Phase, Rng, Run, Selection};
 use crate::net::{FieldChanged, Guid, ObjectStore};
+use crate::sound::SoundCue;
 
 /// The first elite walks out at two minutes, then one every minute to a minute and a half.
 pub(super) const ELITE_FIRST_SECS: f32 = 120.0;
@@ -50,14 +56,18 @@ const BOSS_PILE_COINS: u32 = 10;
 const ELITE_PILE_COINS: u32 = 6;
 /// A cache's gold burst, in coins.
 const CACHE_COINS: u32 = 6;
+/// A boss chest's burst, and the last boss's.
+const BOSS_CHEST_COINS: u32 = 15;
+const FINAL_CHEST_COINS: u32 = 25;
 
 /// `GoldPilesmall01.mdx`, a coin or a pile by its scale.
 const COIN_DISPLAY: u32 = 2614;
-/// `TreasureChest01.mdx`, whose lid opens on `GO_STATE_ACTIVE`.
-const CACHE_DISPLAY: u32 = 259;
-const CACHE_SCALE: f32 = 1.5;
-/// How near the hero's edge a cache opens.
+/// How near the hero's edge a cache opens; a boss's bigger chest from further out.
 const CACHE_REACH: f32 = 1.2;
+const BOSS_CHEST_REACH: f32 = 2.4;
+/// Consecration's golden ground under a boss chest until it opens, this wide (yards).
+const CHEST_GLOW: u32 = 26573;
+const CHEST_GLOW_RADIUS: f32 = 2.5;
 /// Seconds an opened cache stands with its lid up before it fades.
 const CACHE_LINGER: f32 = 2.5;
 const GO_STATE_ACTIVE: u32 = 0;
@@ -121,18 +131,38 @@ pub(super) fn cache_gold(elapsed: f32, gold: f32) -> u32 {
     worth(CACHE_COINS, elapsed, gold, 0.5)
 }
 
+/// A boss chest's burst of gold, bigger than a cache's, the last boss's biggest.
+pub(super) fn boss_chest_gold(tier: ChestTier, elapsed: f32, gold: f32) -> u32 {
+    let coins = if tier == ChestTier::Final {
+        FINAL_CHEST_COINS
+    } else {
+        BOSS_CHEST_COINS
+    };
+    worth(coins, elapsed, gold, 0.5)
+}
+
 /// The `GameObjectDisplayInfo` row and scale of `gold` on the ground: the heap grows with it.
 pub(super) fn coin_look(gold: u32) -> (u32, f32) {
     (COIN_DISPLAY, (0.6 + 0.04 * gold as f32).min(1.4))
 }
 
 /// What a cache holds: a burst of gold (under the gold multiplier of the hero who opened it, into
-/// the party's purse) and a level-up hand that needs no experience. The one place a cache's reward
-/// is decided. Returns the gold given.
+/// the party's purse) and a jewelry choice for every hero, banked until play allows
+/// ([`super::jewelry`]; a level-up hand when no jewelry is left to offer). The one place a cache's
+/// reward is decided. Returns the gold given.
 pub(super) fn open_cache(run: &mut Run, opener: &HeroState) -> u32 {
     let gold = cache_gold(run.elapsed, opener.stats().gold);
     run.gold += gold;
     run.caches += 1;
+    run.pending_jewelry += 1;
+    gold
+}
+
+/// What a boss chest holds besides its boss's drop: a bigger burst of gold than a cache's (under
+/// the opener's gold multiplier) and one level-up hand. Returns the gold given.
+pub(super) fn open_boss_chest(run: &mut Run, opener: &HeroState, tier: ChestTier) -> u32 {
+    let gold = boss_chest_gold(tier, run.elapsed, opener.stats().gold);
+    run.gold += gold;
     run.pending_levels += 1;
     gold
 }
@@ -183,12 +213,73 @@ fn guardian_tier(i: usize, n: usize, len: usize) -> usize {
     ((t * len as f32) as usize).min(len.saturating_sub(1))
 }
 
+/// A chest's look and worth: the cache an elite or guardian leaves, a locked one set out at the
+/// start (it opens only for gold, [`chest_cost`]), a roster boss's, and the last boss's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ChestTier {
+    Standard,
+    Locked,
+    Boss,
+    Final,
+}
+
+impl ChestTier {
+    /// Its `GameObjectDisplayInfo` row and drawn scale.
+    pub(super) const fn look(self) -> (u32, f32) {
+        match self {
+            // `TreasureChest01.mdx`, the small wooden chest, whose lid opens on
+            // `GO_STATE_ACTIVE`.
+            Self::Standard => (259, 1.5),
+            // `Chest03.mdx`, iron-bound; small as authored.
+            Self::Locked => (41, 2.2),
+            // `G_ChestTitan.mdx`, Uldaman's ornate titan chest, big as authored.
+            Self::Boss => (1387, 1.0),
+            // `G_ChestAhnQiraj.mdx`, the Ahn'Qiraj raid cache.
+            Self::Final => (6502, 2.6),
+        }
+    }
+
+    pub(super) const fn is_boss(self) -> bool {
+        matches!(self, Self::Boss | Self::Final)
+    }
+
+    /// The sound a chest of this tier opens with when its model has none: `Chest03` authors no
+    /// open event, where the others ring their own display slot through the GameObject sounds
+    /// (`ChestOpen`, `G_ChestTitanOpen`, `G_ChestAhnQirajOpen`).
+    const fn open_cue(self) -> Option<&'static str> {
+        match self {
+            Self::Locked => Some("ChestOpen"),
+            _ => None,
+        }
+    }
+
+    fn reach(self) -> f32 {
+        if self.is_boss() {
+            BOSS_CHEST_REACH
+        } else {
+            CACHE_REACH
+        }
+    }
+}
+
+/// A roster boss's chest tier: the last boss's is the grandest.
+pub(super) fn boss_tier(boss: usize, bosses: usize) -> ChestTier {
+    if boss + 1 >= bosses {
+        ChestTier::Final
+    } else {
+        ChestTier::Boss
+    }
+}
+
 /// A treasure cache on the ground; `opened` counts the seconds since its lid lifted.
 #[derive(Component)]
 pub(super) struct Cache {
     opened: Option<f32>,
-    /// Opens only for gold ([`chest_cost`]).
-    locked: bool,
+    tier: ChestTier,
+    /// A boss chest's roster boss, whose drop rolls as it opens.
+    boss: Option<usize>,
+    /// The golden ground under a boss chest, gone as it opens.
+    glow: Option<Entity>,
     /// The hero has been told the price and has not stepped away since.
     refused: bool,
 }
@@ -197,16 +288,128 @@ impl Cache {
     pub(super) fn is_open(&self) -> bool {
         self.opened.is_some()
     }
+
+    pub(super) fn tier(&self) -> ChestTier {
+        self.tier
+    }
+
+    /// Lift the lid, once: whether it was shut.
+    fn open(&mut self) -> bool {
+        let was_shut = self.opened.is_none();
+        if was_shut {
+            self.opened = Some(0.0);
+        }
+        was_shut
+    }
 }
 
 /// A cache, free or `locked` for gold.
 pub(super) fn spawn_cache(commands: &mut Commands, serial: u64, pos: Vec3, locked: bool) {
-    let e = units::spawn_object(commands, serial, CACHE_DISPLAY, CACHE_SCALE, pos);
+    let tier = if locked {
+        ChestTier::Locked
+    } else {
+        ChestTier::Standard
+    };
+    spawn_chest(commands, serial, pos, tier, None, None);
+}
+
+fn spawn_chest(
+    commands: &mut Commands,
+    serial: u64,
+    pos: Vec3,
+    tier: ChestTier,
+    boss: Option<usize>,
+    glow: Option<Entity>,
+) -> Entity {
+    let (display, scale) = tier.look();
+    let e = units::spawn_object(commands, serial, display, scale, pos);
     commands.entity(e).insert(Cache {
         opened: None,
-        locked,
+        tier,
+        boss,
+        glow,
         refused: false,
     });
+    e
+}
+
+/// Roster boss `boss`'s chest at `pos`, on its golden ground.
+fn spawn_boss_chest(
+    commands: &mut Commands,
+    run: &mut Run,
+    pos: Vec3,
+    tier: ChestTier,
+    boss: usize,
+) -> Entity {
+    let glow = units::spawn_area_object(commands, run.guid(), CHEST_GLOW, CHEST_GLOW_RADIUS, pos);
+    spawn_chest(commands, run.guid(), pos, tier, Some(boss), Some(glow))
+}
+
+/// A boss chest opened: its roster boss's drop, which [`super::gear`] rolls for the heroes it
+/// names, and the chest its finds are shown at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct BossChestOpened {
+    pub map: usize,
+    pub boss: usize,
+    pub chest: Entity,
+    /// Opened in the run: only heroes still standing roll. A run's end rolls for everyone.
+    pub living_only: bool,
+}
+
+/// Boss chests opened and not yet rolled. A queue, not a message, so the results' roll (ahead of
+/// the run's record) and the run's own each take an opening once.
+#[derive(Resource, Default)]
+pub(super) struct BossRolls(pub Vec<BossChestOpened>);
+
+/// A roster boss falls: its chest stands where it died, glowing, its drop inside until it opens.
+pub(super) fn drop_boss_chests(
+    mut commands: Commands,
+    mut kills: MessageReader<enemies::Loot>,
+    mut run: ResMut<Run>,
+    selection: Res<Selection>,
+) {
+    for kill in kills.read() {
+        if !kill.boss {
+            continue;
+        }
+        let roster = data::roster(selection.map);
+        let Some(boss) = roster.bosses.iter().position(|b| b.name == kill.def.name) else {
+            continue;
+        };
+        let tier = boss_tier(boss, roster.bosses.len());
+        spawn_boss_chest(
+            &mut commands,
+            &mut run,
+            kill.pos + Vec3::Z * 1.5,
+            tier,
+            boss,
+        );
+    }
+}
+
+/// The run is over with boss chests still shut: they open for the results, so no drop is lost.
+/// Their gold counts in the run's record (this runs ahead of it); there is no hand left to deal.
+pub(super) fn open_leftover_chests(
+    mut run: ResMut<Run>,
+    selection: Res<Selection>,
+    local: Query<&HeroState, With<LocalHero>>,
+    mut caches: Query<(Entity, &mut Cache)>,
+    mut rolls: ResMut<BossRolls>,
+) {
+    let gold = local.single().map_or(1.0, |h| h.stats().gold);
+    for (e, mut cache) in &mut caches {
+        let Some(boss) = cache.boss else { continue };
+        if !cache.open() {
+            continue;
+        }
+        run.gold += boss_chest_gold(cache.tier, run.elapsed, gold);
+        rolls.0.push(BossChestOpened {
+            map: selection.map,
+            boss,
+            chest: e,
+            living_only: false,
+        });
+    }
 }
 
 /// The HUD's gold counter.
@@ -297,7 +500,8 @@ pub(super) fn spawn_elites(
 
 /// Walking into a cache opens it, a locked one only for its price (from the party's purse): its lid
 /// lifts, [`open_cache`] gives the reward to the nearest hero standing in reach, and it fades a
-/// moment later.
+/// moment later. A boss chest opens for whoever reaches it: [`open_boss_chest`]'s reward, and its
+/// boss's drop queued for the roll ([`BossRolls`]).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn open_caches(
     mut commands: Commands,
@@ -308,6 +512,9 @@ pub(super) fn open_caches(
     mut caches: Query<(Entity, &Guid, &Transform, &mut Cache, &mut ObjectStore), Without<Hero>>,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
+    selection: Res<Selection>,
+    mut rolls: ResMut<BossRolls>,
+    mut cues: MessageWriter<SoundCue>,
 ) {
     if heroes.is_empty() {
         return;
@@ -325,11 +532,10 @@ pub(super) fn open_caches(
             continue;
         }
         let at = tf.translation;
+        let within = cache.tier.reach() + HERO_RADIUS;
         let reach = heroes
             .iter()
-            .filter(|(_, h, state)| {
-                state.alive() && flat(at - h.translation).length() <= CACHE_REACH + HERO_RADIUS
-            })
+            .filter(|(_, h, state)| state.alive() && flat(at - h.translation).length() <= within)
             .map(|(e, h, _)| (e, h.translation));
         let Some((hero_e, _)) = party::nearest(reach, at) else {
             cache.refused = false;
@@ -338,7 +544,7 @@ pub(super) fn open_caches(
         let Ok((.., opener)) = heroes.get(hero_e) else {
             continue;
         };
-        let cost = cache.locked.then(|| chest_cost(run.caches));
+        let cost = (cache.tier == ChestTier::Locked).then(|| chest_cost(run.caches));
         if let Some(cost) = cost {
             if run.gold < cost {
                 // Told once per visit, not every frame the hero stands there.
@@ -350,7 +556,7 @@ pub(super) fn open_caches(
             }
             run.gold -= cost;
         }
-        cache.opened = Some(0.0);
+        cache.open();
         // The lid lifts as a looted chest's does ([`crate::go_anim`]).
         store.0.merge(ObjectFields::from_pairs(&[(
             FIELD_GAMEOBJECT_STATE,
@@ -364,6 +570,32 @@ pub(super) fn open_caches(
             old: GO_STATE_READY,
             new: GO_STATE_ACTIVE,
         });
+        if let Some(kit) = cache.tier.open_cue() {
+            cues.write(SoundCue {
+                kit,
+                at: Some(at),
+                volume: 1.0,
+            });
+        }
+        if let Some(boss) = cache.boss {
+            if let Some(glow) = cache.glow.take() {
+                commands.entity(glow).try_despawn();
+            }
+            let gold = open_boss_chest(&mut run, opener, cache.tier);
+            fx.number(hero_e, gold as f32, false, COLOR_GOLD);
+            rolls.0.push(BossChestOpened {
+                map: selection.map,
+                boss,
+                chest: e,
+                living_only: true,
+            });
+            let name = data::roster(selection.map)
+                .bosses
+                .get(boss)
+                .map_or("The boss", |b| b.name);
+            run.banner = Some((format!("{name}'s hoard! +{gold} gold"), 3.0));
+            continue;
+        }
         let gold = open_cache(&mut run, opener);
         fx.number(hero_e, gold as f32, false, COLOR_GOLD);
         let line = match cost {
@@ -436,14 +668,15 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_gives_gold_and_a_hand() {
+    fn a_cache_gives_gold_and_a_jewelry_choice() {
         let mut run = Run::default();
         let gold = open_cache(&mut run, &HeroState::default());
         assert_eq!(gold, cache_gold(0.0, 1.0));
         assert_eq!(run.gold, gold);
         assert_eq!(run.caches, 1);
-        assert_eq!(run.pending_levels, 1);
-        assert_eq!(run.level, 1, "a cache's hand needs no experience");
+        assert_eq!(run.pending_jewelry, 1);
+        assert_eq!(run.pending_levels, 0, "jewelry instead of the free hand");
+        assert_eq!(run.level, 1);
     }
 
     #[test]
@@ -518,5 +751,232 @@ mod tests {
             assert!(tiers.iter().all(|&t| t < 30));
         }
         assert_eq!(guardian_tier(0, 1, 1), 0);
+    }
+
+    #[test]
+    fn every_chest_tier_wears_its_own_chest() {
+        let tiers = [
+            ChestTier::Standard,
+            ChestTier::Locked,
+            ChestTier::Boss,
+            ChestTier::Final,
+        ];
+        for (i, a) in tiers.iter().enumerate() {
+            for b in &tiers[i + 1..] {
+                assert_ne!(a.look().0, b.look().0, "{a:?} and {b:?}");
+            }
+        }
+        assert_eq!(
+            ChestTier::Standard.look(),
+            (259, 1.5),
+            "the cache keeps its chest"
+        );
+        assert_eq!(ChestTier::Locked.look().0, 41);
+        assert_eq!(ChestTier::Boss.look().0, 1387);
+        assert_eq!(ChestTier::Final.look().0, 6502);
+        assert!(ChestTier::Boss.is_boss() && ChestTier::Final.is_boss());
+        assert!(!ChestTier::Standard.is_boss() && !ChestTier::Locked.is_boss());
+        // The last roster boss's chest is the grandest.
+        assert_eq!(boss_tier(0, 3), ChestTier::Boss);
+        assert_eq!(boss_tier(1, 3), ChestTier::Boss);
+        assert_eq!(boss_tier(2, 3), ChestTier::Final);
+        assert_eq!(boss_tier(0, 1), ChestTier::Final);
+    }
+
+    /// Every tier's display is a `GameObjectDisplayInfo` row whose model the client data holds.
+    #[test]
+    fn every_chest_tier_display_is_in_the_client_data() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let catalog = benilla_formats::load_gameobject_catalog(&mut chain).unwrap();
+        for tier in [
+            ChestTier::Standard,
+            ChestTier::Locked,
+            ChestTier::Boss,
+            ChestTier::Final,
+        ] {
+            let (display, _) = tier.look();
+            let model = catalog
+                .model_path(display)
+                .unwrap_or_else(|| panic!("{tier:?}: no display {display}"));
+            assert!(
+                model.to_ascii_lowercase().contains("chest"),
+                "{tier:?}: {model}"
+            );
+            let m2 = format!(
+                "{}.m2",
+                model.trim_end_matches(".mdx").trim_end_matches(".MDX")
+            );
+            assert!(
+                chain.read(&m2).is_ok() || chain.read(model).is_ok(),
+                "{tier:?}: {model} is not in the data"
+            );
+        }
+    }
+
+    #[test]
+    fn a_boss_chest_pays_more_than_a_cache() {
+        for t in [0.0, 300.0, data::VICTORY_SECS] {
+            assert!(boss_chest_gold(ChestTier::Boss, t, 1.0) > cache_gold(t, 1.0));
+            assert!(
+                boss_chest_gold(ChestTier::Final, t, 1.0)
+                    > boss_chest_gold(ChestTier::Boss, t, 1.0)
+            );
+        }
+        let mut run = Run::default();
+        let gold = open_boss_chest(&mut run, &HeroState::default(), ChestTier::Boss);
+        assert_eq!(gold, boss_chest_gold(ChestTier::Boss, 0.0, 1.0));
+        assert_eq!((run.gold, run.pending_levels), (gold, 1), "gold and a hand");
+        assert_eq!(run.caches, 0, "no dearer locked chests for it");
+    }
+
+    /// The map, the roster's boss count, and a world holding what the boss-chest systems read.
+    fn chest_world() -> (World, usize) {
+        let map = data::MAPS
+            .iter()
+            .position(|m| m.name == "Elwynn Forest")
+            .unwrap();
+        let mut world = World::new();
+        world.init_resource::<Messages<enemies::Loot>>();
+        world.init_resource::<BossRolls>();
+        world.insert_resource(Run::default());
+        world.insert_resource(Selection { map, ..default() });
+        (world, map)
+    }
+
+    fn chests(world: &mut World) -> Vec<(ChestTier, Option<usize>, bool)> {
+        world
+            .query::<&Cache>()
+            .iter(world)
+            .map(|c| (c.tier(), c.boss, c.is_open()))
+            .collect()
+    }
+
+    #[test]
+    fn a_roster_boss_leaves_its_chest_where_it_dies() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, map) = chest_world();
+        let bosses = &data::roster(map).bosses;
+        let last = bosses.len() - 1;
+        for b in [0, last] {
+            world.write_message(enemies::Loot {
+                pos: Vec3::new(10.0, 0.0, 5.0),
+                xp: 1,
+                boss: true,
+                elite: false,
+                def: &bosses[b],
+            });
+        }
+        // An elite leaves no boss chest.
+        world.write_message(enemies::Loot {
+            pos: Vec3::ZERO,
+            xp: 1,
+            boss: false,
+            elite: true,
+            def: &bosses[0],
+        });
+        world.run_system_once(drop_boss_chests).unwrap();
+        let mut got = chests(&mut world);
+        got.sort_by_key(|c| c.1);
+        assert_eq!(
+            got,
+            [
+                (ChestTier::Boss, Some(0), false),
+                (ChestTier::Final, Some(last), false)
+            ]
+        );
+    }
+
+    #[test]
+    fn opening_a_boss_chest_queues_its_roll_once() {
+        use crate::combat_text::CombatTextSpawn;
+        use crate::creature_anim::{CastEvent, PlaySeq, SpellGoTargets, SwingMessage};
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, map) = chest_world();
+        world.init_resource::<Time>();
+        world.init_resource::<NextState<Phase>>();
+        world.init_resource::<PlaySeq>();
+        world.init_resource::<Messages<CastEvent>>();
+        world.init_resource::<Messages<SpellGoTargets>>();
+        world.init_resource::<Messages<SwingMessage>>();
+        world.init_resource::<Messages<CombatTextSpawn>>();
+        world.init_resource::<Messages<FieldChanged>>();
+        world.init_resource::<Messages<SoundCue>>();
+        world.spawn((Hero::default(), Transform::default(), HeroState::default()));
+        let at = Vec3::new(BOSS_CHEST_REACH, 0.0, 0.0);
+        let chest = world
+            .spawn((
+                Guid(1),
+                Transform::from_translation(at),
+                ObjectStore(ObjectFields::default()),
+                Cache {
+                    opened: None,
+                    tier: ChestTier::Boss,
+                    boss: Some(1),
+                    glow: None,
+                    refused: false,
+                },
+            ))
+            .id();
+        for _ in 0..3 {
+            world.run_system_once(open_caches).unwrap();
+        }
+        assert_eq!(
+            world.resource::<BossRolls>().0,
+            [BossChestOpened {
+                map,
+                boss: 1,
+                chest,
+                living_only: true,
+            }],
+            "rolled once, for the heroes standing"
+        );
+        let run = world.resource::<Run>();
+        assert_eq!(run.gold, boss_chest_gold(ChestTier::Boss, 0.0, 1.0));
+        assert_eq!(run.pending_levels, 1);
+        assert!(matches!(
+            *world.resource::<NextState<Phase>>(),
+            NextState::Pending(Phase::LevelUp)
+        ));
+    }
+
+    #[test]
+    fn a_boss_chest_left_shut_opens_for_the_results() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, map) = chest_world();
+        world.spawn((HeroState::default(), LocalHero));
+        let spawn = |world: &mut World, tier, boss, opened| {
+            world
+                .spawn(Cache {
+                    opened,
+                    tier,
+                    boss,
+                    glow: None,
+                    refused: false,
+                })
+                .id()
+        };
+        let shut = spawn(&mut world, ChestTier::Final, Some(2), None);
+        spawn(&mut world, ChestTier::Boss, Some(0), Some(1.0));
+        spawn(&mut world, ChestTier::Standard, None, None);
+        for _ in 0..2 {
+            world.run_system_once(open_leftover_chests).unwrap();
+        }
+        assert_eq!(
+            world.resource::<BossRolls>().0,
+            [BossChestOpened {
+                map,
+                boss: 2,
+                chest: shut,
+                living_only: false,
+            }],
+            "only the shut boss chest, once, for every hero"
+        );
+        let run = world.resource::<Run>();
+        assert_eq!(run.gold, boss_chest_gold(ChestTier::Final, 0.0, 1.0));
+        assert_eq!(run.pending_levels, 0, "no hand at the run's end");
+        assert!(chests(&mut world)
+            .iter()
+            .all(|&(tier, _, open)| open || tier == ChestTier::Standard));
     }
 }

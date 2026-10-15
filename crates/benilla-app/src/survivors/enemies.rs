@@ -126,6 +126,28 @@ fn radius_for(def: &EnemyDef) -> f32 {
     (if def.big { 1.3 } else { 0.6 }) * def.scale
 }
 
+/// A roster boss walks out half again its kind's size over the horde's; its body radius, and so
+/// the reach it swings from ([`move_enemies`]' contact range) and the room hits find, grow with it.
+pub(super) const BOSS_SCALE: f32 = 1.5;
+
+/// A spawn's body under its rank: an elite's or a guardian's ([`treasure::elite_body`]), a roster
+/// boss's [`BOSS_SCALE`] bigger, the horde's as tuned.
+fn ranked_body(body: treasure::Body, rank: Rank) -> treasure::Body {
+    match rank {
+        Rank::Elite | Rank::Guardian => treasure::elite_body(body),
+        Rank::Boss => treasure::Body {
+            scale: body.scale * BOSS_SCALE,
+            ..body
+        },
+        Rank::Horde => body,
+    }
+}
+
+/// The body radius of `def` drawn at `scale`.
+fn body_radius(def: &EnemyDef, scale: f32) -> f32 {
+    radius_for(def) * scale / def.scale
+}
+
 pub(super) fn spawn_enemy(
     commands: &mut Commands,
     run: &mut Run,
@@ -139,15 +161,17 @@ pub(super) fn spawn_enemy(
     // The Run Options first, then the run clock's growth, then an elite's own multipliers. Only
     // the horde splits its experience under density: density adds no bosses, elites or guardians.
     let tuned = run_options::scaled(def, opts, rank != Rank::Horde, xp_carry);
-    let mut body = treasure::Body {
-        hp: tuned.hp * data::hp_scale(run.elapsed),
-        damage: tuned.damage * data::damage_scale(run.elapsed),
-        scale: def.scale,
-    };
+    let body = ranked_body(
+        treasure::Body {
+            hp: tuned.hp * data::hp_scale(run.elapsed),
+            damage: tuned.damage * data::damage_scale(run.elapsed),
+            scale: def.scale,
+        },
+        rank,
+    );
     let elite = matches!(rank, Rank::Elite | Rank::Guardian);
     let mut marks = Marks::debuffs();
     if elite {
-        body = treasure::elite_body(body);
         // Held for life: the mark floats over the elite's head.
         marks.add(treasure::ELITE_MARK, f32::INFINITY);
     }
@@ -174,7 +198,7 @@ pub(super) fn spawn_enemy(
             max_hp: body.hp,
             speed: tuned.speed,
             damage: body.damage,
-            radius: radius_for(def) * body.scale / def.scale,
+            radius: body_radius(def, body.scale),
             xp: tuned.xp,
             boss: rank == Rank::Boss,
             elite,
@@ -614,7 +638,7 @@ pub(super) fn drop_loot(
     }
 }
 
-fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
+pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
     let (display, scale) = look_for(kind);
     let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * 0.5);
     commands.entity(e).insert(Gem {
@@ -807,7 +831,7 @@ mod tests {
 
     fn hero_at(world: &mut World, x: f32, state: HeroState) -> Entity {
         let local = state.player == super::party::LOCAL_PLAYER;
-        let hero = Hero { vy: 0.0, air: 0.0 };
+        let hero = Hero::default();
         let mut e = world.spawn((hero, Transform::from_xyz(x, 0.0, 0.0), state));
         if local {
             e.insert(LocalHero);
@@ -899,5 +923,27 @@ mod tests {
             .map(|&h| world.get::<HeroState>(h).unwrap().picks)
             .collect();
         assert_eq!(picks, [1, 1]);
+    }
+
+    #[test]
+    fn only_roster_bosses_grow_and_their_reach_with_them() {
+        let def = &data::roster(0).bosses[0];
+        let base = treasure::Body {
+            hp: 100.0,
+            damage: 10.0,
+            scale: def.scale,
+        };
+        let boss = ranked_body(base, Rank::Boss);
+        assert!((boss.scale - def.scale * BOSS_SCALE).abs() < 1e-5);
+        assert_eq!((boss.hp, boss.damage), (base.hp, base.damage));
+        assert_eq!(ranked_body(base, Rank::Horde), base);
+        // Elites and guardians keep their own growth.
+        for rank in [Rank::Elite, Rank::Guardian] {
+            assert_eq!(ranked_body(base, rank), treasure::elite_body(base));
+        }
+        // The body radius, and so the swing's contact range, grows by the same factor.
+        let r = body_radius(def, boss.scale);
+        assert!((r - radius_for(def) * BOSS_SCALE).abs() < 1e-5);
+        assert!(r + HERO_RADIUS > radius_for(def) + HERO_RADIUS);
     }
 }

@@ -14,9 +14,9 @@ use crate::glue::widgets::{glue_button, overlay, GlueBtnKind, GlueDisabled, Hili
 use crate::survivors::profile::Profile;
 use crate::survivors::talents::{
     check_learn, check_reset, check_unlearn, describe_rank, earned_points, is_headline,
-    locked_reasons, mechanic_description, saved, slot_state, unmet, why_text, xp_for_points,
-    Allocation, SlotState, Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp,
-    TalentFocus, TalentSave, TalentSlot, Tree, MAX_POINTS,
+    locked_reasons, mechanic_description, saved, shade, unmet, why_text, xp_for_points, Allocation,
+    Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp, TalentFocus, TalentSave,
+    TalentShade, TalentSlot, Tree, Why, MAX_POINTS,
 };
 
 /// `NORMAL_FONT_COLOR`, what a rank grants.
@@ -137,15 +137,12 @@ fn tree_panel(parent: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, tree
 
 /// The one-point abilities at the three deep tiers are the tree's 10/20/30-point landmarks.
 fn milestones(b: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, tree: &Tree) {
-    let labels: Vec<String> = [2, 4, 6]
-        .into_iter()
+    let labels: Vec<String> = crate::survivors::talents::milestones(tree.id)
+        .unwrap_or(&[0; 3])
+        .iter()
         .enumerate()
-        .map(|(i, tier)| {
-            let name = view
-                .catalog
-                .talents_in(tree.id)
-                .find(|t| t.tier == tier && t.max_rank == 1)
-                .map_or("—", |t| t.name.as_str());
+        .map(|(i, id)| {
+            let name = view.catalog.talent(*id).map_or("—", |t| t.name.as_str());
             format!("{} points · {name}", (i + 1) * 10)
         })
         .collect();
@@ -317,20 +314,28 @@ fn icon(path: Option<&str>, size: Val) -> impl Bundle {
     )
 }
 
-/// A talent's button: its icon in a frame coloured as WoW colours the rank (gold at the last,
-/// green while open, grey while locked), dimmed while its tier or prerequisite is unmet, with the
-/// `rank/max` badge, a white ring while chosen, and its tooltip.
+/// The frame's and the rank badge's colours for a talent of `rank` ranks shaded `shade`, as WoW
+/// colours them: gold at the last rank, green while learnable, grey otherwise, the badge keeping
+/// the normal gold while the talent has ranks.
+fn shade_colors(shade: TalentShade, rank: u8) -> (Color, Color) {
+    match shade {
+        TalentShade::Maxed => (TIP_GOLD, TIP_GOLD),
+        TalentShade::Open => (TIP_GREEN, TIP_GREEN),
+        TalentShade::Closed if rank > 0 => (LOCKED, TIP_GOLD),
+        TalentShade::Closed => (LOCKED, LOCKED),
+    }
+}
+
+/// A talent's button: its icon in a frame coloured as WoW colours the rank ([`shade_colors`]),
+/// dimmed while it has no ranks and cannot take one, with the `rank/max` badge, a white ring while
+/// chosen, and its tooltip.
 fn talent_button(g: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Talent) {
     let px = Val::Px;
     let rank = view.alloc.rank(t.id);
     let needs = locked_reasons(view.catalog, &view.save, view.dev, t);
-    let state = slot_state(view.catalog, &view.save, view.dev, t.id);
-    let locked = matches!(state, SlotState::Locked(_));
-    let shade = match state {
-        SlotState::Learnable => TIP_GREEN,
-        SlotState::Maxed => TIP_GOLD,
-        SlotState::Locked(_) => LOCKED,
-    };
+    let state = shade(view.catalog, &view.save, view.dev, t);
+    let locked = rank == 0 && state == TalentShade::Closed;
+    let (shade, badge_tone) = shade_colors(state, rank);
     let mut button = g.spawn((
         Button,
         TalentSlot(t.id),
@@ -393,7 +398,7 @@ fn talent_button(g: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Ta
                     font_size: 10.0,
                     ..default()
                 },
-                TextColor(shade),
+                TextColor(badge_tone),
                 TextShadow {
                     offset: Vec2::splat(1.0),
                     color: Color::BLACK,
@@ -422,8 +427,10 @@ fn talent_tip(view: &View, t: &Talent, rank: u8, unmet: &[String]) -> ArmoryTip 
             lines.push((describe_rank(t, rank + 1), TIP_GOLD));
         }
     }
-    if check_learn(view.catalog, &view.save, view.dev, t.id).is_ok() {
-        lines.push(("Click to learn".into(), TIP_GREEN));
+    match check_learn(view.catalog, &view.save, view.dev, t.id) {
+        Ok(()) => lines.push(("Click to learn".into(), TIP_GREEN)),
+        Err(Why::NoPoints) => lines.push((why_text(view.catalog, t.id, Why::NoPoints), TIP_RED)),
+        Err(_) => {}
     }
     if rank > 0 {
         lines.push(("Right-click to unlearn".into(), DIM));
@@ -531,11 +538,7 @@ fn chosen(b: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Talent) {
         })
         .with_children(|col| {
             para(col, ctx, &t.name, 15.0, Color::WHITE);
-            let color = if rank >= t.max_rank {
-                TIP_GOLD
-            } else {
-                TIP_GREEN
-            };
+            let (_, color) = shade_colors(shade(view.catalog, &view.save, view.dev, t), rank);
             text(
                 col,
                 ctx,
