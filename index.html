@@ -134,6 +134,7 @@
   .card ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
   .tag { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; }
   .tag.now { color: var(--q-uncommon); }
+  .tag.progress { color: var(--q-legendary); }
   .tag.next { color: var(--q-epic); }
 
   /* Setup */
@@ -213,6 +214,8 @@
         <div class="equip" role="listitem">Equip: Your spells cast themselves.</div>
         <div class="equip" role="listitem">Equip: Bosses arrive every 2:15 and drop gear for your class.</div>
         <div class="equip" role="listitem">Equip: Elites, guardians and treasure chests stalk the battleground.</div>
+        <div class="equip" role="listitem">Equip: Quest givers offer gold, jewelry and bonus XP in the field.</div>
+        <div class="equip" role="listitem">Equip: A pet fetches drops and grows alongside you.</div>
         <div class="equip" role="listitem">Use: Reroll, skip or banish a level-up hand.</div>
         <div class="equip" role="listitem">Use: Raise the horde's density, health, damage and speed for up to ×2 rewards.</div>
         <div class="equip" role="listitem">Chance on victory: The next tier of zones opens.</div>
@@ -221,7 +224,7 @@
         <div class="equip" role="listitem">(1) Talent XP from every run</div>
         <div class="equip" role="listitem">(2) Gear from Thunderfury to Atiesh</div>
         <div class="equip" role="listitem">(3) Perks bought with achievement points</div>
-        <div class="equip" role="listitem">(4) A companion pet that fetches your loot</div>
+        <div class="equip" role="listitem">(4) A companion pet that fetches your loot, levels up and changes looks</div>
         <div class="flavor" role="listitem">"Running on a from-scratch World of Warcraft 1.12 client, written in Rust."</div>
         <div class="req" role="listitem">Requires Rust and a WoW 1.12.1 client</div>
       </div>
@@ -249,27 +252,34 @@
       <span class="tag now">Where it's at</span>
       <h3 id="where">Playable, freshly built</h3>
       <ul>
-        <li>The core run, gold, elites, chests, Run Options and the results screen have been played end to end.</li>
-        <li>Talents, gear, achievements, perks and zone unlocks are built and pass their tests, and the first play sessions have started.</li>
-        <li>Quests just landed: quest givers with a ! turn up mid-run, and each zone has a quest chain that unlocks mounts, mount hats, tabards and companion looks.</li>
+        <li>358 tests pass, clippy is clean, and the play build is good to go on <code>progression</code>.</li>
+        <li>WoW-style camera is in: right-drag mouselook, scroll zoom, <kbd>V</kbd> for the old top-down view, and proper tree and doodad collision.</li>
+        <li>Death results are fast: <kbd>Enter</kbd> restarts the same hero, zone and options; <kbd>Esc</kbd> or the button returns to the main menu.</li>
+        <li>Positional, throttled WoW cast and impact sounds are joined by level-up, coin, chest and boss cues; every battleground now has music and ambience, with the login theme crossfading on the menu.</li>
+        <li>Bosses have a top-centre WoW frame, skull, health %, final-boss tag and 1.5× roster size. Wooden caches, iron-bound paid chests and golden, minimap-marked ornate boss chests now tier up; the final boss gets the grandest, with loot rolled on opening and a <em>Loot: item</em> banner.</li>
+        <li>Equipped gear visibly changes your hero. Appearance customisation and a hero name carry through to the Character panel and results screen.</li>
+        <li>Rings, trinkets and necklaces can appear in-run or at quest turn-ins; <kbd>C</kbd> opens equipped jewelry and the full stat breakdown.</li>
+        <li>Legendary skill upgrades now use real special mechanics: procs, echoes, novas and more.</li>
+        <li>Companion 2.0 fetches drops, levels, and unlocks critter looks through pet level, achievements, quests and the Faire.</li>
+        <li>Field quest givers now offer accept, complete and turn-in loops: a cache worth of gold, a jewelry choice and bonus XP.</li>
+        <li>The Darkmoon Faire's gacha-style Prize Booth spends in-game tickets only&mdash;never real money&mdash;on companion looks: Silver Tabby, Bombay, Cornish Rex, Senegal, Cockatiel, owls, Tree Frog, Crimson Snake, whelplings, Pet Bombling, Lil' Smoky, Smolderweb Hatchling and Disgusting Oozeling. A Collection tab tracks the 15 classic vanity pets.</li>
+        <li>Talent states are honest: green when learnable, grey with the reason when points run out, gold at max; all 51 points are reachable.</li>
+        <li>Save format v4 is live, with older saves migrated forward.</li>
         <li>Expect rough edges and balance that needs tuning.</li>
       </ul>
     </div>
     <div class="card">
-      <span class="tag next">Coming next</span>
-      <h3>Co-op, companions and mounts</h3>
+      <span class="tag progress">In progress</span>
+      <h3>Talents 2.0</h3>
       <ul>
-        <li>The real WoW camera and controls, with proper collision so you can't walk through trees.</li>
-        <li>Spell sounds, zone music, and boss chests that look the part.</li>
-        <li>Bigger, scarier bosses with a proper boss health bar.</li>
-        <li>Legendary spell upgrades that transform the spell: Frostbolt shatters, Fireball becomes Pyroblast, Multi-Shot becomes Volley.</li>
-        <li>Talents worth chasing: real abilities at 10, 20 and 30 points, such as Arcane Power, Combustion and Ice Block, plus procs that actually stun, chill and burn.</li>
-        <li>A companion pet that levels up, learns skills and comes in dozens of vanity-pet looks.</li>
-        <li>Rings, trinkets and necklaces found during a run, and a character panel (C) with a full stat breakdown.</li>
-        <li>Gear that shows on your character.</li>
-        <li>2–4 player co-op with tanks and healers, where downed heroes get back up when a friend stands beside them. The engine side is done.</li>
-        <li>Mounts earned through quest chains. Possibly with hats for the mounts.</li>
-        <li>The Darkmoon Faire: spend prize tickets from your runs at the Prize Booth for companion looks, mounts, mount hats, tabards, titles and toys. Odds are shown up front, pity is guaranteed, and duplicates turn into Faire Favor. Complete a deck of Darkmoon Cards to claim its legendary trinket. Tickets are earned in game only, never with real money.</li>
+        <li>Each tree's 10-, 20- and 30-point talents are becoming real effects: Presence of Mind, Blast Wave, Ice Block, Sweeping Strikes, Shadowform, Swiftmend and Moonkin Form are the shape of it.</li>
+      </ul>
+      <span class="tag next">Next up</span>
+      <h3>Couch co-op, then online</h3>
+      <ul>
+        <li>Couch co-op comes first. The per-hero groundwork, roles design and checklist are done, but there is no second player yet.</li>
+        <li>Then online co-op, with tanks and healers able to heal each other.</li>
+        <li>After that: Darkmoon Card decks as trinkets, mounts (and hats for mounts), plus toys and transmog.</li>
       </ul>
     </div>
   </section>
@@ -303,7 +313,10 @@
       <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick a card</span>
       <span><kbd>R</kbd> reroll</span>
       <span><kbd>B</kbd> banish</span>
-      <span><kbd>C</kbd> free the camera</span>
+      <span>Right-drag mouselook</span>
+      <span>Scroll zoom</span>
+      <span><kbd>V</kbd> top-down camera</span>
+      <span><kbd>C</kbd> Character panel</span>
       <span><kbd>Esc</kbd> pause</span>
     </div>
   </section>
@@ -311,6 +324,7 @@
   <footer>
     <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
     <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is © Blizzard Entertainment.</p>
+    <p>Last updated: 15 Oct 2026.</p>
   </footer>
 </main>
 
