@@ -46,6 +46,7 @@
 
     /* tooltip */
     --tip-bg: rgba(6, 8, 24, 0.9);
+    --tip-solid: #060818;
     --tip-edge: #c9cdd8;
     --tip-edge-dim: rgba(150, 156, 176, 0.5);
     --tip-gap: #03040b;
@@ -70,7 +71,18 @@
     --glow-rare: rgba(0, 112, 221, 0.45);
     --glow-epic: rgba(163, 53, 238, 0.45);
     --glow-legendary: rgba(255, 128, 0, 0.45);
+    --glow-legendary-strong: rgba(255, 128, 0, 0.8);
     --aura-legendary: rgba(255, 128, 0, 0.13);
+    --epic-shine: rgba(222, 186, 255, 0.5);
+
+    /* chat */
+    --chat-bg: rgba(0, 0, 0, 0.5);
+    --chat-edge: rgba(255, 255, 255, 0.07);
+    --chat-tab: rgba(255, 255, 255, 0.06);
+    --chat-channel: #ffc0c0;
+    --chat-party: #aaaaff;
+    --chat-guild: #40ff40;
+    --npc: #40ff40;
 
     /* bronze trim */
     --bronze-hi: #f7dd96;
@@ -92,6 +104,20 @@
     --slot-bg: #0e1119;
     --slot-glyph: #ecdcae;
     --slot-shine: rgba(255, 255, 255, 0.14);
+
+    /* Faire */
+    --stage-bg: #090b14;
+    --stage-glow: rgba(255, 196, 80, 0.08);
+    --card-back-1: #141a33;
+    --card-back-2: #070912;
+    --card-star: rgba(255, 209, 0, 0.12);
+    --flash: rgba(255, 140, 20, 0.5);
+    --flash-core: rgba(255, 232, 180, 0.75);
+
+    /* loading bar */
+    --load-hi: #e8622c;
+    --load: #b3271c;
+    --load-lo: #5c0d07;
 
     /* buttons */
     --btn-red-hi: #b3271c;
@@ -198,12 +224,13 @@
   .wrap > * { min-width: 0; }
   section[id], .qd { scroll-margin-top: 36px; }
 
-  /* Top bar: eyebrow and an action-bar nav */
+  /* Top bar: guild tag, eyebrow and an action-bar nav */
   .topbar {
     position: relative; z-index: 1;
     display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px;
   }
-  .eyebrow { font-size: 0.82rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+  .eyebrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 0.82rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+  .guild-tag { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0.04em; text-transform: none; color: var(--chat-guild); text-shadow: 0 1px 0 var(--black); }
   .actionbar { display: flex; flex-wrap: wrap; gap: 6px; }
   .actionbar a {
     position: relative; display: inline-flex; align-items: center; justify-content: center;
@@ -217,28 +244,39 @@
   .actionbar .hk { position: absolute; top: 3px; right: 8px; font: 500 0.72rem/1 var(--body); color: var(--ink-faint); }
 
   /* Hero */
-  .hero { display: grid; gap: clamp(28px, 4vw, 44px); }
+  .hero { display: grid; gap: clamp(26px, 4vw, 40px); }
+  .hook-wrap { position: relative; z-index: 1; display: grid; gap: 10px; }
+  .hook {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(2rem, 4.8vw, 3.4rem); line-height: 1.06; letter-spacing: 0.01em;
+    color: var(--ink); text-shadow: 0 2px 0 var(--black); text-wrap: balance; max-width: 22ch;
+  }
+  .hook span { color: var(--gold); text-shadow: 0 2px 0 var(--black), 0 0 24px var(--gold-glow); }
+  .hook-sub { font-size: clamp(1.1rem, 2vw, 1.3rem); font-style: italic; color: var(--ink-dim); }
   .hero-grid { display: grid; grid-template-columns: minmax(0, 450px) minmax(0, 1fr); gap: clamp(28px, 4.5vw, 60px); align-items: start; }
   .hero-item { position: relative; isolation: isolate; z-index: 0; }
-  .hero-side { position: relative; z-index: 1; display: grid; gap: 22px; align-content: start; padding-top: 6px; }
-  .pitch { font-size: clamp(1.15rem, 2.1vw, 1.32rem); line-height: 1.5; max-width: 44ch; }
+  .hero-side { position: relative; z-index: 1; display: grid; gap: 22px; align-content: start; }
+  .pitch { font-size: clamp(1.1rem, 2vw, 1.25rem); line-height: 1.5; max-width: 46ch; }
   .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    min-height: 44px; padding: 8px 20px; border-radius: 5px;
-    font-family: var(--display); font-size: 1.05rem; color: var(--gold); text-decoration: none;
+    display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 2px 8px;
+    min-height: 44px; padding: 9px 20px; border-radius: 5px; cursor: pointer;
+    font-family: var(--display); font-size: 1.05rem; line-height: 1.25; color: var(--gold); text-decoration: none;
     border: 1px solid var(--bronze-1);
     background: linear-gradient(var(--btn-red-hi), var(--btn-red) 48%, var(--btn-red-lo));
     box-shadow: inset 0 1px 0 var(--btn-shine), 0 0 0 1px var(--black), 0 3px 0 var(--black);
     text-shadow: 0 1px 0 var(--black);
   }
+  .btn small { font-family: var(--body); font-size: 0.82rem; color: var(--gold-pale); }
   .btn:hover { color: var(--gold-pale); filter: brightness(1.14); }
   .btn:active { transform: translateY(1px); }
+  .btn[disabled] { cursor: not-allowed; filter: grayscale(0.85) brightness(0.65); transform: none; }
   .btn.alt {
     color: var(--ink); border-color: var(--tip-edge-dim);
     background: linear-gradient(var(--btn-dark-hi), var(--btn-dark-lo));
   }
+  .btn.alt small { color: var(--ink-dim); }
   .btn.alt:hover { color: var(--gold); }
 
   /* Tooltip surface */
@@ -255,8 +293,6 @@
     padding: 12px 15px 13px;
     color: var(--tip-white);
     line-height: 1.42;
-    -webkit-backdrop-filter: blur(2px);
-    backdrop-filter: blur(2px);
   }
   .tip .name { font-family: var(--display); font-weight: 400; font-size: 1.17rem; line-height: 1.25; color: var(--qc, var(--tip-white)); margin-bottom: 2px; }
   .tip .split { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 14px; }
@@ -281,7 +317,7 @@
   .item-name {
     font-family: var(--display); font-weight: 400;
     font-size: clamp(2.3rem, 5.2vw, 3.1rem); line-height: 1.02; letter-spacing: 0.01em;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     filter: drop-shadow(0 2px 0 var(--black)) drop-shadow(0 0 16px var(--glow-legendary));
   }
   .legend { display: block; color: var(--q-legendary); }
@@ -300,6 +336,7 @@
     .legend { background: none; -webkit-text-fill-color: currentColor; }
   }
   @keyframes glint { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  .tip-hero .tagline { color: var(--tip-flavor); font-style: italic; margin-bottom: 10px; }
   .tip-hero .set { margin-top: 10px; }
   .tip-hero .set-name { color: var(--gold); }
   .tip-hero .req { margin-top: 2px; }
@@ -377,6 +414,68 @@
   .tracker .done { color: var(--ink); }
   .tracker .done span { color: var(--equip); }
 
+  /* Chat frame */
+  .chat {
+    padding: 0 14px 12px; border-radius: 6px;
+    background: var(--chat-bg); box-shadow: inset 0 0 0 1px var(--chat-edge);
+    font-size: 0.96rem; line-height: 1.45; text-shadow: 0 1px 1px var(--black);
+  }
+  .chat-tabs { display: flex; gap: 4px; margin: 0 0 8px -4px; }
+  .chat-tabs span {
+    padding: 4px 10px 3px; border-radius: 0 0 5px 5px; background: var(--chat-tab);
+    font-family: var(--display); font-size: 0.8rem; color: var(--ink-faint);
+  }
+  .chat-tabs .is-on { color: var(--gold); }
+  .chat p { overflow-wrap: anywhere; }
+  .c-chan { color: var(--chat-channel); }
+  .c-party { color: var(--chat-party); }
+  .c-guild { color: var(--chat-guild); }
+  .chat .link { color: var(--qc); }
+  .chat p { animation: chat-in 0.45s ease-out both; }
+  .chat p:nth-of-type(1) { animation-delay: 1.1s; }
+  .chat p:nth-of-type(2) { animation-delay: 1.25s; }
+  .chat p:nth-of-type(3) { animation-delay: 1.4s; }
+  .chat p:nth-of-type(4) { animation-delay: 1.55s; }
+  .chat p:nth-of-type(5) { animation-delay: 1.7s; }
+  .chat p:nth-of-type(6) { animation-delay: 1.85s; }
+  .chat p:nth-of-type(7) { animation-delay: 2s; }
+  .chat p:nth-of-type(8) { animation-delay: 2.15s; }
+  @keyframes chat-in { from { opacity: 0.25; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* Loading-screen tips */
+  .loading {
+    display: grid; gap: 12px; justify-items: center; text-align: center;
+    padding: 18px clamp(14px, 3vw, 28px) 16px; border-radius: 8px;
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+    border: 1px solid var(--bronze-3);
+    box-shadow: inset 0 0 0 1px var(--black), 0 0 0 1px var(--black);
+  }
+  .tip-line { font-size: clamp(1.05rem, 2vw, 1.2rem); max-width: 62ch; min-height: 2.9em; display: grid; place-items: center; }
+  .tip-label { font-family: var(--display); color: var(--gold); }
+  [data-tip-text] { transition: opacity 0.2s ease; }
+  [data-tip-text].is-swapping { opacity: 0; }
+  .loadbar {
+    width: min(100%, 560px); height: 16px; padding: 2px; border-radius: 4px;
+    border: 2px solid transparent;
+    background: linear-gradient(var(--bar-lo), var(--black)) padding-box, var(--bronze-trim) border-box;
+    box-shadow: 0 0 0 1px var(--black);
+  }
+  .loadbar-fill {
+    display: block; height: 100%; border-radius: 2px; transform-origin: left center;
+    background: linear-gradient(180deg, var(--load-hi), var(--load) 55%, var(--load-lo));
+    animation: load 6s linear 1 both;
+  }
+  .loading:hover .loadbar-fill, .loading:focus-within .loadbar-fill, .loading.is-paused .loadbar-fill { animation-play-state: paused; }
+  @keyframes load { from { transform: scaleX(0.02); } to { transform: scaleX(1); } }
+  .tip-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .mini-btn {
+    min-height: 36px; padding: 4px 14px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--tip-edge-dim);
+    background: linear-gradient(var(--btn-dark-hi), var(--btn-dark-lo));
+    color: var(--ink-dim); font: 500 0.92rem var(--body);
+  }
+  .mini-btn:hover { color: var(--gold); }
+
   /* Bronze-trimmed panels with a header plate */
   .panel {
     position: relative;
@@ -413,7 +512,7 @@
       linear-gradient(180deg, var(--bronze-hi), var(--bronze-2) 55%, var(--bronze-1)) border-box;
     box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--black), 0 8px 18px var(--shadow);
     font-family: var(--display); font-weight: 400;
-    font-size: clamp(1.3rem, 3.4vw, 1.75rem); line-height: 1.2; letter-spacing: 0.03em;
+    font-size: clamp(1.15rem, 3.4vw, 1.75rem); line-height: 1.2; letter-spacing: 0.03em;
     color: var(--gold); text-shadow: 0 1px 0 var(--black), 0 0 14px var(--gold-glow);
   }
   .plate::before, .plate::after {
@@ -427,20 +526,20 @@
   /* What's New: the bag */
   .bag-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 28px; margin-bottom: 26px; }
   .lede { max-width: 62ch; color: var(--ink-dim); }
-  .lede strong { color: var(--ink); font-weight: 500; }
+  .lede strong { display: block; font-family: var(--display); font-weight: 400; font-size: clamp(1.25rem, 2.6vw, 1.55rem); color: var(--ink); }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
     display: inline-flex; align-items: center; gap: 8px; min-height: 40px;
     padding: 6px 13px; border-radius: 5px; cursor: pointer;
-    font: 500 0.98rem var(--body); color: var(--qc);
+    font: 500 0.98rem var(--body); color: var(--qc, var(--gold));
     background: var(--tip-bg); border: 1px solid var(--tip-edge-dim);
     box-shadow: 0 0 0 1px var(--black);
   }
   .chip .n { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
-  .chip:hover { border-color: var(--qb); }
+  .chip:hover { border-color: var(--qb, var(--gold)); }
   .chip[aria-pressed="true"] {
-    border-color: var(--qb);
-    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--qb), 0 0 16px var(--qg);
+    border-color: var(--qb, var(--gold));
+    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--qb, var(--gold)), 0 0 16px var(--qg, var(--gold-glow));
   }
   .chip[aria-pressed="true"] .n { color: var(--ink); }
 
@@ -479,6 +578,119 @@
   .slot svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .slot.is-gold { color: var(--gold); }
 
+  /* Darkmoon Faire booth (simulator) */
+  .sim-label { text-align: center; font-size: 0.82rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin: -12px 0 26px; }
+  .booth {
+    display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+    grid-template-areas: "side main" "odds main";
+    gap: 22px 32px; align-items: start;
+  }
+  .booth-side { grid-area: side; display: grid; gap: 18px; min-width: 0; }
+  .booth-main { grid-area: main; display: grid; gap: 18px; min-width: 0; }
+  .booth-odds { grid-area: odds; min-width: 0; }
+  .booth-ui { display: grid; gap: 18px; min-width: 0; }
+  .npc-name { font-family: var(--display); font-size: 1.3rem; line-height: 1.2; color: var(--npc); }
+  .npc-title { color: var(--npc); }
+  .npc-quote { color: var(--tip-flavor); font-style: italic; margin-top: 8px; }
+  .mini-head { font-family: var(--display); font-weight: 400; font-size: 1.05rem; color: var(--gold); margin-bottom: 8px; }
+  .banner-blurb { margin-top: 10px; color: var(--ink-dim); font-style: italic; }
+  .banner-feat { margin-top: 6px; font-size: 0.95rem; color: var(--ink-dim); }
+  .banner-feat .link { color: var(--qc); }
+  .counters { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline; }
+  .counter { display: flex; gap: 8px; align-items: baseline; color: var(--ink-dim); }
+  .counter b { font-family: var(--display); font-weight: 400; font-size: 1.45rem; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .pity { color: var(--ink-dim); font-size: 0.96rem; margin-top: -8px; }
+  .pity b { color: var(--q-epic-text); font-weight: 700; }
+  .pity b + b, .pity .leg { color: var(--q-legendary); }
+  .pull-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .booth-hint { color: var(--ink-faint); font-size: 0.95rem; min-height: 1.4em; margin-top: -6px; }
+  .stage {
+    position: relative; isolation: isolate; min-height: 230px;
+    padding: 18px; border-radius: 8px;
+    background: radial-gradient(ellipse at 50% 0%, var(--stage-glow), transparent 70%), var(--stage-bg);
+    box-shadow: inset 0 0 0 1px var(--black), inset 0 0 0 2px var(--bronze-3), inset 0 0 40px var(--shadow);
+  }
+  .stage-idle { display: grid; place-items: center; min-height: 194px; text-align: center; color: var(--ink-dim); font-style: italic; }
+  .legend-banner {
+    text-align: center; margin-bottom: 14px;
+    font-family: var(--display); font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.05; letter-spacing: 0.06em;
+    color: var(--q-legendary); text-shadow: 0 2px 0 var(--black), 0 0 26px var(--glow-legendary-strong);
+  }
+  .legend-banner.pop { animation: pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  @keyframes pop { from { transform: scale(0.45); opacity: 0.3; } to { transform: none; opacity: 1; } }
+  .cards { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  .cards.is-single { grid-template-columns: minmax(0, 230px); justify-content: center; }
+  .pcard { position: relative; perspective: 900px; min-width: 0; }
+  .pcard-inner { display: grid; height: 100%; transform-style: preserve-3d; transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .pcard.is-flipped .pcard-inner { transform: rotateY(180deg); }
+  .pcard-back, .pcard-front { grid-area: 1 / 1; -webkit-backface-visibility: hidden; backface-visibility: hidden; border-radius: 8px; }
+  .pcard-back {
+    display: grid; place-items: center; min-height: 160px;
+    background:
+      repeating-conic-gradient(from 0deg at 50% 50%, var(--card-star) 0deg 6deg, transparent 6deg 24deg),
+      radial-gradient(circle at 50% 50%, var(--card-back-1), var(--card-back-2) 75%);
+    border: 2px solid var(--bronze-1);
+    box-shadow: inset 0 0 0 3px var(--card-back-2), inset 0 0 0 4px var(--bronze-2), 0 0 0 1px var(--black), 0 8px 18px var(--shadow);
+    color: var(--bronze-1);
+  }
+  .pcard-back svg { width: 42px; height: 42px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .pcard-front {
+    position: relative; overflow: hidden; transform: rotateY(180deg);
+    display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+    padding: 12px 10px 12px;
+    background: var(--tip-solid); border: 1px solid var(--qb);
+    box-shadow: 0 0 0 1px var(--black), 0 0 18px var(--qg), inset 0 0 22px var(--qg);
+  }
+  .pcard-front .slot { width: 44px; height: 44px; }
+  .pc-name { font-family: var(--display); font-size: 0.98rem; line-height: 1.2; color: var(--qc); overflow-wrap: anywhere; }
+  .pc-kind { font-size: 0.8rem; color: var(--ink-faint); }
+  .pc-status { font-size: 0.84rem; font-weight: 700; }
+  .pc-new { color: var(--equip); }
+  .pc-dupe { color: var(--gold); }
+  .pc-feat { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+  .pcard.q-epic.is-flipped .pcard-front::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(110deg, transparent 30%, var(--epic-shine) 50%, transparent 70%);
+    transform: translateX(-130%);
+    animation: shimmer 1.1s ease-out 0.35s 1 both;
+  }
+  @keyframes shimmer { to { transform: translateX(130%); } }
+  .pcard.q-legendary .pcard-front { box-shadow: 0 0 0 1px var(--black), 0 0 30px var(--glow-legendary-strong), inset 0 0 26px var(--glow-legendary); }
+  .pcard.q-legendary.is-flipped::before {
+    content: ""; position: absolute; left: 50%; top: 50%; z-index: -1; pointer-events: none;
+    width: 300%; aspect-ratio: 1; border-radius: 50%;
+    background:
+      radial-gradient(circle, var(--flare-core) 0, var(--glow-legendary-strong) 22%, transparent 55%),
+      repeating-conic-gradient(var(--flare-ray) 0deg 4deg, transparent 4deg 16deg);
+    -webkit-mask-image: radial-gradient(circle, var(--black) 0 25%, transparent 62%);
+    mask-image: radial-gradient(circle, var(--black) 0 25%, transparent 62%);
+    transform: translate(-50%, -50%) scale(0.2); opacity: 0;
+    animation: lburst 1.5s ease-out 0.3s 1 both;
+  }
+  @keyframes lburst { 0% { transform: translate(-50%, -50%) scale(0.2) rotate(0deg); opacity: 0; } 25% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1) rotate(25deg); opacity: 0; } }
+  .screen-flash {
+    position: fixed; inset: 0; z-index: 50; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at 50% 45%, var(--flash-core), var(--flash) 40%, transparent 75%);
+  }
+  .screen-flash.go { animation: screenflash 0.8s ease-out 1 both; }
+  @keyframes screenflash { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+  .haul-sum { color: var(--ink-dim); margin-bottom: 8px; }
+  .haul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.96rem; }
+  .haul li { color: var(--qc); }
+  .haul .x { color: var(--ink-dim); }
+  .booth-nojs { color: var(--ink-dim); font-style: italic; }
+  table.odds { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 0.96rem; }
+  .odds th, .odds td { padding: 5px 0; border-top: 1px solid var(--tip-rule); text-align: left; font-weight: 400; }
+  .odds thead th { border-top: 0; color: var(--ink-faint); font-size: 0.82rem; letter-spacing: 0.06em; text-transform: uppercase; }
+  .odds tbody th { color: var(--qc); font-family: var(--display); }
+  .odds td:last-child, .odds th:last-child { text-align: right; }
+  .odds-notes { list-style: none; padding: 0; margin-top: 12px; display: grid; gap: 7px; color: var(--ink-dim); font-size: 0.93rem; }
+
+  /* Showcase (the Stable) */
+  .showcase { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 22px; }
+  .showcase .window img { aspect-ratio: 16 / 10; }
+  .showcase .window img.focus-high { object-position: 50% 42%; }
+
   /* Quest Log: the one parchment panel */
   .panel.is-parchment {
     color: var(--parch-ink);
@@ -499,6 +711,7 @@
   .is-parchment a { color: var(--parch-link); }
   .is-parchment code { background: var(--parch-code); }
   .ql-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 20px; margin-bottom: 22px; color: var(--parch-ink-soft); }
+  .ql-top strong { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--parch-ink); }
   .ql-count { font-family: var(--display); color: var(--parch-ink); }
   .ql-grid {
     display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
@@ -561,19 +774,20 @@
   .rm-skull { fill: var(--rm-skull); }
   .rm .eye { fill: var(--rm-line); stroke: none; }
 
-  /* Screenshots */
+  /* Open section headings */
   .sec-head { display: grid; gap: 8px; justify-items: center; text-align: center; margin-bottom: 30px; }
   .sec-title {
     display: flex; align-items: center; gap: 16px; width: 100%;
-    font-family: var(--display); font-weight: 400; font-size: clamp(1.6rem, 4vw, 2.1rem); line-height: 1.2;
+    font-family: var(--display); font-weight: 400; font-size: clamp(1.5rem, 4vw, 2.1rem); line-height: 1.2;
     color: var(--gold); text-shadow: 0 1px 0 var(--black), 0 0 16px var(--gold-glow);
   }
-  .sec-title::before, .sec-title::after { content: ""; flex: 1; height: 2px; background: linear-gradient(90deg, transparent, var(--bronze-1)); }
+  .sec-title::before, .sec-title::after { content: ""; flex: 1; min-width: 20px; height: 2px; background: linear-gradient(90deg, transparent, var(--bronze-1)); }
   .sec-title::after { background: linear-gradient(270deg, transparent, var(--bronze-1)); }
   .sec-sub { color: var(--ink-dim); max-width: 60ch; }
   .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 
   /* Play it yourself */
+  .play-lede { font-family: var(--display); font-size: clamp(1.2rem, 2.6vw, 1.5rem); line-height: 1.3; color: var(--ink); margin-bottom: 16px; text-align: center; }
   .notice {
     display: flex; gap: 12px; align-items: flex-start;
     padding: 12px 16px; margin-bottom: 30px; border-radius: 6px;
@@ -605,6 +819,7 @@
     padding: 11px 14px; background: none; border-radius: 0;
     font: 400 0.86rem/1.5 var(--mono); color: var(--code-ink);
   }
+  .cmd.wraps code { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--body); font-size: 0.98rem; }
   .copy {
     flex: none; min-width: 76px; padding: 0 14px; cursor: pointer;
     border: 0; border-left: 1px solid var(--code-edge); border-radius: 0 4px 4px 0;
@@ -620,6 +835,7 @@
   .binds dt { color: var(--ink); }
   .binds dd { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; color: var(--ink-dim); font-size: 0.94rem; }
   .dialog { border-color: var(--bronze-1); padding: 16px 18px 18px; display: grid; gap: 10px; }
+  .dialog .guild-tag { font-size: 0.98rem; margin-bottom: -8px; }
   .dialog .dialog-sub { margin-top: -10px; font-size: 0.9rem; color: var(--ink-faint); letter-spacing: 0.04em; }
   .dialog ol { padding-left: 1.25em; display: grid; gap: 6px; }
   .dialog strong { color: var(--gold); font-weight: 500; }
@@ -631,6 +847,9 @@
   .foot-orn::after { background: linear-gradient(270deg, transparent, var(--bronze-1)); }
   .foot-orn span { width: 9px; height: 9px; background: var(--bronze-1); transform: rotate(45deg); box-shadow: 0 0 10px var(--gold-glow); }
   .nomoney { font-family: var(--display); font-size: 1.12rem; color: var(--gold); }
+  .murlocs { color: var(--ink-dim); font-style: italic; }
+  .nerd { font-size: 0.84rem; color: var(--ink-faint); }
+  .nerd span { color: var(--ink-dim); }
   .foot .updated { color: var(--ink-dim); }
 
   /* Responsive */
@@ -638,12 +857,14 @@
     .hero-grid { grid-template-columns: minmax(0, 1fr); }
     .hero-item { max-width: 560px; }
     .play-grid { grid-template-columns: minmax(0, 1fr); }
+    .booth { grid-template-columns: minmax(0, 1fr); grid-template-areas: "side" "main" "odds"; }
   }
   @media (max-width: 760px) {
     .ql-grid { grid-template-columns: minmax(0, 1fr); background: none; }
     .ql-list { position: static; padding-right: 0; padding-bottom: 20px; margin-bottom: 24px; border-bottom: 1px solid var(--parch-rule); }
     .ql-details { padding-left: 0; }
     .gallery { grid-template-columns: minmax(0, 1fr); }
+    .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
   @media (max-width: 560px) {
     body { font-size: 16px; }
@@ -652,11 +873,14 @@
     .tip-hero { padding: 18px 18px 20px; }
     .steps > li { grid-template-columns: 32px minmax(0, 1fr); gap: 12px; }
     .step-n { width: 32px; height: 32px; font-size: 1rem; }
+    .stage { padding: 12px; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .pull-row .btn { flex: 1 1 140px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
-    .flare, .tip-hero::after { display: none; }
+    .flare, .tip-hero::after, .screen-flash { display: none; }
   }
 </style>
 </head>
@@ -687,22 +911,32 @@
     <symbol id="g-flame" viewBox="0 0 24 24"><path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.4 3.6-8.3.9 1.6 1.4 2.9 1.6 4.3C12.4 9 13.6 6.3 13.4 3c3.2 2.4 5.1 6.3 5.1 10.6 0 4.4-2.6 7.4-6.5 7.4z"/><path d="M12 21c-1.7 0-2.8-1.1-2.8-2.7 0-1.8 1.6-2.8 2.4-4.5 1.6 1.3 3.2 2.7 3.2 4.6 0 1.6-1.1 2.6-2.8 2.6z" fill="currentColor"/></symbol>
     <symbol id="g-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></symbol>
     <symbol id="g-pack" viewBox="0 0 24 24"><path d="M5 8.5h14v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19.5z"/><path d="M8.5 8.5V6a3.5 3.5 0 0 1 7 0v2.5"/><path d="M9 13h6"/></symbol>
+    <symbol id="g-hat" viewBox="0 0 24 24"><path d="M8.5 4.5h7v9.5h-7z"/><path d="M3.5 14.5h17"/><path d="M8.5 11h7"/><path d="M5.5 17.5c2 1 11 1 13 0"/></symbol>
+    <symbol id="g-gift" viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="1"/><path d="M3.5 7h17v3h-17z"/><path d="M12 7v13"/><path d="M12 7c-1.4-2.8-5-3-5-.8C7 7.6 12 7 12 7zm0 0c1.4-2.8 5-3 5-.8 0 1.4-5 .8-5 .8z"/></symbol>
+    <symbol id="g-card" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M12 7.5l2 3-2 3-2-3z" fill="currentColor"/><path d="M9 17.5h6"/></symbol>
+    <symbol id="g-moon" viewBox="0 0 24 24"><path d="M14.5 3.5a8.5 8.5 0 1 0 6 14.5 7 7 0 0 1-6-14.5z"/><path d="M17 6.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></symbol>
   </svg>
 
   <p id="announce" class="sr-only" aria-live="polite"></p>
+  <div class="screen-flash" aria-hidden="true" data-flash></div>
 
   <div class="wrap">
 
     <!-- 1. Hero -->
     <header class="hero">
       <div class="topbar">
-        <p class="eyebrow">Fan-made roguelite &#xB7; World of Warcraft 1.12</p>
+        <p class="eyebrow"><span class="guild-tag">&lt;Toast House&gt;</span><span>Fan-made roguelite &middot; World of Warcraft 1.12</span></p>
         <nav class="actionbar" aria-label="Page sections">
           <a href="#whats-new"><span class="hk" aria-hidden="true">1</span>What's New</a>
-          <a href="#quest-log"><span class="hk" aria-hidden="true">2</span>Quest Log</a>
-          <a href="#screenshots"><span class="hk" aria-hidden="true">3</span>Screenshots</a>
+          <a href="#faire"><span class="hk" aria-hidden="true">2</span>The Faire</a>
+          <a href="#quest-log"><span class="hk" aria-hidden="true">3</span>Quest Log</a>
           <a href="#run-it"><span class="hk" aria-hidden="true">4</span>Play</a>
         </nav>
+      </div>
+
+      <div class="hook-wrap">
+        <p class="hook">Fifteen minutes. One zone. <span>Every mob in it.</span></p>
+        <p class="hook-sub">Your spells cast themselves. Your survival does not.</p>
       </div>
 
       <div class="hero-grid">
@@ -710,6 +944,7 @@
           <div class="flare" aria-hidden="true"></div>
           <div class="tip tip-hero">
             <h1 class="item-name"><span class="legend">Azeroth Survivors</span></h1>
+            <p class="tagline">"Vanilla WoW, except the entire zone pulled at once."</p>
             <p>Binds when played</p>
             <p>Unique</p>
             <p class="split"><span>Two-Hand</span><span>Roguelite</span></p>
@@ -725,7 +960,7 @@
             </ul>
             <ul class="lines fx">
               <li>Equip: Your spells cast themselves.</li>
-              <li>Equip: Bosses arrive every 2:15 and drop gear for your class.</li>
+              <li>Equip: A boss arrives every 2:15 and drops gear for your class.</li>
               <li>Equip: Elites, guardians and treasure chests stalk the battleground.</li>
               <li>Equip: Quest givers offer gold, jewelry and bonus XP in the field.</li>
               <li>Equip: A pet fetches drops and grows alongside you.</li>
@@ -742,39 +977,72 @@
                 <li>(4) Set: A companion pet that fetches your loot, levels up and changes looks</li>
               </ul>
             </div>
-            <p class="flavor">"Running on a from-scratch World of Warcraft 1.12 client, written in Rust."</p>
+            <p class="flavor">"Runs on a from-scratch World of Warcraft 1.12 client, written in Rust. Yes, really."</p>
             <p class="req">Requires Rust and a WoW 1.12.1 client</p>
           </div>
         </div>
 
         <div class="hero-side">
-          <p class="pitch">A Megabonk-style survivors game set in vanilla Azeroth. Pick a class, walk into a zone, and hold off the horde for fifteen minutes while your spells cast themselves and a boss shows up every couple of minutes.</p>
+          <p class="pitch">A Megabonk-style survivors game set in vanilla Azeroth. Pick a class, walk into a zone and hold out for fifteen minutes while a boss drops in every couple of minutes to check on you.</p>
           <div class="actions">
             <a class="btn" href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">View the code on GitHub</a>
-            <a class="btn alt" href="#run-it">How to run it</a>
+            <a class="btn alt" href="#run-it">Get it running</a>
           </div>
           <figure class="window">
             <div class="window-bar"><span class="window-title">Elwynn Forest</span><span class="window-x" aria-hidden="true"></span></div>
             <img src="combat.jpg" width="1280" height="720" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
-            <figcaption>Late game in Elwynn Forest: the whole spell pool at full rank against a 200-strong horde.</figcaption>
+            <figcaption>Late game in Elwynn Forest: the whole spell pool at full rank against a 200-strong horde. Marshal Dughan is not coming.</figcaption>
           </figure>
           <div class="tracker">
             <p class="tracker-title"><a href="#q-coop">Online Co-op</a> <span>(Group)</span></p>
             <ul>
               <li class="done">- Online networking built: <span>1/1</span></li>
-              <li>- Merged into progression: 0/1</li>
+              <li>- Merged into the main build: 0/1</li>
               <li>- Party features and social layer: 0/4</li>
             </ul>
           </div>
+          <div class="chat" role="group" aria-label="Chat">
+            <div class="chat-tabs" aria-hidden="true"><span class="is-on">General</span><span>Trade</span><span>Guild</span></div>
+            <p class="c-guild">Guild Message of the Day: &lt;Toast House&gt; recruiting: 4 more for launch night.</p>
+            <p class="c-chan">[2. Trade] [Gnomish Bob]: WTS <span class="link q-rare">[Pet Bombling]</span> 5g, will not haggle</p>
+            <p class="c-chan">[4. LookingForGroup] [Thrall]: LFM Molten Core, need heals, have hats</p>
+            <p class="c-chan">[1. General] [Leeroy]: how long is the pull on this zone</p>
+            <p class="c-chan">[1. General] [Jaina]: 15:00. it's the whole zone</p>
+            <p class="c-party">[Party] [Healbot]: please stop standing in the fire</p>
+            <p class="c-chan">[2. Trade] [Silas Darkmoon]: <span class="link q-legendary">[Swift Zulian Tiger]</span> on the Stranglethorn Fever banner. Tickets only.</p>
+            <p class="c-guild">[Guild] [You]: tomorrow night, 4-5 of us, bring snacks</p>
+          </div>
         </div>
       </div>
+
+      <aside class="loading" aria-label="Loading screen tips" data-tips-box>
+        <p class="tip-line"><span><span class="tip-label">Tip:</span> <span data-tip-text>Standing in fire is not a DPS increase.</span></span></p>
+        <div class="loadbar" aria-hidden="true"><span class="loadbar-fill" data-tip-bar></span></div>
+        <div class="tip-controls" data-tip-controls hidden>
+          <button type="button" class="mini-btn" data-tip-next>Next tip</button>
+          <button type="button" class="mini-btn" data-tip-pause aria-pressed="false">Pause</button>
+        </div>
+        <ul data-tips hidden>
+          <li>Standing in fire is not a DPS increase.</li>
+          <li>The Disgusting Oozeling is worth every ticket.</li>
+          <li>Need on everything is not a loot strategy. It is a lifestyle.</li>
+          <li>If the healer is dead, it's the tank's fault.</li>
+          <li>Leeroy Jenkins was ahead of his time.</li>
+          <li>Hunters, your pet is not a tank. Okay, it is a bit.</li>
+          <li>Banish the card you hate. Reroll the hand you hate more.</li>
+          <li>A boss shows up every 2:15. Plan your snack runs accordingly.</li>
+          <li>Right-drag to mouselook. Keyboard turning is between you and your conscience.</li>
+          <li>Frost Mages call it kiting. Everyone else calls it running away.</li>
+          <li>There is no Release Spirit button. There is only Enter.</li>
+        </ul>
+      </aside>
     </header>
 
     <!-- 2. What's New -->
     <section class="panel" id="whats-new" aria-labelledby="new-title">
       <h2 class="plate" id="new-title">What's New</h2>
       <div class="bag-head">
-        <p class="lede">Everything that's landed on the <code>progression</code> branch, sorted like a tidy bag with the best loot first. <strong>It's playable and freshly built:</strong> 391 tests pass, clippy is clean, and the play build is good to go.</p>
+        <p class="lede"><strong>Fresh loot. Plenty of purples. One grey.</strong> Everything in these bags is in the build you'll play.</p>
         <div class="chips" role="group" aria-label="Filter by item quality" data-chips hidden>
           <button type="button" class="chip q-all" data-filter="all" data-label="" aria-pressed="true">All <span class="n"></span></button>
           <button type="button" class="chip q-epic" data-filter="epic" data-label="Epic" aria-pressed="false">Epic <span class="n"></span></button>
@@ -792,12 +1060,13 @@
             <h3 class="name">Talents 2.0</h3>
             <p>Unique</p>
             <p class="split"><span>Talents</span><span>51 Points</span></p>
-            <p>+81 Real talent effects</p>
+            <p>+81 Talents that actually do something</p>
             <ul class="lines fx">
-              <li>Equip: Every tree's 10-, 20- and 30-point talents are real effects now: Presence of Mind, Blast Wave, Ice Block, Sweeping Strikes, Shadowform, Swiftmend, Moonkin Form and friends.</li>
-              <li>Chance on hit: Proc talents like Impact and Ignite actually proc.</li>
-              <li>Equip: The headliners get gold frames.</li>
+              <li>Equip: Every tree's 10-, 20- and 30-point talents are real now: Presence of Mind, Blast Wave, Ice Block, Sweeping Strikes, Shadowform, Swiftmend, Moonkin Form and friends.</li>
+              <li>Chance on hit: Impact and Ignite actually proc.</li>
+              <li>Use: All 51 points are reachable. Green means learnable, grey tells you why not, gold means maxed, and the headliners get gold frames.</li>
             </ul>
+            <p class="flavor">"Your 31-point talent finally does something other than +5%."</p>
           </div>
         </li>
         <li class="item q-epic" data-quality="epic">
@@ -807,10 +1076,12 @@
             <p>Unique</p>
             <p class="split"><span>Prize Booth</span><span>Tickets</span></p>
             <ul class="lines fx">
-              <li>Use: Spend in-game tickets at the gacha-style Prize Booth on companion looks: Silver Tabby, Bombay, Cornish Rex, Senegal, Cockatiel, owls, Tree Frog, Crimson Snake, whelplings, Pet Bombling, Lil' Smoky, Smolderweb Hatchling and Disgusting Oozeling.</li>
-              <li>Equip: A Collection tab tracks the 15 classic vanity pets.</li>
+              <li>Use: Spend tickets at the gacha-style Prize Booth: companions, mounts, mount hats, tabards, titles, toys and Darkmoon Cards.</li>
+              <li>Equip: Companion looks include Silver Tabby, Bombay, Cornish Rex, Senegal, Cockatiel, owls, Tree Frog, Crimson Snake, whelplings, Pet Bombling, Lil' Smoky, Smolderweb Hatchling and Disgusting Oozeling. A Collection tab tracks the 15 classic vanity pets.</li>
+              <li>Chance on hit: Duplicates turn into Faire Favor, which buys anything at Silas's Prize Counter.</li>
             </ul>
-            <p class="flavor">"Tickets only. Never real money."</p>
+            <p class="flavor">"Silas Darkmoon would like a word about your gambling problem. Tickets only. Never real money."</p>
+            <p class="tip-link"><a href="#faire">Try the booth below</a></p>
           </div>
         </li>
         <li class="item q-epic" data-quality="epic">
@@ -818,31 +1089,84 @@
           <div class="tip">
             <h3 class="name">Co-op Rules</h3>
             <p>Binds when played</p>
-            <p class="split"><span>Feature</span><span>Co-op</span></p>
+            <p class="split"><span>Party</span><span>Co-op</span></p>
             <ul class="lines fx">
-              <li>Equip: Downed heroes get revived by allies, and healers do it faster.</li>
-              <li>Equip: Enemies scale with party size and spawn around each player.</li>
-              <li>Equip: The results show each hero's damage, healing and damage taken.</li>
-              <li>Use: Try it with <code>WOW_SURVIVORS_PARTY=3</code>.</li>
+              <li>Equip: Downed heroes get revived by allies. Healers rez faster. Warriors stand on the body and type "rez pls".</li>
+              <li>Equip: Enemies scale with party size and spawn around everyone, so there's no safe corner.</li>
+              <li>Equip: The results screen shows each hero's damage, healing and damage taken. Screenshots will be taken.</li>
+              <li>Use: Bots only for now. Practise with <code>WOW_SURVIVORS_PARTY=3</code>.</li>
             </ul>
-            <p class="flavor">"Playable solo with bots for now."</p>
+            <p class="flavor">"Rez me, I'm right next to you."</p>
             <p class="tip-link"><a href="#q-coop">Online play is in the Quest Log</a></p>
           </div>
         </li>
-
-        <!-- Rare -->
-        <li class="item q-rare" data-quality="rare">
+        <li class="item q-epic" data-quality="epic">
           <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-horseshoe"/></svg></span>
           <div class="tip">
             <h3 class="name">The Stable</h3>
             <p>Binds when picked up</p>
-            <p class="split"><span>Mount</span><span>Riding</span></p>
+            <p class="split"><span>Mount</span><span>+10% Speed</span></p>
             <ul class="lines fx">
-              <li>Use: Ride the mounts you win for +10% speed, from Brown Horse to Swift Zulian Tiger and the Deathcharger.</li>
+              <li>Use: Ride the mounts you win in your runs, from Brown Horse to Swift Zulian Tiger and the Deathcharger.</li>
               <li>Use: Put a hat on them.</li>
             </ul>
+            <p class="flavor">"Swift Zulian Tiger. Deathcharger. A hat on both. You're welcome."</p>
+            <p class="tip-link"><a href="#stable">See the hats</a></p>
           </div>
         </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Bosses and Chests</h3>
+            <p class="split"><span>Boss</span><span>Loot</span></p>
+            <ul class="lines fx">
+              <li>Equip: Bosses get the proper top-centre WoW frame: skull, health %, final-boss tag and 1.5&#xD7; the roster size.</li>
+              <li>Equip: Chests tier up from wooden caches to iron-bound paid chests to golden, minimap-marked ornate boss chests.</li>
+              <li>Use: The final boss drops the grandest chest. Loot rolls when you open it, with a <em>Loot: item</em> banner.</li>
+            </ul>
+            <p class="flavor">"If it has a skull for a level, run."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Legendary Skills</h3>
+            <p class="split"><span>Spell</span><span>Upgrade</span></p>
+            <ul class="lines fx">
+              <li>Equip: Legendary skill upgrades bring real special mechanics: procs, echoes, novas and more.</li>
+            </ul>
+            <p class="flavor">"The spell you've cast a thousand times this run just learned a new trick."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span>
+          <div class="tip">
+            <h3 class="name">No Level Wall</h3>
+            <p class="split"><span>Leveling</span><span>Overcharge</span></p>
+            <p>Requires Level 1</p>
+            <p>+80 Dings per run, give or take</p>
+            <ul class="lines fx">
+              <li>Equip: A full run reaches about level 81, enough to max every spell.</li>
+              <li>Equip: Once you're maxed, you get stacking Overcharge picks.</li>
+            </ul>
+            <p class="flavor">"Ding! Ding! Ding! ... Ding. Max every spell by 15:00, then keep dinging anyway."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-paw"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Companion 2.0</h3>
+            <p>Unique</p>
+            <p class="split"><span>Companion</span><span>Pet</span></p>
+            <ul class="lines fx">
+              <li>Equip: Your companion fetches drops and levels up alongside you.</li>
+              <li>Use: Unlock critter looks through pet level, achievements, quests and the Faire.</li>
+            </ul>
+            <p class="flavor">"Better at looting than your last raid group."</p>
+          </div>
+        </li>
+
+        <!-- Rare -->
         <li class="item q-rare" data-quality="rare">
           <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-tabard"/></svg></span>
           <div class="tip">
@@ -850,55 +1174,10 @@
             <p class="split"><span>Tabard</span><span>Cosmetic</span></p>
             <ul class="lines fx">
               <li>Equip: Tabards show on your hero, and titles sit next to your name.</li>
-              <li>Use: Three toys go on a toy bar, keys <kbd>7</kbd>&#x2013;<kbd>9</kbd>.</li>
-              <li>Equip: A full Darkmoon deck becomes its real trinket: Blue Dragon, Heroism, Maelstrom or Twisting Nether.</li>
+              <li>Use: Three toys on a toy bar, keys <kbd>7</kbd>&#x2013;<kbd>9</kbd>.</li>
+              <li>Chance on hit: Finish a Darkmoon deck and it becomes the real trinket: Blue Dragon, Heroism, Maelstrom or Twisting Nether.</li>
             </ul>
-          </div>
-        </li>
-        <li class="item q-rare" data-quality="rare">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span>
-          <div class="tip">
-            <h3 class="name">No Level Wall</h3>
-            <p class="split"><span>Leveling</span><span>Overcharge</span></p>
-            <p>Requires Level 1</p>
-            <ul class="lines fx">
-              <li>Equip: A full run reaches about level 81, enough to max every spell.</li>
-              <li>Equip: Maxed builds get stacking Overcharge picks.</li>
-            </ul>
-          </div>
-        </li>
-        <li class="item q-rare" data-quality="rare">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Bosses and Chests</h3>
-            <p class="split"><span>Boss</span><span>Loot</span></p>
-            <ul class="lines fx">
-              <li>Equip: Bosses get a top-centre WoW frame with a skull, health %, a final-boss tag and 1.5&#xD7; roster size.</li>
-              <li>Equip: Wooden caches, iron-bound paid chests and golden, minimap-marked ornate boss chests now tier up.</li>
-              <li>Use: The final boss gets the grandest chest, with loot rolled on opening and a <em>Loot: item</em> banner.</li>
-            </ul>
-          </div>
-        </li>
-        <li class="item q-rare" data-quality="rare">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Legendary Skills</h3>
-            <p class="split"><span>Spell</span><span>Upgrade</span></p>
-            <ul class="lines fx">
-              <li>Equip: Legendary skill upgrades now use real special mechanics: procs, echoes, novas and more.</li>
-            </ul>
-          </div>
-        </li>
-        <li class="item q-rare" data-quality="rare">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-paw"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Companion 2.0</h3>
-            <p>Unique</p>
-            <p class="split"><span>Companion</span><span>Pet</span></p>
-            <ul class="lines fx">
-              <li>Equip: Your companion fetches drops and levels up.</li>
-              <li>Use: Unlock critter looks through pet level, achievements, quests and the Faire.</li>
-            </ul>
+            <p class="flavor">"Fashion is the true endgame."</p>
           </div>
         </li>
         <li class="item q-rare" data-quality="rare">
@@ -907,9 +1186,10 @@
             <h3 class="name">Field Quests</h3>
             <p class="split"><span>Quest</span><span>In-run</span></p>
             <ul class="lines fx">
-              <li>Use: Field quest givers offer accept, complete and turn-in loops.</li>
-              <li>Equip: Each turn-in pays a cache worth of gold, a jewelry choice and bonus XP.</li>
+              <li>Use: Quest givers stand around mid-battle with accept, complete and turn-in loops.</li>
+              <li>Equip: Turn-ins pay a cache worth of gold, a jewelry choice and bonus XP.</li>
             </ul>
+            <p class="flavor">"The world is ending. He still has errands for you."</p>
           </div>
         </li>
         <li class="item q-rare" data-quality="rare">
@@ -918,9 +1198,10 @@
             <h3 class="name">Sounds and Music</h3>
             <p class="split"><span>Audio</span><span>Ambience</span></p>
             <ul class="lines fx">
-              <li>Equip: Positional, throttled WoW cast and impact sounds, joined by level-up, coin, chest and boss cues.</li>
-              <li>Equip: Every battleground has music and ambience, and the login theme crossfades on the menu.</li>
+              <li>Equip: Real WoW cast and impact sounds, positional and throttled so a screen full of spells doesn't melt your ears.</li>
+              <li>Equip: Level-up, coin, chest and boss cues. Every battleground has music and ambience, and the login theme crossfades on the menu.</li>
             </ul>
+            <p class="flavor">"Yes, that's the real level-up sound. Yes, you'll hear it about 80 times a run."</p>
           </div>
         </li>
         <li class="item q-rare" data-quality="rare">
@@ -929,9 +1210,10 @@
             <h3 class="name">WoW Camera</h3>
             <p class="split"><span>Camera</span><span>Collision</span></p>
             <ul class="lines fx">
-              <li>Use: Right-drag to mouselook, scroll to zoom, and <kbd>V</kbd> for the old top-down view.</li>
+              <li>Use: Right-drag to mouselook, scroll to zoom, <kbd>V</kbd> for the old top-down view.</li>
               <li>Equip: Proper tree and doodad collision.</li>
             </ul>
+            <p class="flavor">"Right-click and turn like it's 2005. Keyboard turners will be found."</p>
           </div>
         </li>
         <li class="item q-rare" data-quality="rare">
@@ -940,45 +1222,37 @@
             <h3 class="name">Visible Gear</h3>
             <p class="split"><span>Armor</span><span>Appearance</span></p>
             <ul class="lines fx">
-              <li>Equip: Equipped gear visibly changes your hero.</li>
-              <li>Equip: Appearance customisation and a hero name carry through to the Character panel and results screen.</li>
+              <li>Equip: Equipped gear shows on your hero.</li>
+              <li>Equip: Your appearance and hero name follow you to the Character panel and the results screen.</li>
             </ul>
+            <p class="flavor">"Your mismatched levelling greens, now visible to everyone. Sorry."</p>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-ring"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Jewelry and the C Panel</h3>
+            <p class="split"><span>Finger, Neck</span><span>Trinket</span></p>
+            <ul class="lines fx">
+              <li>Equip: Rings, trinkets and necklaces show up in-run or at quest turn-ins.</li>
+              <li>Use: <kbd>C</kbd> opens your equipped jewelry and the full stat breakdown.</li>
+            </ul>
+            <p class="flavor">"Press C. Admire your stats. Close C. Get flattened."</p>
           </div>
         </li>
 
         <!-- Uncommon -->
         <li class="item q-uncommon" data-quality="uncommon">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-ring"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Jewelry and the C Panel</h3>
-            <p class="split"><span>Jewelry</span><span>Character</span></p>
-            <ul class="lines fx">
-              <li>Equip: Rings, trinkets and necklaces can appear in-run or at quest turn-ins.</li>
-              <li>Use: <kbd>C</kbd> opens your equipped jewelry and the full stat breakdown.</li>
-            </ul>
-          </div>
-        </li>
-        <li class="item q-uncommon" data-quality="uncommon">
           <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-restart"/></svg></span>
           <div class="tip">
             <h3 class="name">Quick Restart</h3>
             <p class="split"><span>Results</span><span>Death</span></p>
+            <p>Requires: being dead</p>
             <ul class="lines fx">
               <li>Use: <kbd>Enter</kbd> restarts with the same hero, zone and options.</li>
-              <li>Use: <kbd>Esc</kbd> or the button returns to the main menu.</li>
+              <li>Use: <kbd>Esc</kbd> or the button takes you back to the main menu.</li>
             </ul>
-            <p class="flavor">"Death results are fast now."</p>
-          </div>
-        </li>
-        <li class="item q-uncommon" data-quality="uncommon">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Honest Talent States</h3>
-            <p class="split"><span>Talents</span><span>Interface</span></p>
-            <ul class="lines fx">
-              <li>Equip: Green when learnable, grey with the reason when points run out, gold at max.</li>
-              <li>Equip: All 51 points are reachable.</li>
-            </ul>
+            <p class="flavor">"Died to the horde? Enter. Died again? Enter."</p>
           </div>
         </li>
         <li class="item q-uncommon" data-quality="uncommon">
@@ -989,16 +1263,7 @@
             <ul class="lines fx">
               <li>Equip: The play area now fills the whole pit.</li>
             </ul>
-          </div>
-        </li>
-        <li class="item q-uncommon" data-quality="uncommon">
-          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span>
-          <div class="tip">
-            <h3 class="name">Save Format v4</h3>
-            <p class="split"><span>Profile</span><span>Save</span></p>
-            <ul class="lines fx">
-              <li>Equip: Save format v4 is live, and older saves migrate forward.</li>
-            </ul>
+            <p class="flavor">"The pit is the whole pit now. Short John Mithril remains at large."</p>
           </div>
         </li>
 
@@ -1009,16 +1274,134 @@
             <h3 class="name">Rough Edges</h3>
             <p class="split"><span>Junk</span><span>Balance</span></p>
             <p class="junk">Expect rough edges and balance that needs tuning.</p>
+            <p class="flavor">"Vendor price: 1 copper and some of your patience."</p>
           </div>
         </li>
       </ul>
     </section>
 
-    <!-- 3. Quest Log (parchment) -->
+    <!-- 3. Darkmoon Faire simulator -->
+    <section class="panel" id="faire" aria-labelledby="faire-title" data-faire>
+      <h2 class="plate" id="faire-title">Darkmoon Faire: Try Your Luck</h2>
+      <p class="sim-label">Simulator &middot; the real booth is in the game &middot; tickets only, never real money</p>
+
+      <div class="booth">
+        <div class="booth-side">
+          <div class="tip npc">
+            <p class="npc-name">Silas Darkmoon</p>
+            <p class="npc-title">&lt;Darkmoon Faire&gt;</p>
+            <p class="npc-quote">"Step right up! Ten tickets a pull, ninety for ten, and every card's a winner. Some are just more of a winner than others."</p>
+          </div>
+          <div class="tip" data-booth-only hidden>
+            <h3 class="mini-head">Pick a banner</h3>
+            <div class="chips" role="group" aria-label="Prize banner" data-banners></div>
+            <p class="banner-blurb" data-banner-blurb></p>
+            <p class="banner-feat" data-banner-feat></p>
+          </div>
+        </div>
+
+        <div class="booth-main">
+          <p class="booth-nojs" data-booth-nojs>The booth needs JavaScript to shuffle the deck. The odds below are the real ones either way.</p>
+          <div class="booth-ui" data-booth hidden>
+            <div class="counters">
+              <p class="counter">Tickets <b data-tickets>100</b></p>
+              <p class="counter">Faire Favor <b data-favor>0</b></p>
+              <p class="counter">Pulls <b data-pulls>0</b></p>
+            </div>
+            <p class="pity" data-pity></p>
+            <div class="pull-row">
+              <button type="button" class="btn" data-pull="1">Pull 1 <small>10 tickets</small></button>
+              <button type="button" class="btn" data-pull="10">Pull 10 <small>90 tickets, Rare or better guaranteed</small></button>
+              <button type="button" class="btn alt" data-refill>Refill <small>+100 free, fake tickets</small></button>
+              <button type="button" class="btn alt" data-reset>Start over</button>
+            </div>
+            <p class="booth-hint" data-hint aria-live="polite"></p>
+            <div class="stage">
+              <p class="legend-banner" data-legend-banner hidden>LEGENDARY!</p>
+              <p class="stage-idle" data-stage-idle>Silas shuffles the deck. Your move.</p>
+              <ul class="cards" data-cards aria-label="Your latest pull"></ul>
+            </div>
+            <div>
+              <h3 class="mini-head">Your haul</h3>
+              <p class="haul-sum" data-haul-sum>Nothing yet. Those tickets are burning a hole in your pocket.</p>
+              <ul class="haul" data-haul></ul>
+            </div>
+            <div>
+              <p class="label">Share your pull</p>
+              <div class="cmd wraps"><code data-share>Pull something first. Silas is waiting.</code><button type="button" class="copy" data-copy>Copy</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tip booth-odds">
+          <h3>Printed on the Tent</h3>
+          <table class="odds">
+            <thead><tr><th scope="col">Rarity</th><th scope="col">Chance</th><th scope="col">Duplicate</th></tr></thead>
+            <tbody>
+              <tr class="q-common"><th scope="row">Common</th><td>60%</td><td>+1 Favor</td></tr>
+              <tr class="q-uncommon"><th scope="row">Uncommon</th><td>25%</td><td>+3 Favor</td></tr>
+              <tr class="q-rare"><th scope="row">Rare</th><td>11%</td><td>+8 Favor</td></tr>
+              <tr class="q-epic"><th scope="row">Epic</th><td>3.5%</td><td>+25 Favor</td></tr>
+              <tr class="q-legendary"><th scope="row">Legendary</th><td>0.5%</td><td>+100 Favor</td></tr>
+            </tbody>
+          </table>
+          <ul class="odds-notes">
+            <li>One pull is 10 tickets. Ten at once is 90, with a Rare or better guaranteed.</li>
+            <li>Pity: your 30th pull without an Epic is an Epic or better, and your 90th without a Legendary is a Legendary. Themed banners share one pity counter; the standard booth keeps its own.</li>
+            <li>On a themed banner, its featured prizes take half of each rarity's pulls.</li>
+            <li>Duplicates become Faire Favor. In game, Silas's Prize Counter sells any prize for Favor, with 20% off the current banner's featured prizes.</li>
+            <li>In game, tickets only come from playing: 1 per 20 gold, +10 for a win, +25 for a zone's first win, +15 per quest-chain step and +5 per achievement, doubled when the Faire is in your zone.</li>
+            <li><span data-prize-count>127</span> prizes in all: companions, mounts, mount hats, tabards, titles, toys and Darkmoon Cards.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. The Stable showcase -->
+    <section id="stable" aria-labelledby="stable-title" data-showcase-section>
+      <div class="sec-head">
+        <h2 class="sec-title" id="stable-title">The Stable: Mounts, Now With Hats</h2>
+        <p class="sec-sub">Every mount you win can wear a hat. This was not a difficult design decision.</p>
+      </div>
+      <div class="showcase">
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">The Stable</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="showcase-mount-hat-1.jpg" width="1280" height="720" loading="lazy" alt="In game: a hero riding a mount that is wearing a hat">
+          <figcaption>+10% speed. +100% dignity.</figcaption>
+        </figure>
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">The Stable</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="showcase-mount-hat-2.jpg" width="1280" height="720" loading="lazy" alt="In game: another mount from the Stable, hat on">
+          <figcaption>Some heroes ride into battle. This one rides in dressed for the occasion.</figcaption>
+        </figure>
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">The Stable</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="showcase-mount-hat-3.jpg" width="1280" height="720" loading="lazy" alt="In game: a third mount wearing a hat">
+          <figcaption>The horde will never forget the hat.</figcaption>
+        </figure>
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">Darkmoon Faire</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="showcase-faire.jpg" width="1400" height="875" loading="lazy" alt="The in-game Prize Booth mid-reveal on the Scourge Week banner: Goblin Gumbo, two Undercity Tabards, Undercity Cockroach, Scourgebane and the Faire-Goer, with the last cards still turning">
+          <figcaption>Scourge Week, mid-reveal: Scourgebane, a brand-new Undercity Cockroach and two Undercity Tabards nobody asked for.</figcaption>
+        </figure>
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">Companion</span><span class="window-x" aria-hidden="true"></span></div>
+          <img class="focus-high" src="showcase-companion.jpg" width="780" height="1083" loading="lazy" alt="A Night Elf riding a white striped Frostsaber, with a red Crimson Whelpling flying alongside">
+          <figcaption>A Night Elf, a Frostsaber and a Crimson Whelpling in tow. The cat is judging you. So is the whelp.</figcaption>
+        </figure>
+        <figure class="window" data-showcase>
+          <div class="window-bar"><span class="window-title">Armory: Wardrobe</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="showcase-wardrobe.jpg" width="1400" height="730" loading="lazy" alt="The Armory's Wardrobe tab in game: tabards, titles and the toy bar on keys 7, 8 and 9, with a Paladin and her whelp in the middle">
+          <figcaption>Tabards, titles and a toy bar on 7, 8 and 9. Champion of the Faire is a strong choice. So is Jenkins.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 5. Quest Log (parchment) -->
     <section class="panel is-parchment" id="quest-log" aria-labelledby="ql-title" data-questlog>
       <h2 class="plate" id="ql-title">Quest Log</h2>
       <div class="ql-top">
-        <p>Tonight's plan first, then what comes after. Pick a quest to read it.</p>
+        <p><strong>Tonight's run and what comes after.</strong> Accept at your own risk.</p>
         <p class="ql-count">Quests: 16/20</p>
       </div>
 
@@ -1027,11 +1410,11 @@
           <p class="ql-zone" id="z-tonight">Tonight's Run</p>
           <ul aria-labelledby="z-tonight">
             <li><a class="quest d-orange" href="#q-coop" aria-current="true"><span class="lvl">[60]</span><span class="qn">Online Co-op <span class="qtag">(Group)</span></span></a></li>
-            <li><a class="quest d-yellow" href="#q-wake"><span class="lvl">[56]</span><span class="qn">Wake the Workers</span></a></li>
-            <li><a class="quest d-yellow" href="#q-net"><span class="lvl">[58]</span><span class="qn">Networking Lands</span></a></li>
-            <li><a class="quest d-orange" href="#q-party"><span class="lvl">[59]</span><span class="qn">Merge the Party</span></a></li>
-            <li><a class="quest d-orange" href="#q-social"><span class="lvl">[60]</span><span class="qn">The Social Layer <span class="qtag">(Group)</span></span></a></li>
-            <li><a class="quest d-green" href="#q-docs"><span class="lvl">[55]</span><span class="qn">Write It Down</span></a></li>
+            <li><a class="quest d-yellow" href="#q-wake"><span class="lvl">[56]</span><span class="qn">The Night Shift</span></a></li>
+            <li><a class="quest d-yellow" href="#q-net"><span class="lvl">[58]</span><span class="qn">Bring It Home</span></a></li>
+            <li><a class="quest d-orange" href="#q-party"><span class="lvl">[59]</span><span class="qn">A Party Divided</span></a></li>
+            <li><a class="quest d-orange" href="#q-social"><span class="lvl">[60]</span><span class="qn">Is Everyone Ready? <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-green" href="#q-docs"><span class="lvl">[55]</span><span class="qn">A Scribe's Duty</span></a></li>
           </ul>
 
           <p class="ql-zone" id="z-next">Coming Up</p>
@@ -1042,33 +1425,33 @@
 
           <p class="ql-zone" id="z-backlog">Backlog</p>
           <ul aria-labelledby="z-backlog">
-            <li><a class="quest d-green" href="#q-roles"><span class="lvl">[50]</span><span class="qn">Role Cards <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-green" href="#q-roles"><span class="lvl">[50]</span><span class="qn">Role Call <span class="qtag">(Group)</span></span></a></li>
             <li><a class="quest d-green" href="#q-transmog"><span class="lvl">[48]</span><span class="qn">Faire Phase 3: Transmog</span></a></li>
-            <li><a class="quest d-green" href="#q-polish"><span class="lvl">[47]</span><span class="qn">Online Polish</span></a></li>
+            <li><a class="quest d-green" href="#q-polish"><span class="lvl">[47]</span><span class="qn">Lag Is Not a Mechanic</span></a></li>
             <li><a class="quest d-green" href="#q-sight"><span class="lvl">[45]</span><span class="qn">Clear Sight</span></a></li>
-            <li><a class="quest d-grey" href="#q-blink"><span class="lvl">[30]</span><span class="qn">A Fresh Look</span></a></li>
+            <li><a class="quest d-grey" href="#q-blink"><span class="lvl">[30]</span><span class="qn">Ooh, Shiny</span></a></li>
             <li><a class="quest d-grey" href="#q-hats"><span class="lvl">[28]</span><span class="qn">Hat Check</span></a></li>
             <li><a class="quest d-grey" href="#q-tidy"><span class="lvl">[20]</span><span class="qn">Spring Cleaning</span></a></li>
           </ul>
 
-          <p class="ql-zone" id="z-done">Progression Branch</p>
+          <p class="ql-zone" id="z-done">Ready to Turn In</p>
           <ul aria-labelledby="z-done">
-            <li><a class="quest d-yellow" href="#q-built"><span class="lvl">[60]</span><span class="qn">Playable, Freshly Built <span class="qtag">(Complete)</span></span></a></li>
+            <li><a class="quest d-yellow" href="#q-built"><span class="lvl">[60]</span><span class="qn">Freshly Toasted <span class="qtag">(Complete)</span></span></a></li>
           </ul>
 
-          <p class="ql-legend">Title colour shows the size of the job: <b class="d-orange">orange</b> is big, <b class="d-yellow">yellow</b> is solid, <b class="d-green">green</b> is light, <b class="d-grey">grey</b> is a quick fix.</p>
+          <p class="ql-legend"><b class="d-orange">Orange:</b> bring the whole guild. <b class="d-yellow">Yellow:</b> bring a friend. <b class="d-green">Green:</b> solo it. <b class="d-grey">Grey:</b> you'll out-level it by lunch.</p>
         </nav>
 
         <div class="ql-details">
           <article class="qd" id="q-coop" tabindex="-1" aria-labelledby="q-coop-t">
             <h3 id="q-coop-t">Online Co-op</h3>
-            <p class="qmeta">Level 60 &#xB7; Group of up to 5 &#xB7; Tonight's run</p>
-            <p class="qtext">Champion, the horde has grown too large to face alone. The networking is built on its own branch and is being merged into <code>progression</code> tonight, along with the party features. When it lands, one of you hosts and the rest join from the menu, up to five heroes. You gather in a party lobby, then fight in one shared world: the host runs the horde and everyone moves their own hero. Play over Tailscale or with a forwarded port.</p>
-            <p class="qtext">Until then, the co-op rules run solo with bots.</p>
+            <p class="qmeta">Level 60 &middot; Group of up to 5 &middot; Tonight's run</p>
+            <p class="qtext">&lt;Name&gt;, the horde has grown too large for one hero. The networking is built and is being merged in tonight, along with everything a party needs. When it lands, gather your companions, four at most, and meet me in the lobby. The host commands the horde; each of you commands your own hero. Tailscale or a forwarded port will carry you there. And for the Light's sake, someone bring a healer.</p>
+            <p class="qtext">Until then, train with bots. They never complain about loot.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li class="done">- Online networking built: 1/1</li>
-              <li>- Networking merged into progression: 0/1</li>
+              <li>- Networking merged into the main build: 0/1</li>
               <li>- No-pause level-ups: 0/1</li>
               <li>- Party buffs, shared debuffs and resurrections: 0/1</li>
               <li>- WoW party UI: 0/1</li>
@@ -1078,76 +1461,74 @@
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
               <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Party Lobby</span><span class="rw-text">Host or Join from the menu, then one shared world with everyone on their own hero.</span></span></li>
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span><span><span class="rw-name">No Waiting on Each Other</span><span class="rw-text">Level-ups bank up and you pick from a small card strip while you keep moving. You take less damage while choosing, the world only slows if everyone's choosing at once, a boss kill gives a short breather, and anyone who drops in catches up.</span></span></li>
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party</span><span class="rw-text">Class buffs for the group (Fortitude, Arcane Intellect, Mark of the Wild, auras, Battle Shout, totems), shared debuffs like Sunder Armor and Curse of the Elements, taunts, and class resurrections: Resurrection, Redemption, Rebirth, Soulstones and the Shaman's Ankh.</span></span></li>
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-frames"/></svg></span><span><span class="rw-name">WoW Party UI</span><span class="rw-text">Classic party frames, class-coloured nameplates, arrows to off-screen allies, a Recount-style damage meter, and MVP awards on the results screen.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span><span><span class="rw-name">No Waiting on Each Other</span><span class="rw-text">Level-ups bank up and you pick from a small card strip while you keep moving. You take less damage while choosing, the world only slows if everyone's choosing at once, a boss kill buys a short breather, and late arrivals catch up.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party</span><span class="rw-text">Fortitude, Arcane Intellect, Mark of the Wild, auras, Battle Shout and totems for the group; shared debuffs like Sunder Armor and Curse of the Elements; taunts; and class rezzes: Resurrection, Redemption, Rebirth, Soulstones and the Shaman's Ankh.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-frames"/></svg></span><span><span class="rw-name">WoW Party UI</span><span class="rw-text">Classic party frames, class-coloured nameplates, arrows to off-screen allies, a Recount-style damage meter and MVP awards on the results screen. Arguments about the meter not included.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-wake" tabindex="-1" aria-labelledby="q-wake-t">
-            <h3 id="q-wake-t">Wake the Workers</h3>
-            <p class="qmeta">Level 56 &#xB7; Tonight's run, step 1</p>
-            <p class="qtext">Three workers were put to sleep mid-task. Wake them together: networking in the main repo, plus <code>wowparty</code> and <code>wowui</code>, each with its own build folder. Each step of the night only starts when the one before is verified, and nothing is pushed unless the full gate is green.</p>
+            <h3 id="q-wake-t">The Night Shift</h3>
+            <p class="qmeta">Level 56 &middot; Tonight's run, step 1</p>
+            <p class="qtext">Three workers dozed off mid-task, like a rogue on auto-follow. Wake them all: the networking worker, the party worker and the party UI worker, each in its own build folder. No step starts until the one before it is verified, and nothing gets pushed unless every check is green.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- Networking worker resumed: 0/1</li>
-              <li>- wowparty worker resumed: 0/1</li>
-              <li>- wowui worker resumed: 0/1</li>
+              <li>- Networking worker awake: 0/1</li>
+              <li>- Party worker awake: 0/1</li>
+              <li>- Party UI worker awake: 0/1</li>
             </ul>
-            <h4>Rules for the night:</h4>
+            <h4>Raid rules:</h4>
             <ul class="rules">
-              <li>One build folder per worktree.</li>
-              <li>Check free disk before each wave, and stop if it's under 15 GB.</li>
-              <li>The orchestrator re-runs every gate itself before pushing.</li>
-              <li>No force-pushes.</li>
-              <li>A worker that fails twice is parked and written up rather than retried forever.</li>
+              <li>One build folder per worker.</li>
+              <li>Check free disk before each wave. Under 15 GB, everyone stops.</li>
+              <li>The raid leader re-runs every check before anything is pushed.</li>
+              <li>No force-pushes. Ever.</li>
+              <li>Fail twice and you're benched with a written report. No endless corpse runs.</li>
             </ul>
             <h4>Rewards:</h4>
-            <p class="qsub">You will receive: a running start. Nothing to play yet.</p>
+            <p class="qsub">You will receive: a running start. Nothing to play yet. Patience, young one.</p>
           </article>
 
           <article class="qd" id="q-net" tabindex="-1" aria-labelledby="q-net-t">
-            <h3 id="q-net-t">Networking Lands</h3>
-            <p class="qmeta">Level 58 &#xB7; Tonight's run, step 2</p>
-            <p class="qtext">Bring the networking home to <code>progression</code>. It's verified end to end and only pushed when every gate is green. The test suite already runs a host and a client over a real UDP loopback.</p>
+            <h3 id="q-net-t">Bring It Home</h3>
+            <p class="qmeta">Level 58 &middot; Tonight's run, step 2</p>
+            <p class="qtext">The networking was forged on its own branch. Bring it home to the main build. It's checked end to end and only pushed when every check is green. Good news: the test suite already runs a host and a client over a real network loopback, and they get along fine.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li class="done">- Host and client loopback test: 1/1</li>
-              <li>- rustfmt: 0/1</li>
-              <li>- clippy: 0/1</li>
-              <li>- Survivors tests, with and without <code>coop</code>: 0/1</li>
+              <li>- Every check green, with and without co-op: 0/1</li>
               <li>- Play build: 0/1</li>
               <li>- Pushed: 0/1</li>
             </ul>
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Host and Join</span><span class="rw-text">Online play on the main branch. To try it on one PC, open two windows: one hosting with <code>WOW_SURVIVORS_HOST=5000</code> and one joining with <code>WOW_SURVIVORS_JOIN=127.0.0.1:5000</code>.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Host and Join</span><span class="rw-text">Online play on the main build. For a test on one PC, run two windows: one hosting with <code>WOW_SURVIVORS_HOST=5000</code>, one joining with <code>WOW_SURVIVORS_JOIN=127.0.0.1:5000</code>.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-party" tabindex="-1" aria-labelledby="q-party-t">
-            <h3 id="q-party-t">Merge the Party</h3>
-            <p class="qmeta">Level 59 &#xB7; Tonight's run, step 3</p>
-            <p class="qtext">The <code>wowparty</code> and <code>wowui</code> branches go on top of the networking. Then one integration worker wires them in, so every player in the group sees the same party.</p>
+            <h3 id="q-party-t">A Party Divided</h3>
+            <p class="qmeta">Level 59 &middot; Tonight's run, step 3</p>
+            <p class="qtext">The party features and the party UI were built in separate camps. Merge both on top of the networking, then send one worker to wire it all together so every player sees the same party. Like a raid, except everyone actually shows up.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- Clients fill the party frames from replicated heroes: 0/1</li>
-              <li>- Party buffs, debuff icons, downed state and resurrection visuals replicate: 0/1</li>
-              <li>- The meter counts remote players: 0/1</li>
+              <li>- Party frames fill in from the shared world: 0/1</li>
+              <li>- Buffs, debuff icons, downed state and rez visuals show for everyone: 0/1</li>
+              <li>- The meter counts every player: 0/1</li>
             </ul>
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party, Online</span><span class="rw-text">Party buffs, shared debuffs, taunts and class resurrections, seen by everyone.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party, Online</span><span class="rw-text">Party buffs, shared debuffs, taunts and class rezzes, seen by everyone.</span></span></li>
               <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-frames"/></svg></span><span><span class="rw-name">Party UI for Everyone</span><span class="rw-text">Party frames, nameplates, ally arrows, the Recount-style meter and MVP awards, filled in for every player.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-social" tabindex="-1" aria-labelledby="q-social-t">
-            <h3 id="q-social-t">The Social Layer</h3>
-            <p class="qmeta">Level 60 &#xB7; Group &#xB7; Tonight's run, step 4</p>
-            <p class="qtext">A party that can't talk is just five strangers in the same zone. Two workers build the social layer side by side, and all of it is networked.</p>
+            <h3 id="q-social-t">Is Everyone Ready?</h3>
+            <p class="qmeta">Level 60 &middot; Group &middot; Tonight's run, step 4</p>
+            <p class="qtext">A party that can't talk is just five strangers in the same zone. Two workers build the social layer side by side, all of it networked. Skull dies first. Skull always dies first.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Pings and raid markers: 0/1</li>
@@ -1176,20 +1557,20 @@
                   <span class="rw-text">Skull, cross, square, moon, triangle, diamond, circle and star, on a spot or an enemy and shown on the minimap. Plus "Help!", "Boss" and "Chest here" pings.</span>
                 </span>
               </li>
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Emote Wheel</span><span class="rw-text">The real voice emotes: /wave, /cheer, /dance, /charge and more.</span></span></li>
-              <li class="rw"><span class="slot q-uncommon is-gold" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-quest"/></svg></span><span><span class="rw-name">Ready Check</span><span class="rw-text">The real ready-check pop-up and sound in the lobby, which shows each player's class, title and mount.</span></span></li>
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Spectate</span><span class="rw-text">Cycle the camera through living allies while you're down.</span></span></li>
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span><span><span class="rw-name">Personal Boss Loot</span><span class="rw-text">Each player rolls for their own class, and everyone sees the party's loot banners.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Emote Wheel</span><span class="rw-text">The real voice emotes: /wave, /cheer, /dance, /charge and more. Use responsibly.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon is-gold" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-quest"/></svg></span><span><span class="rw-name">Ready Check</span><span class="rw-text">The real pop-up and sound in the lobby, which shows each player's class, title and mount, so everyone can judge your hat.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Spectate</span><span class="rw-text">Down? Cycle the camera through living allies and backseat-drive.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span><span><span class="rw-name">Personal Boss Loot</span><span class="rw-text">Each player rolls for their own class, and everyone sees the party's loot banners. No ninjas.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-docs" tabindex="-1" aria-labelledby="q-docs-t">
-            <h3 id="q-docs-t">Write It Down</h3>
-            <p class="qmeta">Level 55 &#xB7; Tonight's run, step 5</p>
-            <p class="qtext">Every good night's work ends with a report. Write up how to play online, refresh the roadmap, the README and this page, and leave a summary for the morning.</p>
+            <h3 id="q-docs-t">A Scribe's Duty</h3>
+            <p class="qmeta">Level 55 &middot; Tonight's run, step 5</p>
+            <p class="qtext">No night's work is done until a scribe writes it down. Write the guide to playing online, refresh the roadmap, the README and this very page, and leave a summary for the morning.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- How to play online, in <code>docs/MULTIPLAYER.md</code>: 0/1</li>
+              <li>- Guide to playing online: 0/1</li>
               <li>- Roadmap and README: 0/1</li>
               <li>- This page, with co-op instructions: 0/1</li>
               <li>- Morning summary: 0/1</li>
@@ -1197,14 +1578,14 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">The Morning Haul</span><span class="rw-text"><code>progression</code> with online co-op and the party features, a fresh play build, a short list of things to try with friends, and an honest list of what's untested.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">The Morning Haul</span><span class="rw-text">Online co-op and the party features on the main build, a fresh play build, a short list of things to try with friends, and an honest list of what's untested.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-kit" tabindex="-1" aria-labelledby="q-kit-t">
             <h3 id="q-kit-t">Launch Night Kit</h3>
-            <p class="qmeta">Level 58 &#xB7; Group &#xB7; Coming up</p>
-            <p class="qtext">Four or five friends, one evening, nobody fighting a compiler. Pack everything a friend needs to get from download to the party lobby.</p>
+            <p class="qmeta">Level 58 &middot; Group &middot; Coming up</p>
+            <p class="qtext">Four or five friends, one evening, nobody fighting a compiler. Pack everything a friend needs to get from download to the lobby before the snacks run out.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- A prebuilt zip for friends: 0/1</li>
@@ -1214,16 +1595,16 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pack"/></svg></span><span><span class="rw-name">Prebuilt Zip</span><span class="rw-text">A ready-made build, so friends can skip building from source.</span></span></li>
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span><span><span class="rw-name">Version Check</span><span class="rw-text">So the whole party is on the same build before the pull.</span></span></li>
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">Friend Guide</span><span class="rw-text">A short guide written for the friends joining in.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pack"/></svg></span><span><span class="rw-name">Prebuilt Zip</span><span class="rw-text">A ready-made build, so friends skip building from source.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span><span><span class="rw-name">Version Check</span><span class="rw-text">So the whole party is on the same build before the first pull.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">Friend Guide</span><span class="rw-text">A short guide for people with better things to do than read guides.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-mc" tabindex="-1" aria-labelledby="q-mc-t">
             <h3 id="q-mc-t">Raid: Molten Core</h3>
-            <p class="qmeta">Level 60 &#xB7; Raid &#xB7; Coming up &#xB7; Epic quest</p>
-            <p class="qtext">Deep beneath Blackrock Mountain, the first raid waits. Before anyone steps in, the engine has to prove it can handle Molten Core. Then come the boss mechanics, the Tier 1 sets and proper Need and Greed rolls.</p>
+            <p class="qmeta">Level 60 &middot; Raid &middot; Coming up &middot; Epic quest</p>
+            <p class="qtext">Deep beneath Blackrock Mountain, the first raid waits. Before anyone sets foot inside, the engine must prove it can take the heat. Then come the boss mechanics, the Tier 1 sets and proper Need and Greed rolls. Clear your calendar and tell everyone it'll only take an hour.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Engine check: 0/1</li>
@@ -1235,15 +1616,15 @@
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
               <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The First Raid</span><span class="rw-text">Molten Core, with bosses built on a shared mechanics library.</span></span></li>
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span><span><span class="rw-name">Tier 1 Sets</span><span class="rw-text">Class sets with real set bonuses.</span></span></li>
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-dice"/></svg></span><span><span class="rw-name">Need and Greed</span><span class="rw-text">Roll Need or Greed on raid loot, the classic way.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span><span><span class="rw-name">Tier 1 Sets</span><span class="rw-text">Class sets with real set bonuses. Yes, you'll want the shoulders.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-dice"/></svg></span><span><span class="rw-name">Need and Greed</span><span class="rw-text">Roll on raid loot the classic way. Need on everything at your own peril.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-roles" tabindex="-1" aria-labelledby="q-roles-t">
-            <h3 id="q-roles-t">Role Cards</h3>
-            <p class="qmeta">Level 50 &#xB7; Group &#xB7; Backlog</p>
-            <p class="qtext">Once co-op lands, give healers and tanks cards that suit a group.</p>
+            <h3 id="q-roles-t">Role Call</h3>
+            <p class="qmeta">Level 50 &middot; Group &middot; Backlog</p>
+            <p class="qtext">Healers want to heal. Tanks want to be hit. Give them level-up cards for it.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Heals that also hit the lowest ally: 0/1</li>
@@ -1253,14 +1634,14 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">Role Cards in Co-op</span><span class="rw-text">Level-up picks for healing and tanking in a party.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">Role Cards in Co-op</span><span class="rw-text">Picks that let healers heal and tanks tank in a party.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-transmog" tabindex="-1" aria-labelledby="q-transmog-t">
             <h3 id="q-transmog-t">Faire Phase 3: Transmog</h3>
-            <p class="qmeta">Level 48 &#xB7; Backlog</p>
-            <p class="qtext">The Darkmoon Faire has a third act to open: transmog. No real money, as ever.</p>
+            <p class="qmeta">Level 48 &middot; Backlog</p>
+            <p class="qtext">The Darkmoon Faire has one more tent to pitch: transmog. Still no real money. Silas insists.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Transmog at the Faire: 0/1</li>
@@ -1268,14 +1649,14 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-tabard"/></svg></span><span><span class="rw-name">Transmog</span><span class="rw-text">Change how your gear looks.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-tabard"/></svg></span><span><span class="rw-name">Transmog</span><span class="rw-text">Make your gear look like better gear.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-polish" tabindex="-1" aria-labelledby="q-polish-t">
-            <h3 id="q-polish-t">Online Polish</h3>
-            <p class="qmeta">Level 47 &#xB7; Backlog</p>
-            <p class="qtext">Smooth out the bumps of playing online.</p>
+            <h3 id="q-polish-t">Lag Is Not a Mechanic</h3>
+            <p class="qmeta">Level 47 &middot; Backlog</p>
+            <p class="qtext">Online play will have bumps. Sand them down before anyone blames the healer.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Reconnect: 0/1</li>
@@ -1285,14 +1666,14 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Steadier Online Play</span><span class="rw-text">Get back in after a drop, see your latency, and a browser transport.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Steadier Online Play</span><span class="rw-text">Get back in after a disconnect, see your latency, and a browser transport.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-sight" tabindex="-1" aria-labelledby="q-sight-t">
             <h3 id="q-sight-t">Clear Sight</h3>
-            <p class="qmeta">Level 45 &#xB7; Backlog</p>
-            <p class="qtext">Joining players should see what the host sees.</p>
+            <p class="qmeta">Level 45 &middot; Backlog</p>
+            <p class="qtext">What the host sees, the clients should see.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Enemy debuff marks: 0/1</li>
@@ -1302,14 +1683,14 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Shared View</span><span class="rw-text">Clients see enemy debuff marks, hero auras and mounts.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Shared View</span><span class="rw-text">Joining players see enemy debuff marks, hero auras and mounts. Mostly the mounts.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-blink" tabindex="-1" aria-labelledby="q-blink-t">
-            <h3 id="q-blink-t">A Fresh Look</h3>
-            <p class="qmeta">Level 30 &#xB7; Backlog</p>
-            <p class="qtext">New gear deserves a moment.</p>
+            <h3 id="q-blink-t">Ooh, Shiny</h3>
+            <p class="qmeta">Level 30 &middot; Backlog</p>
+            <p class="qtext">New gear deserves a moment of attention.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- The hero blinks for a few frames on a gear change: 0/1</li>
@@ -1323,8 +1704,8 @@
 
           <article class="qd" id="q-hats" tabindex="-1" aria-labelledby="q-hats-t">
             <h3 id="q-hats-t">Hat Check</h3>
-            <p class="qmeta">Level 28 &#xB7; Backlog</p>
-            <p class="qtext">A few hats and mounts in the Stable need a second look.</p>
+            <p class="qmeta">Level 28 &middot; Backlog</p>
+            <p class="qtext">A few hats and mounts in the Stable need a second look. Nobody rides out in a bad hat.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
               <li>- Better icons for the Dapper Top Hat and Jack-o'-Lantern Hat: 0/1</li>
@@ -1335,35 +1716,35 @@
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-common" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-horseshoe"/></svg></span><span><span class="rw-name">Hats and Mounts That Look Right</span><span class="rw-text">Cleaner icons and checked skins.</span></span></li>
+              <li class="rw"><span class="slot q-common" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-hat"/></svg></span><span><span class="rw-name">Hats and Mounts That Look Right</span><span class="rw-text">Cleaner icons and checked skins.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-tidy" tabindex="-1" aria-labelledby="q-tidy-t">
             <h3 id="q-tidy-t">Spring Cleaning</h3>
-            <p class="qmeta">Level 20 &#xB7; Backlog</p>
-            <p class="qtext">Once everything is on <code>progression</code>, sweep out the old branches.</p>
+            <p class="qmeta">Level 20 &middot; Backlog</p>
+            <p class="qtext">Old branches are piling up like grey items in your bags. Once everything's in the main build, vendor them.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- Delete merged remote branches (<code>wip/*</code>, <code>wave3-*</code>, <code>mp-groundwork</code> and the feature branches): 0/1</li>
+              <li>- Delete the merged remote branches: 0/1</li>
             </ul>
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-poor" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-rock"/></svg></span><span><span class="rw-name">A Tidy Repo</span><span class="rw-text">Fewer branches to trip over.</span></span></li>
+              <li class="rw"><span class="slot q-poor" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-rock"/></svg></span><span><span class="rw-name">A Tidy Repo</span><span class="rw-text">More bag space.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-built" tabindex="-1" aria-labelledby="q-built-t">
-            <h3 id="q-built-t">Playable, Freshly Built (Complete)</h3>
-            <p class="qmeta">Level 60 &#xB7; Progression branch &#xB7; Ready to turn in</p>
-            <p class="qtext">You've done well. The <code>progression</code> branch is pushed and playable, and every item in the bags above is in it.</p>
+            <h3 id="q-built-t">Freshly Toasted (Complete)</h3>
+            <p class="qmeta">Level 60 &middot; Ready to turn in</p>
+            <p class="qtext">You've done well, &lt;Name&gt;. The current build is pushed, playable and packed with loot. Turn this one in and go play.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li class="done">- Survivors tests passing: 391/391</li>
-              <li class="done">- Clippy clean: 1/1</li>
-              <li class="done">- Play build ready: 1/1</li>
-              <li class="done">- Co-op rules, solo with bots: 1/1</li>
+              <li class="done">- Fresh play build: 1/1</li>
+              <li class="done">- New loot in the bags: 17/17</li>
+              <li class="done">- Co-op rules, playable with bots: 1/1</li>
+              <li class="done">- Faire booth open for business: 1/1</li>
             </ul>
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
@@ -1375,39 +1756,40 @@
       </div>
     </section>
 
-    <!-- 4. Screenshots -->
+    <!-- 6. Screenshots -->
     <section id="screenshots" aria-labelledby="shots-title">
       <div class="sec-head">
         <h2 class="sec-title" id="shots-title">Screenshots</h2>
-        <p class="sec-sub">From real runs, rendered from a user-supplied 1.12 client.</p>
+        <p class="sec-sub">Real runs, real horde. Somewhere in the first one is a Mage.</p>
       </div>
       <div class="gallery">
         <figure class="window">
           <div class="window-bar"><span class="window-title">Elwynn Forest</span><span class="window-x" aria-hidden="true"></span></div>
           <img src="combat.jpg" width="1280" height="720" loading="lazy" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
-          <figcaption>A Mage in Elwynn Forest surrounded by the horde, with spells and damage numbers everywhere.</figcaption>
+          <figcaption>A Mage, a 200-strong horde and damage numbers everywhere. Goldshire has never been this busy.</figcaption>
         </figure>
         <figure class="window">
           <div class="window-bar"><span class="window-title">Level Up</span><span class="window-x" aria-hidden="true"></span></div>
           <img src="levelup.jpg" width="1280" height="720" loading="lazy" alt="The level-up screen with three spell cards and Reroll, Skip and Banish buttons">
-          <figcaption>Level up: three spell cards, coloured by rarity, plus Reroll, Skip and Banish.</figcaption>
+          <figcaption>Three spell cards, coloured by rarity, plus Reroll, Skip and Banish. Purple is always the right answer.</figcaption>
         </figure>
         <figure class="window">
           <div class="window-bar"><span class="window-title">Run Options</span><span class="window-x" aria-hidden="true"></span></div>
           <img src="run-options.jpg" width="1280" height="720" loading="lazy" alt="The Run Options panel with sliders for enemy density, health, damage and speed">
-          <figcaption>Run Options: sliders for enemy density, health, damage and speed. Make it harder, earn more.</figcaption>
+          <figcaption>Sliders for enemy density, health, damage and speed. Make it harder, earn more. Greed is a stat.</figcaption>
         </figure>
         <figure class="window">
           <div class="window-bar"><span class="window-title">Victory</span><span class="window-x" aria-hidden="true"></span></div>
           <img src="victory.jpg" width="1280" height="720" loading="lazy" alt="The victory screen showing 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches">
-          <figcaption>A full 15-minute win, with the run in numbers: 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches.</figcaption>
+          <figcaption>15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches. Screenshot it before the healer claims the credit.</figcaption>
         </figure>
       </div>
     </section>
 
-    <!-- 5. Play it yourself -->
+    <!-- 7. Play it yourself -->
     <section class="panel" id="run-it" aria-labelledby="play-title">
       <h2 class="plate" id="play-title">Play It Yourself</h2>
+      <p class="play-lede">Installation takes longer than a Molten Core trash pull. Barely.</p>
       <p class="notice">
         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#g-quest"/></svg>
         <span><strong>You need World of Warcraft 1.12.1 client data to play.</strong> Nothing Blizzard-owned is hosted here or in the repo. Step 3 fetches a client's <code>Data</code> folder for you.</span>
@@ -1418,31 +1800,31 @@
           <li>
             <span class="step-n" aria-hidden="true">1</span>
             <div class="step-body">
-              <h3>Get the tools</h3>
+              <h3>Gather your reagents</h3>
               <p>Install Rust from <a href="https://rustup.rs">rustup.rs</a>, plus Git.</p>
             </div>
           </li>
           <li>
             <span class="step-n" aria-hidden="true">2</span>
             <div class="step-body">
-              <h3>Get the code</h3>
-              <p>Clone the <code>progression</code> branch.</p>
+              <h3>Pick up the quest</h3>
+              <p>Clone the code.</p>
               <div class="cmd"><code>git clone -b progression https://github.com/deanmathieson/azeroth-survivors-re</code><button type="button" class="copy" data-copy>Copy</button></div>
             </div>
           </li>
           <li>
             <span class="step-n" aria-hidden="true">3</span>
             <div class="step-body">
-              <h3>Get the game data</h3>
-              <p>The repo ships no Blizzard files. This script downloads a WoW 1.12.1 client's <code>Data</code> folder (about 5.5 GB) into <code>wow-data/</code>. On Windows, run it from Git Bash.</p>
+              <h3>Fetch the game data</h3>
+              <p>The repo ships no Blizzard files. This script downloads a WoW 1.12.1 client's <code>Data</code> folder (about 5.5 GB) into <code>wow-data/</code>. On Windows, run it from Git Bash. Good time to put the kettle on.</p>
               <div class="cmd"><code>cd azeroth-survivors-re &amp;&amp; bash scripts/fetch-data.sh</code><button type="button" class="copy" data-copy>Copy</button></div>
             </div>
           </li>
           <li>
             <span class="step-n" aria-hidden="true">4</span>
             <div class="step-body">
-              <h3>Build and play</h3>
-              <p>The first build takes about ten minutes.</p>
+              <h3>Hearth in</h3>
+              <p>Build and play. The first build takes about ten minutes, which is exactly long enough to argue about who's tanking.</p>
               <p class="label">PowerShell</p>
               <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; cargo survivors</code><button type="button" class="copy" data-copy>Copy</button></div>
               <p class="label">macOS, Linux or Git Bash</p>
@@ -1472,14 +1854,15 @@
           </div>
 
           <aside class="tip dialog" aria-labelledby="friends-title">
-            <h3 id="friends-title">Playing with Friends</h3>
+            <p class="guild-tag">&lt;Toast House&gt;</p>
+            <h3 id="friends-title">LFG: 4 more for launch night</h3>
             <p class="dialog-sub">Once co-op lands</p>
-            <p>Online co-op is still being merged, so this part isn't live yet. When it is, up to five of you can play together:</p>
+            <p>Online co-op is still being merged, so this bit isn't live yet. When it is, up to five of you can play together:</p>
             <ol>
-              <li>Everyone installs <a href="https://tailscale.com">Tailscale</a> on their PC. That's the easiest way. Or the host forwards <strong>UDP port 5000</strong> on their router.</li>
+              <li>Everyone installs <a href="https://tailscale.com">Tailscale</a> on their PC. That's the easy way. Or the host forwards <strong>UDP port 5000</strong> on their router.</li>
               <li>The host picks <strong>Host</strong> from the menu, and everyone else picks <strong>Join</strong>.</li>
             </ol>
-            <p>Want a taste today? The co-op rules already run solo with bots:</p>
+            <p>Want a taste today? The co-op rules already run with bots. They don't talk back:</p>
             <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; $env:WOW_SURVIVORS_PARTY="3"; cargo survivors</code><button type="button" class="copy" data-copy>Copy</button></div>
             <p><a href="#q-coop">Track online co-op in the Quest Log</a></p>
           </aside>
@@ -1487,13 +1870,15 @@
       </div>
     </section>
 
-    <!-- 6. Footer -->
+    <!-- 8. Footer -->
     <footer class="foot">
       <div class="foot-orn" aria-hidden="true"><span></span></div>
       <p class="nomoney">No real money, ever: the Faire runs on tickets.</p>
+      <p class="murlocs">No murlocs were harmed. Several were kited.</p>
       <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
       <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is &#xA9; Blizzard Entertainment.</p>
-      <p class="updated">Last updated: 16 Oct 2026 &#xB7; <a href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">Code on GitHub</a> &#xB7; <a href="#top">Back to top</a></p>
+      <p class="nerd"><span>Patch notes for nerds:</span> 391 tests pass, clippy is clean and the play build is good to go on the <code>progression</code> branch. Save format v4 is live, with older saves migrated forward.</p>
+      <p class="updated">Last updated: 16 Oct 2026 &middot; Built for &lt;Toast House&gt; &middot; <a href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">Code on GitHub</a> &middot; <a href="#top">Back to top</a></p>
     </footer>
 
   </div>
@@ -1512,7 +1897,7 @@
       try { history.replaceState(null, "", location.pathname + location.search + "#" + id); } catch (e) { /* sandboxed: ignore */ }
     }
 
-    /* Copy buttons */
+    /* Copy buttons: the code is read at click time, so updated text (the share line) copies too */
     document.querySelectorAll("[data-copy]").forEach(function (button) {
       var label = button.textContent;
       var timer;
@@ -1531,7 +1916,7 @@
           selection.removeAllRanges();
           selection.addRange(range);
           flash("Selected");
-          say("Command selected. Press Ctrl+C to copy it.");
+          say("Text selected. Press Ctrl+C to copy it.");
         }
         try {
           navigator.clipboard.writeText(text).then(function () {
@@ -1576,14 +1961,12 @@
 
     /* Quest Log: list selects the detail pane; without JS every quest stays visible */
     var log = document.querySelector("[data-questlog]");
-    var selectQuest = null;
     if (log) {
       var links = Array.prototype.slice.call(log.querySelectorAll(".quest"));
       var panes = Array.prototype.slice.call(log.querySelectorAll(".qd"));
       var list = log.querySelector(".ql-list");
       var stacked = window.matchMedia("(max-width: 760px)");
-
-      selectQuest = function (id, reveal) {
+      var selectQuest = function (id, reveal) {
         var pane = document.getElementById(id);
         if (!pane || panes.indexOf(pane) < 0) return false;
         panes.forEach(function (p) { p.hidden = p !== pane; });
@@ -1598,11 +1981,9 @@
         }
         return true;
       };
-
       log.classList.add("is-enhanced");
       var fromHash = location.hash.slice(1);
       if (!(fromHash.indexOf("q-") === 0 && selectQuest(fromHash))) selectQuest(panes[0].id);
-
       links.forEach(function (a) {
         a.addEventListener("click", function (event) {
           event.preventDefault();
@@ -1611,19 +1992,15 @@
           setHash(id);
         });
       });
-
       list.addEventListener("keydown", function (event) {
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
         var index = links.indexOf(document.activeElement);
         if (index < 0) return;
         event.preventDefault();
-        var step = event.key === "ArrowDown" ? 1 : -1;
-        var next = links[(index + step + links.length) % links.length];
+        var next = links[(index + (event.key === "ArrowDown" ? 1 : -1) + links.length) % links.length];
         next.focus();
         selectQuest(next.getAttribute("href").slice(1));
       });
-
-      /* Links elsewhere on the page that point at a quest */
       document.addEventListener("click", function (event) {
         var link = event.target.closest && event.target.closest('a[href^="#q-"]');
         if (!link || link.classList.contains("quest")) return;
@@ -1636,18 +2013,422 @@
     }
 
     /* Action bar hotkeys 1 to 4, like the real thing */
-    var hotkeys = { "1": "whats-new", "2": "quest-log", "3": "screenshots", "4": "run-it" };
+    var hotkeys = { "1": "whats-new", "2": "faire", "3": "quest-log", "4": "run-it" };
     document.addEventListener("keydown", function (event) {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       var target = event.target;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
       var id = hotkeys[event.key];
-      if (!id) return;
-      var section = document.getElementById(id);
+      var section = id && document.getElementById(id);
       if (!section) return;
       event.preventDefault();
       section.scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
     });
+
+    /* Loading-screen tips: the loading bar's own animation sets the pace, so hover, focus
+       and the Pause button stop both; reduced motion means no animation, so no rotation */
+    var tipsBox = document.querySelector("[data-tips-box]");
+    if (tipsBox) {
+      var tips = Array.prototype.map.call(tipsBox.querySelectorAll("[data-tips] li"), function (li) { return li.textContent; });
+      var tipText = tipsBox.querySelector("[data-tip-text]");
+      var tipBar = tipsBox.querySelector("[data-tip-bar]");
+      var tipControls = tipsBox.querySelector("[data-tip-controls]");
+      var pauseBtn = tipsBox.querySelector("[data-tip-pause]");
+      var tipIndex = 0;
+      var showTip = function (i, spoken) {
+        tipIndex = (i + tips.length) % tips.length;
+        var swap = function () {
+          tipText.textContent = tips[tipIndex];
+          tipText.classList.remove("is-swapping");
+          if (spoken) say("Tip: " + tips[tipIndex]);
+        };
+        if (reduceMotion.matches) { swap(); return; }
+        tipText.classList.add("is-swapping");
+        setTimeout(swap, 200);
+        tipBar.style.animation = "none";
+        void tipBar.offsetWidth;
+        tipBar.style.animation = "";
+      };
+      tipBar.addEventListener("animationend", function () { showTip(tipIndex + 1); });
+      tipsBox.querySelector("[data-tip-next]").addEventListener("click", function () { showTip(tipIndex + 1, true); });
+      pauseBtn.addEventListener("click", function () {
+        var paused = tipsBox.classList.toggle("is-paused");
+        pauseBtn.setAttribute("aria-pressed", String(paused));
+        pauseBtn.textContent = paused ? "Resume" : "Pause";
+      });
+      if (reduceMotion.matches) pauseBtn.hidden = true;
+      tipControls.hidden = false;
+    }
+
+    /* Showcase: any shot that fails to load disappears, and so does the section if none are left */
+    var showcase = document.querySelector("[data-showcase-section]");
+    if (showcase) {
+      var figs = Array.prototype.slice.call(showcase.querySelectorAll("[data-showcase]"));
+      var checkShowcase = function () {
+        if (figs.every(function (f) { return f.hidden; })) showcase.hidden = true;
+      };
+      figs.forEach(function (fig) {
+        var img = fig.querySelector("img");
+        var fail = function () { fig.hidden = true; checkShowcase(); };
+        if (img.complete && img.naturalWidth === 0) fail();
+        else img.addEventListener("error", fail);
+      });
+    }
+
+    /* Darkmoon Faire Prize Booth simulator: catalog, odds, pity and the ten-pull rule
+       mirror the game's survivors/faire/catalog.rs and booth.rs */
+    var faire = document.querySelector("[data-faire]");
+    if (faire) (function () {
+      var KINDS = ["Companion", "Mount", "Mount hat", "Tabard", "Title", "Toy", "Darkmoon Card"];
+      var GLYPHS = ["g-paw", "g-horseshoe", "g-hat", "g-tabard", "g-book", "g-gift", "g-card"];
+      var QUALITY = ["common", "uncommon", "rare", "epic", "legendary"];
+      var RARITY = ["Common", "Uncommon", "Rare", "Epic", "Legendary"];
+      var ODDS = [6000, 2500, 1100, 350, 50];
+      var FAVOR = [1, 3, 8, 25, 100];
+      var PULL_COST = 10, TEN_PULL_COST = 90, EPIC_PITY = 30, LEGENDARY_PITY = 90;
+      var R = { C: 0, U: 1, R: 2, E: 3, L: 4 };
+      var SEEDS = [
+        [0, "Siamese:R|Hyacinth Macaw:R|Mechanical Squirrel:R|Azure Whelpling:R|Sprite Darter:R|Worg Pup:R|Panda Cub:R|Zergling:R|Mini Diablo:R|Black Kingsnake:U|Undercity Cockroach:U|Emerald Whelpling:R|Silver Tabby:C|Bombay:C|Cornish Rex:C|Senegal:U|Cockatiel:C|Great Horned Owl:U|Hawk Owl:U|Tree Frog:U|Crimson Snake:U|Crimson Whelpling:E|Dark Whelpling:E|Pet Bombling:R|Lil' Smoky:R|Smolderweb Hatchling:R|Disgusting Oozeling:E"],
+        [1, "Brown Horse:U|Chestnut Mare:U|Pinto:U|Gray Kodo:U|Brown Ram:U|Striped Frostsaber:U|Red Mechanostrider:U|Red Skeletal Horse:U|Horn of the Dire Wolf:U|Horn of the Frostwolf Howler:R|Stormpike Battle Charger:R|Black War Tiger:R|Swift Palomino:E|Swift White Mechanostrider:E|Reins of the Winterspring Frostsaber:E|Swift Stormsaber:E|Horn of the Black War Wolf:L|Deathcharger's Reins:L|Swift Razzashi Raptor:L|Swift Zulian Tiger:L"],
+        [2, "Tiny Party Hat:C|Pirate Hat:C|Red Winter Hat:C|Green Winter Hat:U|Dapper Top Hat:U|Tiny Pith Helmet:U|Wizard Hat:R|Jack-o'-Lantern Hat:R|Crown of the Fire Festival:E"],
+        [3, "Stormwind Tabard:C|Ironforge Tabard:C|Darnassus Tabard:C|Gnomeregan Tabard:C|Orgrimmar Tabard:C|Thunder Bluff Tabard:C|Undercity Tabard:C|Darkspear Tabard:C|People's Militia Tabard:U|Nethergarde Tabard:U|Arathor Battle Tabard:U|Battle Tabard of the Defilers:U|Stormpike Battle Tabard:R|Frostwolf Battle Tabard:R|Tabard of the Argent Dawn:R|Tabard of the Cenarion Circle:R|Tabard of the Darkmoon Faire:E"],
+        [4, "the Faire-Goer:C|Carnie:C|Ticket Hoarder:U|the Lucky:U|of the Shattered Hand:R|the Patient:R|Champion of the Faire:E|Scourgebane:E|Jenkins:E|the Insane:L|Scarab Lord:L|the Flamewaker:L"],
+        [5, "Noggenfogger Elixir:C|Goblin Gumbo:C|Snowball:C|Savory Deviate Delight:U|Darkmoon Fireworks:U|Toy Train Set:R|Discombobulator Ray:R|Sayge's Fortune:R|Orb of Deception:E|Dartol's Rod of Transformation:E"]
+      ];
+      var CAT = [];
+      var INDEX = {};
+      SEEDS.forEach(function (seed) {
+        seed[1].split("|").forEach(function (entry) {
+          var cut = entry.lastIndexOf(":");
+          CAT.push({ k: seed[0], n: entry.slice(0, cut), r: R[entry.slice(cut + 1)] });
+        });
+      });
+      ["Beasts", "Elementals", "Portals", "Warlords"].forEach(function (suit) {
+        ["Ace", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"].forEach(function (rank, i) {
+          CAT.push({ k: 6, n: rank + " of " + suit, r: i === 0 ? 3 : 2 });
+        });
+      });
+      CAT.forEach(function (p, i) { p.id = p.k + ":" + p.n; INDEX[p.id] = i; });
+
+      var BANNERS = [
+        { name: "Standard Booth", blurb: "The Prize Booth's standing stock: every prize of a rarity at even odds.", feat: [] },
+        { name: "Scourge Week", blurb: "The Argent Dawn rides against the Scourge. So does a very fast skeleton horse.",
+          feat: ["1:Deathcharger's Reins", "4:Scourgebane", "3:Tabard of the Argent Dawn", "1:Red Skeletal Horse", "0:Undercity Cockroach", "0:Disgusting Oozeling", "3:Undercity Tabard"] },
+        { name: "Ahn'Qiraj Week", blurb: "The Scarab Gong has rung. The gates are open, and the tanks are for the taking.",
+          feat: ["1:Horn of the Black War Wolf", "4:Scarab Lord", "1:Swift Stormsaber", "3:Tabard of the Cenarion Circle", "2:Tiny Pith Helmet"] },
+        { name: "Westfall Harvest", blurb: "Pumpkins, plough horses and the People's Militia: the Faire's homely week.",
+          feat: ["1:Swift Palomino", "2:Jack-o'-Lantern Hat", "3:People's Militia Tabard", "1:Brown Horse", "1:Chestnut Mare", "1:Pinto", "2:Tiny Party Hat", "0:Tree Frog", "5:Goblin Gumbo"] },
+        { name: "Elemental Fury", blurb: "Fire, earth, wind and water, and the Lord of the Firelands' own retinue.",
+          feat: ["4:the Flamewaker", "2:Crown of the Fire Festival", "6:Ace of Elementals", "0:Crimson Whelpling", "6:Two of Elementals", "6:Three of Elementals", "6:Four of Elementals", "6:Five of Elementals", "6:Six of Elementals", "6:Seven of Elementals", "6:Eight of Elementals"] },
+        { name: "Stranglethorn Fever", blurb: "Zul'Gurub's beasts and Booty Bay's pirates, all under one tent.",
+          feat: ["1:Swift Razzashi Raptor", "1:Swift Zulian Tiger", "1:Black War Tiger", "0:Senegal", "0:Crimson Snake", "5:Savory Deviate Delight", "2:Pirate Hat"] },
+        { name: "Darkmoon Jubilee", blurb: "Silas Darkmoon throws open the vaults: the Faire's own finest, and its Aces.",
+          feat: ["4:the Insane", "4:Champion of the Faire", "3:Tabard of the Darkmoon Faire", "0:Dark Whelpling", "0:Pet Bombling", "0:Lil' Smoky", "6:Ace of Beasts", "6:Ace of Elementals", "6:Ace of Portals", "6:Ace of Warlords", "5:Sayge's Fortune", "5:Darkmoon Fireworks", "4:Ticket Hoarder", "4:the Faire-Goer"] }
+      ];
+      BANNERS.forEach(function (b) {
+        b.set = {};
+        b.feat.forEach(function (id) { if (id in INDEX) b.set[id] = true; });
+      });
+
+      var KEY = "toasthouse-faire-sim-v1";
+      var fresh = function () {
+        return { tickets: 100, favor: 0, pulls: 0, banner: 5,
+          pity: { standard: { e: 0, l: 0 }, featured: { e: 0, l: 0 } },
+          owned: {}, haul: {}, best: null };
+      };
+      var load = function () {
+        try {
+          var raw = window.localStorage.getItem(KEY);
+          if (!raw) return null;
+          var s = JSON.parse(raw);
+          var base = fresh();
+          if (!s || typeof s.tickets !== "number") return null;
+          ["tickets", "favor", "pulls", "banner"].forEach(function (k) { if (typeof s[k] === "number") base[k] = s[k]; });
+          if (base.banner < 0 || base.banner >= BANNERS.length) base.banner = 5;
+          ["standard", "featured"].forEach(function (k) {
+            if (s.pity && s.pity[k]) base.pity[k] = { e: +s.pity[k].e || 0, l: +s.pity[k].l || 0 };
+          });
+          if (s.owned && typeof s.owned === "object") base.owned = s.owned;
+          if (s.haul && typeof s.haul === "object") base.haul = s.haul;
+          if (s.best && s.best.id in INDEX) base.best = s.best;
+          return base;
+        } catch (e) { return null; }
+      };
+      var save = function () {
+        try { window.localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private mode: fine */ }
+      };
+      var state = load() || fresh();
+
+      var $ = function (sel) { return faire.querySelector(sel); };
+      var ui = {
+        tickets: $("[data-tickets]"), favor: $("[data-favor]"), pulls: $("[data-pulls]"), pity: $("[data-pity]"),
+        hint: $("[data-hint]"), cards: $("[data-cards]"), idle: $("[data-stage-idle]"), legend: $("[data-legend-banner]"),
+        haul: $("[data-haul]"), haulSum: $("[data-haul-sum]"), share: $("[data-share]"),
+        banners: $("[data-banners]"), blurb: $("[data-banner-blurb]"), feat: $("[data-banner-feat]"),
+        one: $('[data-pull="1"]'), ten: $('[data-pull="10"]'), refill: $("[data-refill]"), reset: $("[data-reset]")
+      };
+      var flashEl = document.querySelector("[data-flash]");
+      var busy = false;
+
+      var el = function (tag, cls, text) {
+        var node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      };
+      var glyph = function (id) {
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("aria-hidden", "true");
+        var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", "#" + id);
+        svg.appendChild(use);
+        return svg;
+      };
+      var ordinal = function (n) {
+        var t = n % 100;
+        if (t >= 11 && t <= 13) return n + "th";
+        return n + (["th", "st", "nd", "rd"][n % 10] || "th");
+      };
+      var rand = function () { return Math.random(); };
+
+      /* A rarity of min or better, at their odds relative to each other, rarest first */
+      var atLeast = function (min, r) {
+        var total = 0, t;
+        for (t = min; t <= 4; t++) total += ODDS[t];
+        var x = r * total;
+        for (t = 4; t >= min; t--) {
+          if (x < ODDS[t]) return t;
+          x -= ODDS[t];
+        }
+        return min;
+      };
+      /* A prize of the rarity: on a themed banner its featured prizes share half the pick */
+      var choose = function (rarity, banner) {
+        var hot = [], cold = [];
+        CAT.forEach(function (p, i) {
+          if (p.r !== rarity) return;
+          if (banner && banner.set[p.id]) hot.push(i); else cold.push(i);
+        });
+        var side = !hot.length ? cold : (!cold.length || rand() < 0.5) ? hot : cold;
+        return side[Math.floor(rand() * side.length) % side.length];
+      };
+      var pull = function (count) {
+        var price = count === 10 ? TEN_PULL_COST : count * PULL_COST;
+        if (state.tickets < price) return null;
+        state.tickets -= price;
+        var themed = state.banner !== 0;
+        var banner = themed ? BANNERS[state.banner] : null;
+        var pity = state.pity[themed ? "featured" : "standard"];
+        var out = [];
+        for (var i = 0; i < count; i++) {
+          var rarity = atLeast(0, rand());
+          if (pity.l + 1 >= LEGENDARY_PITY) rarity = 4;
+          else if (pity.e + 1 >= EPIC_PITY && rarity < 3) rarity = atLeast(3, rand());
+          var tenShort = count === 10 && i === count - 1 && out.every(function (p) { return CAT[p.idx].r < 2; });
+          if (tenShort && rarity < 2) rarity = atLeast(2, rand());
+          var idx = choose(rarity, banner);
+          var prize = CAT[idx];
+          var isNew = !state.owned[prize.id];
+          var favor = 0;
+          if (isNew) state.owned[prize.id] = 1;
+          else { favor = FAVOR[rarity]; state.favor += favor; }
+          state.pulls += 1;
+          state.haul[prize.id] = (state.haul[prize.id] || 0) + 1;
+          if (!state.best || rarity > CAT[INDEX[state.best.id]].r) state.best = { id: prize.id, n: state.pulls };
+          out.push({ idx: idx, isNew: isNew, favor: favor, featured: !!(banner && banner.set[prize.id]) });
+          pity.e = rarity >= 3 ? 0 : pity.e + 1;
+          pity.l = rarity === 4 ? 0 : pity.l + 1;
+        }
+        save();
+        return out;
+      };
+
+      var renderCounters = function () {
+        ui.tickets.textContent = state.tickets;
+        ui.favor.textContent = state.favor;
+        ui.pulls.textContent = state.pulls;
+        var themed = state.banner !== 0;
+        var pity = state.pity[themed ? "featured" : "standard"];
+        ui.pity.innerHTML = "";
+        ui.pity.appendChild(document.createTextNode("Pity (" + (themed ? "themed banners" : "standard booth") + "): Epic or better within "));
+        ui.pity.appendChild(el("b", null, String(EPIC_PITY - pity.e)));
+        ui.pity.appendChild(document.createTextNode(" pulls, Legendary within "));
+        ui.pity.appendChild(el("b", "leg", String(LEGENDARY_PITY - pity.l)));
+        ui.pity.appendChild(document.createTextNode("."));
+        ui.one.disabled = busy || state.tickets < PULL_COST;
+        ui.ten.disabled = busy || state.tickets < TEN_PULL_COST;
+        ui.hint.textContent = state.tickets < PULL_COST ? "Out of tickets. Silas suggests a refill. They're fake, so go wild." : "";
+      };
+      var renderBanner = function () {
+        var b = BANNERS[state.banner];
+        Array.prototype.forEach.call(ui.banners.children, function (chip, i) {
+          chip.setAttribute("aria-pressed", String(i === state.banner));
+        });
+        ui.blurb.textContent = b.blurb;
+        ui.feat.innerHTML = "";
+        if (!b.feat.length) {
+          ui.feat.textContent = "No featured prizes. Pure, honest luck.";
+          return;
+        }
+        ui.feat.appendChild(document.createTextNode("Featured: "));
+        b.feat.forEach(function (id, i) {
+          var p = CAT[INDEX[id]];
+          if (!p) return;
+          var link = el("span", "link q-" + QUALITY[p.r], "[" + p.n + "]");
+          ui.feat.appendChild(link);
+          ui.feat.appendChild(document.createTextNode(i < b.feat.length - 1 ? " " : ""));
+        });
+      };
+      var renderHaul = function () {
+        var ids = Object.keys(state.haul).filter(function (id) { return id in INDEX; });
+        ui.haul.innerHTML = "";
+        if (!ids.length) {
+          ui.haulSum.textContent = "Nothing yet. Those tickets are burning a hole in your pocket.";
+        } else {
+          var owned = Object.keys(state.owned).length;
+          ui.haulSum.textContent = state.pulls + " pulls, " + owned + " of " + CAT.length + " prizes collected, " + state.favor + " Faire Favor from duplicates.";
+          ids.sort(function (a, b) {
+            var pa = CAT[INDEX[a]], pb = CAT[INDEX[b]];
+            return pb.r - pa.r || pa.n.localeCompare(pb.n);
+          });
+          ids.forEach(function (id) {
+            var p = CAT[INDEX[id]];
+            var li = el("li", "q-" + QUALITY[p.r]);
+            if (state.haul[id] > 1) li.appendChild(el("span", "x", state.haul[id] + "\u00D7 "));
+            li.appendChild(document.createTextNode(p.n));
+            ui.haul.appendChild(li);
+          });
+        }
+        if (state.best) {
+          var best = CAT[INDEX[state.best.id]];
+          ui.share.textContent = "I pulled [" + best.n + "] (" + RARITY[best.r] + ") on my " + ordinal(state.best.n) + " pull at toast.house. Tickets only, never real money.";
+        } else {
+          ui.share.textContent = "Pull something first. Silas is waiting.";
+        }
+      };
+      var renderAll = function () { renderCounters(); renderBanner(); renderHaul(); };
+
+      var flashScreen = function () {
+        if (reduceMotion.matches || !flashEl) return;
+        flashEl.classList.remove("go");
+        void flashEl.offsetWidth;
+        flashEl.classList.add("go");
+      };
+      var cardFor = function (res) {
+        var p = CAT[res.idx];
+        var li = el("li", "pcard q-" + QUALITY[p.r]);
+        var inner = el("div", "pcard-inner");
+        var back = el("div", "pcard-back");
+        back.setAttribute("aria-hidden", "true");
+        back.appendChild(glyph("g-moon"));
+        var front = el("div", "pcard-front");
+        var slot = el("span", "slot");
+        slot.appendChild(glyph(GLYPHS[p.k]));
+        front.appendChild(slot);
+        front.appendChild(el("span", "pc-name", p.n));
+        front.appendChild(el("span", "pc-kind", KINDS[p.k] + " \u00B7 " + RARITY[p.r]));
+        front.appendChild(el("span", "pc-status " + (res.isNew ? "pc-new" : "pc-dupe"), res.isNew ? "New!" : "Duplicate: +" + res.favor + " Favor"));
+        if (res.featured) front.appendChild(el("span", "pc-feat", "Featured"));
+        inner.appendChild(back);
+        inner.appendChild(front);
+        li.appendChild(inner);
+        return li;
+      };
+      var reveal = function (results) {
+        ui.idle.hidden = true;
+        ui.legend.hidden = true;
+        ui.legend.classList.remove("pop");
+        ui.cards.innerHTML = "";
+        ui.cards.classList.toggle("is-single", results.length === 1);
+        var nodes = results.map(function (res) { var li = cardFor(res); ui.cards.appendChild(li); return li; });
+        var hasLegendary = results.some(function (res) { return CAT[res.idx].r === 4; });
+        var best = results.reduce(function (a, b) { return CAT[b.idx].r > CAT[a.idx].r ? b : a; });
+        var spoken = results.length === 1
+          ? "You pulled " + CAT[best.idx].n + ", " + RARITY[CAT[best.idx].r] + (best.isNew ? ", new." : ", a duplicate.")
+          : "Ten pulls. Best: " + CAT[best.idx].n + ", " + RARITY[CAT[best.idx].r] + ". All ten: " + results.map(function (r) { return CAT[r.idx].n; }).join(", ") + ".";
+        var finish = function () {
+          if (hasLegendary) {
+            ui.legend.hidden = false;
+            if (!reduceMotion.matches) ui.legend.classList.add("pop");
+          }
+          busy = false;
+          renderCounters();
+          say((hasLegendary ? "Legendary! " : "") + spoken);
+        };
+        if (reduceMotion.matches) {
+          nodes.forEach(function (n) { n.classList.add("is-flipped"); });
+          finish();
+          return;
+        }
+        busy = true;
+        renderCounters();
+        nodes.forEach(function (node, i) {
+          setTimeout(function () {
+            node.classList.add("is-flipped");
+            if (CAT[results[i].idx].r === 4) flashScreen();
+          }, 200 + i * 150);
+        });
+        setTimeout(finish, 200 + nodes.length * 150 + 450);
+      };
+
+      BANNERS.forEach(function (b, i) {
+        var chip = el("button", "chip", b.name);
+        chip.type = "button";
+        chip.setAttribute("aria-pressed", "false");
+        chip.addEventListener("click", function () {
+          if (busy) return;
+          state.banner = i;
+          save();
+          renderAll();
+        });
+        ui.banners.appendChild(chip);
+      });
+      [ui.one, ui.ten].forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (busy) return;
+          var results = pull(Number(btn.getAttribute("data-pull")));
+          if (!results) { renderCounters(); return; }
+          renderCounters();
+          renderHaul();
+          reveal(results);
+        });
+      });
+      ui.refill.addEventListener("click", function () {
+        state.tickets += 100;
+        save();
+        renderCounters();
+        say("Refilled. " + state.tickets + " tickets.");
+      });
+      var resetArmed = null;
+      ui.reset.addEventListener("click", function () {
+        if (busy) return;
+        if (!resetArmed) {
+          ui.reset.textContent = "Sure? Click again";
+          resetArmed = setTimeout(function () { ui.reset.textContent = "Start over"; resetArmed = null; }, 3000);
+          return;
+        }
+        clearTimeout(resetArmed);
+        resetArmed = null;
+        ui.reset.textContent = "Start over";
+        var keepBanner = state.banner;
+        state = fresh();
+        state.banner = keepBanner;
+        save();
+        ui.cards.innerHTML = "";
+        ui.legend.hidden = true;
+        ui.idle.hidden = false;
+        renderAll();
+        say("Fresh start. 100 tickets.");
+      });
+
+      var countEl = faire.querySelector("[data-prize-count]");
+      if (countEl) countEl.textContent = CAT.length;
+      $("[data-booth-nojs]").hidden = true;
+      $("[data-booth]").hidden = false;
+      $("[data-booth-only]").hidden = false;
+      renderAll();
+    })();
   })();
 </script>
 </body>
