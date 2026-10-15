@@ -348,15 +348,15 @@ fn run_companions(
                 }
             }
         }
-        // Truffle Snout: a small pile of coins at its feet, worth what the owner's gold bonus
-        // makes it.
+        // Truffle Snout: a small pile of coins at its feet, worth what the gold bonus of the hero
+        // who picks it up makes it, as every coin is.
         if let Some(every) = pet::truffle_every(skills.truffle_snout) {
             pet.next_truffle -= dt;
             if pet.next_truffle <= 0.0 && !down {
                 pet.next_truffle = every;
-                let gold = treasure::worth(pet::TRUFFLE_COINS, run.elapsed, stats.gold, 0.5);
+                let coins = treasure::Coins::new(pet::TRUFFLE_COINS, run.elapsed, 0.5);
                 let serial = run.guid();
-                enemies::spawn_gem(&mut commands, serial, pos, GemKind::Gold(gold));
+                enemies::spawn_gem(&mut commands, serial, pos, GemKind::Gold(coins));
             }
         }
         // To the pickup, else to a spot at the hero's heel on its own side.

@@ -106,13 +106,38 @@ pub(super) fn coin_value(elapsed: f32) -> u32 {
 ///
 /// [`Stats::gold`]: super::Stats::gold
 pub(super) fn worth(coins: u32, elapsed: f32, gold: f32, dither: f32) -> u32 {
-    let exact = (coins * coin_value(elapsed)) as f32 * gold.max(0.0);
-    ((exact + dither).floor() as u32).max(1)
+    Coins::new(coins, elapsed, dither).pays(gold)
+}
+
+/// Coins on the ground, their worth not yet reckoned: they pay under the gold multiplier of the
+/// hero who picks them up ([`Coins::pays`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Coins {
+    /// What they are worth before any multiplier: the coins at what a coin was worth as they fell.
+    pub base: u32,
+    /// The rounding's dither, uniform in `[0, 1)` ([`worth`]).
+    pub dither: f32,
+}
+
+impl Coins {
+    /// `coins` coins falling `elapsed` seconds in.
+    pub(super) fn new(coins: u32, elapsed: f32, dither: f32) -> Self {
+        Self {
+            base: coins * coin_value(elapsed),
+            dither,
+        }
+    }
+
+    /// What they pay a picker whose gold multiplier is `gold`, rounded once; never less than one.
+    pub(super) fn pays(self, gold: f32) -> u32 {
+        let exact = self.base as f32 * gold.max(0.0);
+        ((exact + self.dither).floor() as u32).max(1)
+    }
 }
 
 /// The gold a kill drops, if any: a pile from a boss or an elite, now and then a coin from the
-/// horde, under the gold multiplier `gold`. `roll` is uniform in `[0, 1)`.
-pub(super) fn purse(boss: bool, elite: bool, elapsed: f32, gold: f32, roll: f32) -> Option<u32> {
+/// horde, its worth reckoned by whoever picks it up. `roll` is uniform in `[0, 1)`.
+pub(super) fn purse(boss: bool, elite: bool, elapsed: f32, roll: f32) -> Option<Coins> {
     let (coins, dither) = if boss {
         (BOSS_PILE_COINS, roll)
     } else if elite {
@@ -123,7 +148,7 @@ pub(super) fn purse(boss: bool, elite: bool, elapsed: f32, gold: f32, roll: f32)
     } else {
         return None;
     };
-    Some(worth(coins, elapsed, gold, dither))
+    Some(Coins::new(coins, elapsed, dither))
 }
 
 /// A cache's burst of gold under the gold multiplier `gold`, rounded to the nearest coin.
@@ -468,23 +493,21 @@ pub(super) fn spawn_elites(
     heroes: Query<(&Transform, &HeroState), With<Hero>>,
     world: WorldPoint,
 ) {
-    let standing = heroes.iter().filter(|(_, h)| h.alive());
-    let Some(hpos) = party::centre(standing.map(|(tf, _)| tf.translation)) else {
-        return;
-    };
-    if run.elapsed < run.next_elite {
+    if run.elapsed < run.next_elite || !heroes.iter().any(|(_, h)| h.alive()) {
         return;
     }
+    let (standing, everyone) = enemies::hero_spots(&heroes);
+    let Some(hpos) = party::spawn_anchor(&standing, &mut spawner.turn) else {
+        return;
+    };
     run.next_elite = run.elapsed + rng.range(ELITE_GAP_MIN, ELITE_GAP_MAX);
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(run.elapsed, roster.enemies.len());
     let def = &roster.enemies[pool[rng.index(pool.len())]];
     let a = rng.range(0.0, std::f32::consts::TAU);
-    let pos = enemies::ground(
-        &world,
-        hpos + Vec3::new(a.cos(), 0.0, a.sin()) * 30.0,
-        hpos.y,
-    );
+    let leash = party::Leash::of(selection.stage_def());
+    let at = party::spawn_point(hpos, a, 30.0, &everyone, leash);
+    let pos = enemies::ground(&world, at, hpos.y);
     enemies::spawn_enemy(
         &mut commands,
         &mut run,
@@ -634,6 +657,11 @@ mod tests {
             assert!(v >= last, "a coin never loses worth");
             last = v;
         }
+    }
+
+    /// What a kill's purse pays a picker whose gold multiplier is `gold`.
+    fn purse(boss: bool, elite: bool, elapsed: f32, gold: f32, roll: f32) -> Option<u32> {
+        super::purse(boss, elite, elapsed, roll).map(|c| c.pays(gold))
     }
 
     #[test]

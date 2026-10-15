@@ -115,6 +115,8 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(Startup, view::load_view)
             .add_systems(Update, hero::daylight)
             .add_systems(PostUpdate, profile::save_if_dirty)
+            // Every picker of the frame has had its say: the level-up waits for the party.
+            .add_systems(PostUpdate, party::wait_for_party)
             // The HUD's hover reaches the world-mouse latch as UI, so a click on it starts no
             // mouselook.
             .add_systems(
@@ -142,6 +144,7 @@ impl Plugin for SurvivorsPlugin {
             .add_systems(
                 Update,
                 (
+                    party::count_party,
                     enemies::spawn_enemies,
                     enemies::move_enemies,
                     abilities::cast_abilities,
@@ -152,6 +155,8 @@ impl Plugin for SurvivorsPlugin {
                     treasure::drop_boss_chests,
                     enemies::collect_gems,
                     hero::hero_vitals,
+                    party::revive_downed,
+                    party::open_banked_picks,
                 )
                     .chain()
                     .after(WorldStage::Input)
@@ -210,7 +215,11 @@ impl Plugin for SurvivorsPlugin {
                     cards::choose_card,
                     cards::animate_cards,
                     hud::refresh_hud,
-                    hud::refresh_results,
+                    (
+                        hud::refresh_results,
+                        hud::refresh_party_results,
+                        party::level_up_sub,
+                    ),
                     hud::refresh_notes,
                     hud::fill_icons,
                     hud::update_cooldown_sweeps,
@@ -259,11 +268,12 @@ impl Plugin for SurvivorsPlugin {
                 )
                 .add_systems(Update, auto::plan.before(WorldStage::Input));
         }
-        // The test aid's extra heroes join each run once it is under way.
+        // The test aid's extra heroes join each run once it is under way, and follow the local
+        // hero.
         if party.size > 1 {
             app.add_systems(
                 Update,
-                party::fill_party
+                (party::fill_party, party::follow_leader)
                     .after(WorldStage::Input)
                     .run_if(in_state(Phase::Playing))
                     .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
@@ -486,6 +496,9 @@ pub(super) struct Run {
     /// Jewelry choices banked by caches and quest turn-ins, not yet dealt: [`jewelry::deal`] gives
     /// every hero one for each as the picker opens.
     pub pending_jewelry: u32,
+    /// Heroes in the run, bots counted: the horde's health and numbers scale with it
+    /// ([`party::scale`]).
+    pub party: u8,
 }
 
 impl Default for Run {
@@ -513,6 +526,7 @@ impl Default for Run {
             quests: 0,
             final_boss: false,
             pending_jewelry: 0,
+            party: 1,
         }
     }
 }

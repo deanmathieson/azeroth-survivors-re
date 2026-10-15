@@ -116,6 +116,9 @@ pub(super) struct OverStats;
 pub(super) struct OverLine;
 #[derive(Component)]
 pub(super) struct OverNews;
+/// The results screen's lines for each hero of a party: what it did, healed and took.
+#[derive(Component)]
+pub(super) struct OverParty;
 /// The results screen's column of [`ResultsNotes`] lines, and one line in it.
 #[derive(Component)]
 pub(super) struct OverNotes;
@@ -905,6 +908,10 @@ pub(super) fn setup_hud(
                 centered(f, "", 18.0, Color::srgb(0.85, 0.78, 0.6)),
             ));
             root.spawn((OverNews, centered(f, "", 18.0, NEWS_GREEN)));
+            root.spawn((
+                OverParty,
+                centered(f, "", 15.0, Color::srgb(0.85, 0.78, 0.6)),
+            ));
             // The run's notes, tight under the news; hidden lines leave the layout.
             root.spawn((
                 OverNotes,
@@ -1072,14 +1079,17 @@ pub(super) fn menu_preview(
     hero::spawn_hero(&mut commands, state, display, sex, serial, pos);
 }
 
-/// A run begins on the menu's pick: the shared state starts over, and the local hero (the menu's,
-/// when there is one) becomes the pick, with the player's [`MetaBonuses`].
+/// A run begins on the menu's pick: the shared state starts over, and the local hero (the menu's)
+/// becomes the pick, with the player's [`MetaBonuses`]. No run begins with no hero to play it.
 pub(super) fn start_run(
     run: &mut Run,
     hero: Option<&mut HeroState>,
     selection: &mut Selection,
     meta: &MetaBonuses,
 ) -> bool {
+    let Some(hero) = hero else {
+        return false;
+    };
     let (Some(class), Some(&(_, race, _))) = (
         selection.class_def(),
         selection.look.and_then(|i| selection.looks.get(i)),
@@ -1093,11 +1103,9 @@ pub(super) fn start_run(
         next_guid,
         ..Run::default()
     };
-    if let Some(hero) = hero {
-        let mut bonuses = meta.0.clone();
-        bonuses.merge(&super::env_bonuses());
-        *hero = HeroState::new(hero.player, class, race, bonuses);
-    }
+    let mut bonuses = meta.0.clone();
+    bonuses.merge(&super::env_bonuses());
+    *hero = HeroState::new(hero.player, class, race, bonuses);
     run.version += 1;
     true
 }
@@ -1205,25 +1213,32 @@ pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
 }
 
 /// The picker opens: the banked levels become a hand for every hero ([`party::deal_hands`]), the
-/// heroes no one here picks for take theirs at random, and the local hero's first hand is dealt.
+/// bots standing take theirs at random, and the local hero's first hand is dealt if it is up (a
+/// downed hero's wait for its revive). Every other player picks on their own screen; with none of
+/// them holding a hand and none for the local hero, play goes straight on.
 pub(super) fn roll_offer(
     mut run: ResMut<Run>,
-    mut heroes: Query<(&mut HeroState, Has<LocalHero>)>,
+    mut heroes: Query<(&mut HeroState, Has<LocalHero>, Has<party::Bot>)>,
     mut rng: ResMut<Rng>,
     mut offer: ResMut<Offer>,
     mut next: ResMut<NextState<Phase>>,
 ) {
-    party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, _)| hero));
-    for (mut hero, local) in &mut heroes {
-        if !local {
+    party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, ..)| hero));
+    for (mut hero, _, bot) in &mut heroes {
+        if party::auto_picks(&hero, bot) {
             party::pick_at_random(&mut hero, &mut rng);
         }
     }
-    match heroes.iter().find(|(_, local)| *local) {
-        Some((hero, _)) => offer.deal(choices_for(hero, &mut rng)),
+    match heroes
+        .iter()
+        .find(|(hero, local, _)| *local && hero.alive() && hero.picks > 0)
+    {
+        Some((hero, ..)) => offer.deal(choices_for(hero, &mut rng)),
         None => {
             offer.deal(Vec::new());
-            next.set(Phase::Playing);
+            if party::party_picked(heroes.iter().map(|(hero, _, bot)| (hero, bot))) {
+                next.set(Phase::Playing);
+            }
         }
     }
 }
@@ -1242,7 +1257,12 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
         }
         Choice::NewPassive(p) => hero.passives.push((p, 1)),
         Choice::UpPassive(k) => hero.passives[k].1 += 1,
-        Choice::Heal => hero.hp = hero.stats().max_hp,
+        // The healthstone heals no downed hero, as no heal does.
+        Choice::Heal => {
+            if hero.alive() {
+                hero.hp = hero.stats().max_hp;
+            }
+        }
     }
 }
 
@@ -2107,6 +2127,24 @@ pub(super) fn refresh_results(
     }
 }
 
+/// The results screen's party lines ([`party::results_lines`]): each hero's damage done, healing
+/// done and damage taken, when the run had more than one.
+pub(super) fn refresh_party_results(
+    phase: Res<State<Phase>>,
+    heroes: Query<&HeroState>,
+    mut texts: Query<&mut Text, With<OverParty>>,
+) {
+    if *phase.get() != Phase::GameOver {
+        return;
+    }
+    let want = party::results_lines(heroes.iter());
+    for mut t in &mut texts {
+        if **t != want {
+            **t = want.clone();
+        }
+    }
+}
+
 /// The results screen's [`ResultsNotes`] lines: the first [`MAX_NOTES`], each in its kind's
 /// colour; the column leaves the layout while there are none.
 #[allow(clippy::type_complexity)]
@@ -2157,7 +2195,7 @@ fn clock(seconds: f32) -> String {
 }
 
 /// 12.3k, 4.5M.
-fn compact(v: f64) -> String {
+pub(super) fn compact(v: f64) -> String {
     if v >= 1e6 {
         format!("{:.1}M", v / 1e6)
     } else if v >= 1e4 {
