@@ -741,6 +741,7 @@ pub(super) fn hero_vitals(
             eventful = true;
             hero.hp = 0.0;
             hero.dead_t = Some(0.0);
+            hero.times_downed += 1;
             units::kill_unit(&mut store);
             marks.clear();
             marks.flush(entity, guid.0, &mut store, &mut fields);
@@ -839,6 +840,9 @@ mod tests {
         assert_eq!(down(&world, 1), Some(0.0), "no extra life: it falls");
         assert_eq!(down(&world, 0), None);
         assert_eq!(world.resource::<Run>().elapsed, 1.0);
+        let downs =
+            |world: &World, i: usize| world.get::<HeroState>(heroes[i]).unwrap().times_downed;
+        assert_eq!((downs(&world, 0), downs(&world, 1)), (0, 1), "counted once");
         // One standing keeps the run, and its clock, going.
         for _ in 0..5 {
             vitals(&mut world);

@@ -139,6 +139,11 @@ pub(super) struct HeroState {
     /// healthstone are no one's), and the damage that got through to its health.
     pub healing_done: f64,
     pub damage_taken: f64,
+    /// Downed allies this hero got up ([`revive_downed`] credits the one who did), the gold it
+    /// picked up off the ground (into the party's purse), and how often it went down.
+    pub revives_given: u32,
+    pub gold_collected: u32,
+    pub times_downed: u32,
     /// The rings, trinkets and necklace this hero found this run, and its jewelry choices left
     /// ([`jewelry`]); what they grant is already in `bonuses`.
     pub(super) jewelry: jewelry::Jewelry,
@@ -177,6 +182,9 @@ impl Default for HeroState {
             damage_done: 0.0,
             healing_done: 0.0,
             damage_taken: 0.0,
+            revives_given: 0,
+            gold_collected: 0,
+            times_downed: 0,
             jewelry: jewelry::Jewelry::default(),
             mechanics: Default::default(),
         }
@@ -492,33 +500,58 @@ pub(super) fn revive_downed(
     if heroes.iter().count() < 2 {
         return;
     }
-    let standing: Vec<(Vec3, &'static ClassDef)> = heroes
+    let standing: Vec<(Entity, Vec3, &'static ClassDef)> = heroes
         .iter()
         .filter(|(.., h)| h.alive())
-        .map(|(_, _, tf, .., h)| (tf.translation, h.class))
+        .map(|(e, _, tf, .., h)| (e, tf.translation, h.class))
         .collect();
     if standing.is_empty() {
         return;
     }
+    let mut credited = Vec::new();
     for (entity, guid, tf, mut store, mut marks, mut hero) in &mut heroes {
         if hero.alive() {
             continue;
         }
         let at = tf.translation;
-        let revivers = standing
+        let revivers: Vec<(Entity, Vec3, &'static ClassDef)> = standing
             .iter()
-            .filter(|(pos, _)| hero::reach(at, *pos) <= REVIVE_REACH)
-            .map(|(_, class)| *class);
+            .copied()
+            .filter(|(_, pos, _)| hero::reach(at, *pos) <= REVIVE_REACH)
+            .collect();
         let r = &mut *hero;
-        if tick_revive(&mut r.revive_t, dt, revivers) {
+        if tick_revive(
+            &mut r.revive_t,
+            dt,
+            revivers.iter().map(|(.., class)| *class),
+        ) {
             get_up(r);
             units::raise_unit(&mut store);
             marks.clear();
+            credited.extend(credited_reviver(at, &revivers));
         } else {
             marks.set(&[REVIVE_MARK]);
         }
         marks.flush(entity, guid.0, &mut store, &mut fields);
     }
+    for e in credited {
+        if let Ok((.., mut hero)) = heroes.get_mut(e) {
+            hero.revives_given += 1;
+        }
+    }
+}
+
+/// Who a revive at `at` is credited to, of the allies in reach (`revivers`, each with its place
+/// and class): the quickest reviver, the nearest of those on a tie.
+pub(super) fn credited_reviver(at: Vec3, revivers: &[(Entity, Vec3, &ClassDef)]) -> Option<Entity> {
+    revivers
+        .iter()
+        .min_by(|a, b| {
+            revive_secs(a.2)
+                .total_cmp(&revive_secs(b.2))
+                .then(hero::reach(at, a.1).total_cmp(&hero::reach(at, b.1)))
+        })
+        .map(|r| r.0)
 }
 
 /// What the horde's health and numbers are multiplied by for a party of `heroes` (bots count):
@@ -669,31 +702,6 @@ pub(super) fn follow_leader(
             mv.flags = flags;
         }
     }
-}
-
-/// One line per hero for the results, once there is more than one: who it was, and the damage it
-/// did, the healing it did and the damage it took. Empty for a lone hero, whose numbers are the
-/// run's.
-pub(super) fn results_lines<'a>(heroes: impl IntoIterator<Item = &'a HeroState>) -> String {
-    let mut heroes: Vec<&HeroState> = heroes.into_iter().collect();
-    if heroes.len() < 2 {
-        return String::new();
-    }
-    heroes.sort_by_key(|h| h.player);
-    heroes
-        .iter()
-        .map(|h| {
-            format!(
-                "Player {} ({}): {} damage · {} healing · {} taken",
-                u32::from(h.player) + 1,
-                h.class.name,
-                hud::compact(h.damage_done),
-                hud::compact(h.healing_done),
-                hud::compact(h.damage_taken),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Of `heroes` (a key and a position each), the one nearest `at` on the ground plane, the
@@ -1253,22 +1261,37 @@ mod tests {
     }
 
     #[test]
-    fn the_results_list_each_hero_of_a_party() {
-        let mut a = HeroState::new(0, class("Warrior"), 1, Bonuses::default());
-        (a.damage_done, a.healing_done, a.damage_taken) = (1500.0, 20.0, 300.0);
-        assert_eq!(
-            results_lines([&a]),
-            "",
-            "a lone hero's numbers are the run's"
-        );
-        let b = HeroState::new(1, class("Priest"), 1, Bonuses::default());
-        let lines = results_lines([&b, &a]);
-        let lines: Vec<&str> = lines.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].starts_with("Player 1 (Warrior)"), "{}", lines[0]);
-        assert!(lines[1].starts_with("Player 2 (Priest)"), "{}", lines[1]);
-        assert!(lines[0].contains("damage") && lines[0].contains("healing"));
-        assert!(lines[0].contains("taken"));
+    fn a_revive_is_credited_to_the_quickest_reviver_then_the_nearest() {
+        let e = |i: u32| Entity::from_raw_u32(i).unwrap();
+        let (warrior, priest) = (class("Warrior"), class("Priest"));
+        let at = Vec3::ZERO;
+        // A healer revives quicker, so it gets the credit though it stands further off.
+        let revivers = [
+            (e(1), Vec3::new(1.0, 0.0, 0.0), warrior),
+            (e(2), Vec3::new(2.5, 0.0, 0.0), priest),
+        ];
+        assert_eq!(credited_reviver(at, &revivers), Some(e(2)));
+        // Two of a kind: the nearer.
+        let revivers = [
+            (e(1), Vec3::new(2.0, 0.0, 0.0), warrior),
+            (e(3), Vec3::new(0.0, 0.0, 1.0), warrior),
+        ];
+        assert_eq!(credited_reviver(at, &revivers), Some(e(3)));
+        assert_eq!(credited_reviver(at, &[]), None);
+    }
+
+    #[test]
+    fn the_reviver_is_counted_as_the_downed_hero_gets_up() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, heroes) = revive_world(&[("Warrior", 0.0), ("Priest", 1.0), ("Mage", 2.0)]);
+        world.get_mut::<HeroState>(heroes[0]).unwrap().dead_t = Some(0.0);
+        // The priest is in reach and quickest: 1.5 s.
+        world.run_system_once(revive_downed).unwrap();
+        world.run_system_once(revive_downed).unwrap();
+        let given =
+            |world: &World, i: usize| world.get::<HeroState>(heroes[i]).unwrap().revives_given;
+        assert!(world.get::<HeroState>(heroes[0]).unwrap().alive());
+        assert_eq!((given(&world, 1), given(&world, 2)), (1, 0));
     }
 
     #[test]

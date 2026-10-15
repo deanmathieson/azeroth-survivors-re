@@ -253,6 +253,11 @@ impl Marks {
         }
     }
 
+    /// The spells shown, in slot order.
+    pub fn spells(&self) -> impl Iterator<Item = u32> + '_ {
+        self.slots.iter().map(|s| s.0).filter(|&spell| spell != 0)
+    }
+
     pub fn clear(&mut self) {
         if self.slots.iter().any(|s| s.0 != 0) {
             self.slots = [(0, 0.0); 8];

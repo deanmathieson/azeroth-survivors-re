@@ -770,7 +770,13 @@ pub(super) fn collect_gems(
                         party::heal(&mut hero, hp);
                     }
                 }
-                GemKind::Gold(coins) => run.gold += coins.pays(picker.4),
+                GemKind::Gold(coins) => {
+                    let paid = coins.pays(picker.4);
+                    run.gold += paid;
+                    if let Ok((.., mut hero, _)) = heroes.get_mut(picker.0) {
+                        hero.gold_collected += paid;
+                    }
+                }
             }
             commands.entity(e).despawn();
             continue;
@@ -997,7 +1003,7 @@ mod tests {
     #[test]
     fn coins_pay_under_the_gold_multiplier_of_whoever_picks_them_up() {
         let mut world = World::new();
-        let (_, b) = two_heroes(&mut world);
+        let (a, b) = two_heroes(&mut world);
         world
             .get_mut::<HeroState>(b)
             .unwrap()
@@ -1015,6 +1021,9 @@ mod tests {
             30,
             "the local hero's is no one else's"
         );
+        // Each picker is credited with what it picked up, for the results' Gold Goblin.
+        let collected = |h: Entity| world.get::<HeroState>(h).unwrap().gold_collected;
+        assert_eq!((collected(a), collected(b)), (10, 20));
     }
 
     #[test]

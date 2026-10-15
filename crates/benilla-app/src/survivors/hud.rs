@@ -118,7 +118,8 @@ pub(super) struct OverStats;
 pub(super) struct OverLine;
 #[derive(Component)]
 pub(super) struct OverNews;
-/// The results screen's lines for each hero of a party: what it did, healed and took.
+/// The results screen's row for a party: each hero's numbers and the awards
+/// ([`super::partyui`] fills it).
 #[derive(Component)]
 pub(super) struct OverParty;
 /// The results screen's column of [`ResultsNotes`] lines, and one line in it.
@@ -911,9 +912,16 @@ pub(super) fn setup_hud(
                 centered(f, "", 18.0, Color::srgb(0.85, 0.78, 0.6)),
             ));
             root.spawn((OverNews, centered(f, "", 18.0, NEWS_GREEN)));
+            // The party's table and awards ([`super::partyui`]), out of the layout for a lone hero.
             root.spawn((
                 OverParty,
-                centered(f, "", 15.0, Color::srgb(0.85, 0.78, 0.6)),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
             ));
             // The run's notes, tight under the news; hidden lines leave the layout.
             root.spawn((
@@ -2159,24 +2167,6 @@ pub(super) fn refresh_results(
         let note = results_note(&news);
         if **t != note {
             **t = note;
-        }
-    }
-}
-
-/// The results screen's party lines ([`party::results_lines`]): each hero's damage done, healing
-/// done and damage taken, when the run had more than one.
-pub(super) fn refresh_party_results(
-    phase: Res<State<Phase>>,
-    heroes: Query<&HeroState>,
-    mut texts: Query<&mut Text, With<OverParty>>,
-) {
-    if *phase.get() != Phase::GameOver {
-        return;
-    }
-    let want = party::results_lines(heroes.iter());
-    for mut t in &mut texts {
-        if **t != want {
-            **t = want.clone();
         }
     }
 }
