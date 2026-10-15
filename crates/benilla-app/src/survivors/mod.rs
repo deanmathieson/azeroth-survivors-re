@@ -36,6 +36,7 @@ mod rewards;
 mod run_options;
 mod sfx;
 mod talents;
+mod toys;
 mod treasure;
 mod units;
 mod view;
@@ -79,6 +80,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(zones::plugin)
             .add_plugins(racials::plugin)
             .add_plugins(jewelry::plugin)
+            .add_plugins(toys::plugin)
             .add_plugins(charpanel::plugin)
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)

@@ -32,6 +32,8 @@ use super::store::GearRead;
 use super::{GearSave, Slot};
 use crate::entities::{CharCreate, Creatures};
 use crate::net::{NetEntity, ObjectStore};
+use crate::survivors::faire::catalog::equipped_tabard;
+use crate::survivors::profile::Profile;
 
 /// `UNIT_FIELD_DISPLAYID`: a change swaps the standing body (`entities::live_display`).
 const FIELD_DISPLAYID: u16 = 131;
@@ -140,6 +142,7 @@ pub(super) fn plan(
     gear: &GearSave,
     trainer: Option<&NpcAppearance>,
     cc: Option<&CharCreateCatalog>,
+    tabard: Option<u32>,
 ) -> Dress {
     let (base, race, sex) = look;
     let counts = feature_ranges(cc, race, sex);
@@ -150,7 +153,15 @@ pub(super) fn plan(
         race,
         sex,
         features: worn_features(&gear.looks, race, sex, trainer, counts),
-        equipment: worn_columns(starter(trainer, outfit), gear),
+        equipment: {
+            let mut equipment = worn_columns(starter(trainer, outfit), gear);
+            if gear.worn(Slot::Chest).is_none() {
+                if let Some(tabard) = tabard {
+                    equipment[TABARD] = tabard;
+                }
+            }
+            equipment
+        },
     }
 }
 
@@ -205,9 +216,10 @@ fn dressed<C: Catalog + Resource>(
     look: (u32, u8, u8),
     gear: &GearSave,
     cc: Option<&CharCreateCatalog>,
+    tabard: Option<u32>,
 ) -> Option<u32> {
     let trainer = catalog.npc_look(look.0);
-    let dress = plan(class, look, gear, trainer.as_ref(), cc);
+    let dress = plan(class, look, gear, trainer.as_ref(), cc, tabard);
     match wardrobe.cached(&dress) {
         Some(id) => Some(id),
         None => wardrobe.register(&dress, &mut **catalog),
@@ -218,6 +230,7 @@ fn dressed<C: Catalog + Resource>(
 #[derive(SystemParam)]
 pub(in crate::survivors) struct Dresser<'w> {
     gear: GearRead<'w>,
+    profile: Option<Res<'w, Profile>>,
     wardrobe: ResMut<'w, Wardrobe>,
     creatures: Option<ResMut<'w, Creatures>>,
     char_create: Option<Res<'w, CharCreate>>,
@@ -238,6 +251,7 @@ impl Dresser<'_> {
             look,
             self.gear.get(class),
             cc,
+            self.profile.as_deref().and_then(equipped_tabard),
         )
         .unwrap_or(look.0)
     }
@@ -264,6 +278,7 @@ pub(super) fn wear(id: u32, net: &mut Mut<NetEntity>, store: &mut Mut<ObjectStor
 pub(super) fn dress_bodies<C: Catalog + Resource>(
     selection: Res<Selection>,
     gear: GearRead,
+    profile: Option<Res<Profile>>,
     char_create: Option<Res<CharCreate>>,
     catalog: Option<ResMut<C>>,
     mut wardrobe: ResMut<Wardrobe>,
@@ -271,7 +286,11 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
     arrived: Query<(), Added<Hero>>,
 ) {
     let Some(mut catalog) = catalog else { return };
-    if !selection.is_changed() && !gear.is_changed() && arrived.is_empty() {
+    if !selection.is_changed()
+        && !gear.is_changed()
+        && !profile.as_ref().is_some_and(|p| p.is_changed())
+        && arrived.is_empty()
+    {
         return;
     }
     let (Some(class), Some(&look)) = (
@@ -288,6 +307,7 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
         look,
         gear.get(class),
         cc,
+        profile.as_deref().and_then(equipped_tabard),
     ) else {
         return;
     };
@@ -427,7 +447,7 @@ mod tests {
         let mut fake = Fake::default();
         let mut wardrobe = Wardrobe::default();
         let gear = GearSave::default();
-        let dress = plan(0, (3000, 1, 0), &gear, Some(&trainer()), None);
+        let dress = plan(0, (3000, 1, 0), &gear, Some(&trainer()), None, None);
         assert_eq!(dress.equipment, trainer().equipment);
         assert_eq!(
             dress.features,
@@ -520,6 +540,7 @@ mod tests {
                     &GearSave::default(),
                     npc.as_ref(),
                     Some(&cc),
+                    None,
                 );
                 assert!(
                     dress.equipment.iter().any(|&d| d != 0),

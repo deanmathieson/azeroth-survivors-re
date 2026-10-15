@@ -143,3 +143,12 @@ pub(super) static CATALOG: &[Piece] = &[
     pc("prestors_talisman_of_connivery", Necklace, Legendary, "Prestor's Talisman of Connivery", 31899, "INV_Jewelry_Necklace_17", &[crit(0.06), dmg(0.12), speed(0.06)]),
     pc("gem_of_trapped_innocents", Necklace, Legendary, "Gem of Trapped Innocents", 35358, "INV_Jewelry_Necklace_29Naxxramas", &[dmg(0.12), critd(0.25), leech(0.02)]),
 ];
+
+/// Completed Darkmoon decks add their trinkets to the run pool, rather than the account codex.
+#[rustfmt::skip]
+pub(super) static DARKMOON: &[Piece] = &[
+    pc("darkmoon_blue_dragon", Trinket, Legendary, "Darkmoon Card: Blue Dragon", 19288, "INV_Misc_Ticket_Tarot_BlueDragon_01", &[]),
+    pc("darkmoon_maelstrom", Trinket, Legendary, "Darkmoon Card: Maelstrom", 19289, "INV_Misc_Ticket_Tarot_Maelstrom_01", &[]),
+    pc("darkmoon_twisting_nether", Trinket, Legendary, "Darkmoon Card: Twisting Nether", 19290, "INV_Misc_Ticket_Tarot_TwistingNether_01", &[]),
+    pc("darkmoon_heroism", Trinket, Legendary, "Darkmoon Card: Heroism", 19287, "INV_Misc_Ticket_Tarot_Heroism_01", &[]),
+];

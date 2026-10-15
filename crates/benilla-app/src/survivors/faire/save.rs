@@ -39,6 +39,28 @@ pub(in crate::survivors) struct FaireSave {
     pub titles: BTreeSet<String>,
     pub toys: BTreeSet<String>,
     pub cards: BTreeSet<String>,
+    /// The vanity loadout used by the Armory's Wardrobe tab.  Keys are prize keys, so removing a
+    /// prize from a future catalog harmlessly leaves an empty slot.
+    pub wardrobe: WardrobeSave,
+    /// Completed Darkmoon decks.  Their trinkets are offered by the jewelry system.
+    pub darkmoon_trinkets: BTreeSet<String>,
+}
+
+/// Selections made in the Armory Wardrobe.  This is deliberately account-wide: Faire prizes are.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(in crate::survivors) struct WardrobeSave {
+    pub tabard: Option<String>,
+    pub title: Option<String>,
+    pub toys: Vec<String>,
+    pub pinned_trinket: Option<String>,
+}
+
+impl WardrobeSave {
+    /// Keep a toy bar valid even when it was hand-edited in an old save.
+    pub(in crate::survivors) fn set_toys(&mut self, toys: Vec<String>) {
+        self.toys = toys.into_iter().take(3).collect();
+    }
 }
 
 impl FaireSave {
@@ -73,6 +95,11 @@ mod tests {
         save.titles.insert("the_insane".into());
         save.toys.insert("orb_of_deception".into());
         save.cards.insert("ace_of_beasts".into());
+        save.wardrobe.tabard = Some("stormwind_tabard".into());
+        save.wardrobe.title = Some("the_faire_goer".into());
+        save.wardrobe
+            .set_toys(vec!["snowball".into(), "toy_train_set".into()]);
+        save.darkmoon_trinkets.insert("beasts".into());
         let text = toml::to_string_pretty(&save).unwrap();
         assert_eq!(toml::from_str::<FaireSave>(&text).unwrap(), save);
         assert_eq!(save.pity("featured").since_legendary, 70);

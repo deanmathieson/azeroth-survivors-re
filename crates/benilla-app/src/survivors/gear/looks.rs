@@ -333,12 +333,16 @@ pub(in crate::survivors) fn worn_features(
 /// in Durotar".
 pub(in crate::survivors) fn results_title(
     name: Option<&str>,
+    title: Option<&str>,
     race: &str,
     class: &str,
     zone: &str,
 ) -> String {
     match name {
-        Some(name) => format!("{name} the {race} {class} in {zone}"),
+        Some(name) => format!(
+            "{} the {race} {class} in {zone}",
+            super::super::faire::catalog::titled_name(name, title)
+        ),
         None => format!("{race} {class} in {zone}"),
     }
 }
@@ -511,11 +515,11 @@ mod tests {
     #[test]
     fn the_results_title_names_the_hero() {
         assert_eq!(
-            results_title(Some("Thrall"), "Orc", "Shaman", "Durotar"),
+            results_title(Some("Thrall"), None, "Orc", "Shaman", "Durotar"),
             "Thrall the Orc Shaman in Durotar"
         );
         assert_eq!(
-            results_title(None, "Orc", "Shaman", "Durotar"),
+            results_title(None, None, "Orc", "Shaman", "Durotar"),
             "Orc Shaman in Durotar"
         );
     }

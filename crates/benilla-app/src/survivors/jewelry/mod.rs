@@ -23,8 +23,11 @@ use std::ops::DerefMut;
 
 use bevy::prelude::*;
 
-use super::bonus::{Bonus, Bonuses};
+use super::bonus::{Bonus, Bonuses, School, StatKey};
 pub(super) use super::cards::Rarity;
+use super::faire::catalog::deck_complete;
+use super::mechanics::{self, Effect, MechanicId, MechanicSpec, Of, Trigger};
+use super::profile::Profile;
 use super::{hero, party, treasure, HeroState, LocalHero, Phase, Rng, Run, Stats};
 pub(super) use codex::{CodexAction, CodexSave, CodexView};
 
@@ -52,7 +55,32 @@ pub(super) fn plugin(app: &mut App) {
             )
                 .chain(),
         )
+        .add_systems(OnEnter(Phase::Playing), equip_pinned_darkmoon)
         .add_systems(Update, codex::codex_clicks);
+}
+
+/// A pinned completed-deck trinket occupies the first free trinket slot as play begins.
+fn equip_pinned_darkmoon(profile: Option<Res<Profile>>, mut heroes: Query<&mut HeroState>) {
+    let Some(profile) = profile else { return };
+    for mut hero in &mut heroes {
+        equip_pinned(&profile, &mut hero);
+    }
+}
+
+fn equip_pinned(profile: &Profile, hero: &mut HeroState) -> bool {
+    let Some(key) = profile.faire.wardrobe.pinned_trinket.as_deref() else {
+        return false;
+    };
+    let Some(piece) = piece(key) else {
+        return false;
+    };
+    if !darkmoon_pool(profile)
+        .iter()
+        .any(|owned| owned.key == piece.key)
+    {
+        return false;
+    }
+    wear(hero, piece, None).is_ok()
 }
 
 /// The jewelry choice pauses the run as the level-up hand does, and deals as it opens.
@@ -130,7 +158,126 @@ pub(super) fn pieces() -> &'static [Piece] {
 
 /// The piece with key `key`.
 pub(super) fn piece(key: &str) -> Option<&'static Piece> {
-    catalog::CATALOG.iter().find(|p| p.key == key)
+    catalog::CATALOG
+        .iter()
+        .chain(catalog::DARKMOON)
+        .find(|p| p.key == key)
+}
+
+/// Deck trinkets unlocked by this account.  Each appears four times in the selection pool, making
+/// a completed deck feel like an earned run-starting reward without displacing normal jewelry.
+pub(super) fn darkmoon_pool(profile: &Profile) -> Vec<&'static Piece> {
+    ["beasts", "elementals", "portals", "warlords"]
+        .into_iter()
+        .filter(|suit| deck_complete(profile, suit))
+        .filter_map(|suit| {
+            catalog::DARKMOON.iter().find(|p| {
+                p.key
+                    == format!(
+                        "darkmoon_{}",
+                        match suit {
+                            "beasts" => "blue_dragon",
+                            "elementals" => "maelstrom",
+                            "portals" => "twisting_nether",
+                            _ => "heroism",
+                        }
+                    )
+            })
+        })
+        .flat_map(|piece| std::iter::repeat_n(piece, 4))
+        .collect()
+}
+
+/// The normal catalog plus the account's completed-deck trinkets.  A trinket occurs four times:
+/// the weighted roller removes only the picked entry, making it markedly more likely without
+/// permitting duplicate offers of the same piece.
+fn pool(profile: Option<&Profile>) -> Vec<&'static Piece> {
+    let mut out: Vec<_> = catalog::CATALOG.iter().collect();
+    if let Some(profile) = profile {
+        out.extend(darkmoon_pool(profile));
+    }
+    out
+}
+
+fn darkmoon_specs(key: &str) -> &'static [MechanicSpec] {
+    const BLUE: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnCast(Of::Any),
+        Effect::Burst {
+            duration: 15.0,
+            bonuses: &[Bonus::new(StatKey::Cooldown, 0.50)],
+        },
+    )
+    .visual(16618)
+    .cooldown(15.0)];
+    const HEROISM: [MechanicSpec; 2] = [
+        MechanicSpec::new(
+            Trigger::OnHit {
+                of: Of::Any,
+                chance: 0.15,
+            },
+            Effect::HealPulse {
+                radius: 12.0,
+                amount: 30.0,
+            },
+        )
+        .visual(23513)
+        .cooldown(8.0),
+        MechanicSpec::new(
+            Trigger::OnHit {
+                of: Of::Any,
+                chance: 0.15,
+            },
+            Effect::Burst {
+                duration: 8.0,
+                bonuses: &[Bonus::new(StatKey::Damage, 0.25)],
+            },
+        )
+        .visual(23513)
+        .cooldown(8.0),
+    ];
+    const MAELSTROM: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnHit {
+            of: Of::Any,
+            chance: 0.20,
+        },
+        Effect::Nova {
+            school: School::Nature,
+            radius: 4.0,
+            damage: 28.0,
+            knockback: 0.0,
+            cc: None,
+        },
+    )
+    .visual(21179)
+    .cooldown(3.0)];
+    const NETHER: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnLethal,
+        Effect::CheatDeath {
+            immune: 2.0,
+            heal_frac: 0.35,
+        },
+    )
+    .visual(20707)
+    .cooldown(99_999.0)];
+    match key {
+        "darkmoon_blue_dragon" => &BLUE,
+        "darkmoon_heroism" => &HEROISM,
+        "darkmoon_maelstrom" => &MAELSTROM,
+        "darkmoon_twisting_nether" => &NETHER,
+        _ => &[],
+    }
+}
+
+/// Give a worn Darkmoon trinket its run mechanic.
+pub(super) fn grant_darkmoon(hero: &mut HeroState, piece: &Piece) {
+    let specs = darkmoon_specs(piece.key);
+    if !specs.is_empty() {
+        mechanics::grant(
+            hero,
+            MechanicId::Jewelry(piece.display_id),
+            specs.iter().copied(),
+        );
+    }
 }
 
 /// What one hero wears this run, and the jewelry choices it has still to make. Empty as each run
@@ -219,6 +366,7 @@ pub(super) fn wear(
         });
     }
     hero.bonuses.add_all(piece.bonuses);
+    grant_darkmoon(hero, piece);
     let after = hero.stats().max_hp;
     if hero.alive() && after > before {
         hero.hp += after - before;
@@ -282,6 +430,40 @@ pub(super) fn roll(
     out
 }
 
+/// [`roll`] over an account-aware pool.  Repeated entries are intentional high weight; after a
+/// pick all siblings are removed, so a hand never contains the same trinket twice.
+fn roll_pool(
+    catalog: &[&'static Piece],
+    worn: &Jewelry,
+    stats: &Stats,
+    level: u32,
+    rng: &mut Rng,
+) -> Vec<&'static Piece> {
+    let mut pool: Vec<_> = catalog
+        .iter()
+        .copied()
+        .filter(|p| !worn.wears(p))
+        .map(|p| (p, weight(p.rarity, stats, level)))
+        .filter(|(_, weight)| *weight > 0.0)
+        .collect();
+    let mut out = Vec::with_capacity(OFFER_SIZE);
+    while out.len() < OFFER_SIZE && !pool.is_empty() {
+        let mut pick = rng.f32() * pool.iter().map(|(_, weight)| weight).sum::<f32>();
+        let mut index = pool.len() - 1;
+        for (i, (_, weight)) in pool.iter().enumerate() {
+            if pick < *weight {
+                index = i;
+                break;
+            }
+            pick -= weight;
+        }
+        let piece = pool.swap_remove(index).0;
+        pool.retain(|(other, _)| other.key != piece.key);
+        out.push(piece);
+    }
+    out
+}
+
 /// The run's banked jewelry choices become every hero's to make, one each, and the bank empties.
 pub(super) fn deal<H: DerefMut<Target = HeroState>>(
     run: &mut Run,
@@ -321,6 +503,7 @@ pub(super) fn choose_at_random(hero: &mut HeroState, level: u32, rng: &mut Rng) 
 #[derive(Resource, Default, Debug)]
 pub(super) struct JewelOffer {
     pieces: Vec<&'static Piece>,
+    pool: Vec<&'static Piece>,
     /// The piece picked while its slots are full, by its index in `pieces`: the hero is choosing
     /// which worn piece it replaces.
     replacing: Option<usize>,
@@ -461,7 +644,16 @@ pub(super) fn close(
     ));
     hero.jewelry.picks = hero.jewelry.picks.saturating_sub(1);
     let level = run.level;
-    (!next_offer(hero, offer, catalog::CATALOG, level, rng)).then(|| resume(hero))
+    let pool = (!offer.pool.is_empty()).then(|| offer.pool.clone());
+    let has_offer = match pool {
+        Some(pool) => {
+            offer.replacing = None;
+            offer.pieces = roll_pool(&pool, &hero.jewelry, &hero.stats(), level, rng);
+            !offer.pieces.is_empty()
+        }
+        None => next_offer(hero, offer, catalog::CATALOG, level, rng),
+    };
+    (!has_offer).then(|| resume(hero))
 }
 
 /// While playing, a banked jewelry choice opens the picker, once the level-up hands are made and
@@ -480,6 +672,7 @@ fn deal_jewelry(
     mut rng: ResMut<Rng>,
     mut offer: ResMut<JewelOffer>,
     mut next: ResMut<NextState<Phase>>,
+    profile: Option<Res<Profile>>,
 ) {
     deal(&mut run, heroes.iter_mut().map(|(hero, _)| hero));
     let level = run.level;
@@ -490,7 +683,16 @@ fn deal_jewelry(
     }
     match heroes.iter_mut().find(|(_, local)| *local) {
         Some((mut hero, _)) => {
-            if !next_offer(&mut hero, &mut offer, catalog::CATALOG, level, &mut rng) {
+            offer.replacing = None;
+            offer.pieces.clear();
+            offer.pool = pool(profile.as_deref());
+            if hero.jewelry.picks > 0 {
+                offer.pieces =
+                    roll_pool(&offer.pool, &hero.jewelry, &hero.stats(), level, &mut rng);
+            }
+            if offer.pieces.is_empty() {
+                hero.picks += hero.jewelry.picks;
+                hero.jewelry.picks = 0;
                 next.set(resume(&hero));
             }
         }
@@ -523,6 +725,43 @@ mod tests {
 
     fn by_key(key: &str) -> &'static Piece {
         piece(key).unwrap_or_else(|| panic!("no piece {key}"))
+    }
+
+    #[test]
+    fn darkmoon_pool_only_contains_completed_decks() {
+        let mut profile = Profile::default();
+        assert!(darkmoon_pool(&profile).is_empty());
+        for rank in [
+            "ace", "two", "three", "four", "five", "six", "seven", "eight",
+        ] {
+            profile.faire.cards.insert(format!("{rank}_of_beasts"));
+        }
+        let pool = darkmoon_pool(&profile);
+        assert_eq!(pool.len(), 4, "completed deck has high offer weight");
+        assert!(pool.iter().all(|piece| piece.key == "darkmoon_blue_dragon"));
+    }
+
+    #[test]
+    fn every_darkmoon_trinket_grants_its_mechanic() {
+        for piece in catalog::DARKMOON {
+            let mut hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
+            grant_darkmoon(&mut hero, piece);
+            assert!(mechanics::has(&hero, MechanicId::Jewelry(piece.display_id)));
+        }
+    }
+
+    #[test]
+    fn pinned_darkmoon_trinket_equips_at_run_start() {
+        let mut profile = Profile::default();
+        for rank in [
+            "ace", "two", "three", "four", "five", "six", "seven", "eight",
+        ] {
+            profile.faire.cards.insert(format!("{rank}_of_beasts"));
+        }
+        profile.faire.wardrobe.pinned_trinket = Some("darkmoon_blue_dragon".into());
+        let mut hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
+        assert!(equip_pinned(&profile, &mut hero));
+        assert!(hero.jewelry.wears(piece("darkmoon_blue_dragon").unwrap()));
     }
 
     /// A rough measure of a piece's power: each bonus over what one "unit" of its stat is worth.
@@ -848,6 +1087,7 @@ mod tests {
         wear(&mut hero, by_key("blood_ring"), None).unwrap();
         hero.jewelry.picks = 2;
         let mut offer = JewelOffer {
+            pool: Vec::new(),
             pieces: vec![by_key("band_of_accuria"), by_key("arena_master")],
             replacing: None,
         };

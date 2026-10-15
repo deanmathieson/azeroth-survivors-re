@@ -15,7 +15,7 @@ use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
 use super::party;
-use super::profile::LastRunNews;
+use super::profile::{LastRunNews, Profile};
 use super::units::Marks;
 use super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Rng, Run, Selection, Stats};
 
@@ -72,6 +72,8 @@ pub(super) struct BannerText;
 pub(super) struct AbilityRow;
 #[derive(Component)]
 pub(super) struct PassiveRow;
+#[derive(Component)]
+pub(super) struct ToyRow;
 #[derive(Component)]
 pub(super) struct OfferRow;
 /// The line under LEVEL UP: which level this is.
@@ -592,6 +594,13 @@ pub(super) fn setup_hud(
                     ));
                     col.spawn((
                         PassiveRow,
+                        Node {
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        },
+                    ));
+                    col.spawn((
+                        ToyRow,
                         Node {
                             column_gap: Val::Px(4.0),
                             ..default()
@@ -1532,6 +1541,7 @@ pub(super) fn refresh_hud(
     local: Query<&HeroState, With<LocalHero>>,
     selection: Res<Selection>,
     names: super::gear::HeroNames,
+    profile: Option<Res<Profile>>,
     font: Res<HudFont>,
     mut texts: ParamSet<(
         Query<&mut Text, With<LevelText>>,
@@ -1544,6 +1554,8 @@ pub(super) fn refresh_hud(
     )>,
     mut xp_fill: Query<&mut Node, With<XpFill>>,
     rows: Query<(Entity, Has<AbilityRow>), Or<(With<AbilityRow>, With<PassiveRow>)>>,
+    toy_rows: Query<Entity, With<ToyRow>>,
+    toy_bar: Res<super::toys::ToyBar>,
     mut sweeps: ResMut<Assets<SweepUiMaterial>>,
     mut last_version: Local<Option<u32>>,
 ) {
@@ -1616,6 +1628,9 @@ pub(super) fn refresh_hud(
         "{}   —   Enter to play again · Esc for the main menu",
         super::gear::results_title(
             selection.class.and_then(|c| names.name(c)),
+            profile
+                .as_deref()
+                .and_then(super::faire::catalog::equipped_title),
             crate::char_select::race_name(me.race),
             me.class.name,
             selection.map_def().name,
@@ -1700,6 +1715,39 @@ pub(super) fn refresh_hud(
                     .with_children(|n| {
                         n.spawn(text(f, level.to_string(), 12.0, Color::WHITE));
                     });
+                });
+            }
+        });
+    }
+    for row in &toy_rows {
+        commands.entity(row).despawn_related::<Children>();
+        commands.entity(row).with_children(|row| {
+            for (i, slot) in toy_bar.slots().iter().enumerate() {
+                row.spawn((
+                    Button,
+                    super::toys::ToyButton(i),
+                    BaseColor(BUTTON),
+                    BackgroundColor(BUTTON),
+                    BorderColor::all(EDGE),
+                    Node {
+                        width: Val::Px(52.0),
+                        height: Val::Px(40.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|button| {
+                    button.spawn(centered(
+                        f,
+                        format!("{} {}", i + 7, slot.name()),
+                        10.0,
+                        Color::WHITE,
+                    ));
+                    button.spawn((
+                        super::toys::ToyCooldownText(i),
+                        centered(f, "Ready", 10.0, GOLD),
+                    ));
                 });
             }
         });
