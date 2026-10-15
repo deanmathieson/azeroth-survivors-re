@@ -16,346 +16,1639 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus+SC&family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  /* Layout: one centred column; hero with the combat shot, then a WoW item tooltip
-     listing the features beside a screenshot strip, then status, setup and credits. */
+  /* Vanilla WoW interface as the page: tooltips for content, bronze frames for panels,
+     one parchment Quest Log, and item quality colours as the semantic system. */
   :root {
-    --bg: #12141a;          /* night stone */
-    --panel: #1b1f28;       /* raised stone */
-    --line: #2f3542;        /* mortar */
-    --fg: #e7dcc4;          /* parchment */
-    --muted: #a59b86;       /* faded parchment */
-    --gold: #ffd100;        /* WoW quest-text gold */
-    --tip-bg: #0b0e1d;      /* tooltip navy */
-    --tip-edge: #8a8f9e;    /* tooltip silver edge */
-    --q-legendary: #ff8000;
-    --q-epic: #a335ee;
-    --q-rare: #0070dd;
-    --q-uncommon: #1eff00;
+    color-scheme: dark;
+
+    /* ground */
+    --night: #07080d;
+    --night-2: #0e1019;
+    --wash-gold: rgba(255, 186, 64, 0.09);
+    --wash-blue: rgba(52, 84, 170, 0.12);
+    --black: #000000;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --shadow-deep: rgba(0, 0, 0, 0.72);
+
+    /* text */
+    --ink: #ece4d0;
+    --ink-dim: #bdb49e;
+    --ink-faint: #958e7b;
+
+    /* WoW font gold */
+    --gold: #ffd100;
+    --gold-pale: #fff1b0;
+    --gold-glow: rgba(255, 209, 0, 0.26);
+    --gold-flare: rgba(255, 216, 100, 0.9);
+    --gold-flare-soft: rgba(255, 190, 60, 0.38);
+    --flare-core: rgba(255, 244, 205, 0.8);
+    --flare-ray: rgba(255, 212, 96, 0.42);
+
+    /* tooltip */
+    --tip-bg: rgba(6, 8, 24, 0.9);
+    --tip-edge: #c9cdd8;
+    --tip-edge-dim: rgba(150, 156, 176, 0.5);
+    --tip-gap: #03040b;
+    --tip-white: #ffffff;
+    --tip-flavor: #bab4a5;
+    --tip-rule: rgba(201, 205, 216, 0.13);
+    --equip: #1eff00;
+
+    /* item quality */
+    --q-poor: #9d9d9d;
     --q-common: #ffffff;
+    --q-uncommon: #1eff00;
+    --q-rare: #0070dd;
+    --q-rare-text: #3d97ff;
+    --q-epic: #a335ee;
+    --q-epic-text: #b96dff;
+    --q-legendary: #ff8000;
+    --q-legendary-glint: #ffe7b8;
+    --glow-poor: rgba(157, 157, 157, 0.22);
+    --glow-common: rgba(255, 255, 255, 0.2);
+    --glow-uncommon: rgba(30, 255, 0, 0.24);
+    --glow-rare: rgba(0, 112, 221, 0.45);
+    --glow-epic: rgba(163, 53, 238, 0.45);
+    --glow-legendary: rgba(255, 128, 0, 0.45);
+    --aura-legendary: rgba(255, 128, 0, 0.13);
+
+    /* bronze trim */
+    --bronze-hi: #f7dd96;
+    --bronze-1: #d2a24a;
+    --bronze-2: #8f6627;
+    --bronze-3: #4d3413;
+    --bronze-4: #24180a;
+    --bronze-trim: linear-gradient(150deg, var(--bronze-hi), var(--bronze-2) 12%, var(--bronze-1) 30%, var(--bronze-3) 50%, var(--bronze-1) 72%, var(--bronze-2) 88%, var(--bronze-hi));
+
+    /* frames */
+    --panel-top: #161a25;
+    --panel-bottom: #0d0f17;
+    --weave: rgba(255, 255, 255, 0.016);
+    --bar-hi: #2c2217;
+    --bar-lo: #130e08;
+    --plate-hi: #35240d;
+    --plate-lo: #160f06;
+    --slot-hi: #2b3042;
+    --slot-bg: #0e1119;
+    --slot-glyph: #ecdcae;
+    --slot-shine: rgba(255, 255, 255, 0.14);
+
+    /* buttons */
+    --btn-red-hi: #b3271c;
+    --btn-red: #861a12;
+    --btn-red-lo: #470b07;
+    --btn-shine: rgba(255, 220, 140, 0.35);
+    --btn-dark-hi: #2a2e3c;
+    --btn-dark-lo: #151821;
+
+    /* code */
+    --code-bg: #07090f;
+    --code-edge: #2c3142;
+    --code-ink: #e6dfcc;
+    --code-inline: rgba(255, 255, 255, 0.08);
+
+    /* parchment */
+    --parch-hi: #f8eed3;
+    --parch-1: #efdfb9;
+    --parch-2: #e6d2a4;
+    --parch-blot: rgba(196, 150, 80, 0.15);
+    --parch-burn: rgba(120, 70, 18, 0.36);
+    --parch-ink: #3a2411;
+    --parch-ink-soft: #57391c;
+    --parch-rule: rgba(92, 60, 24, 0.26);
+    --parch-hover: rgba(122, 82, 30, 0.1);
+    --parch-select: rgba(122, 82, 30, 0.19);
+    --parch-select-edge: #8a5a14;
+    --parch-link: #7a2c00;
+    --parch-code: rgba(70, 40, 12, 0.1);
+    --parch-focus: #0b3d91;
+    --qd-orange: #9a3500;
+    --qd-yellow: #6e4d00;
+    --qd-green: #265e10;
+    --qd-grey: #5d554b;
+
+    /* raid markers */
+    --rm-star: #ffd21f;
+    --rm-circle: #ff8a1f;
+    --rm-diamond: #c450f0;
+    --rm-triangle: #3cc23c;
+    --rm-moon: #cfdbe9;
+    --rm-square: #2f8cff;
+    --rm-cross: #ee2a22;
+    --rm-skull: #f6f2e8;
+    --rm-line: #2a190a;
+
+    --focus: #ffd100;
+
     --display: "Marcellus SC", "Palatino Linotype", Palatino, Georgia, serif;
     --body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
-    color-scheme: dark;
   }
-  * { box-sizing: border-box; }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
   body {
-    background:
-      radial-gradient(1200px 600px at 50% -200px, rgba(255, 209, 0, 0.07), transparent 70%),
-      var(--bg);
-    color: var(--fg);
+    margin: 0;
+    background-color: var(--night);
+    background-image:
+      radial-gradient(1100px 560px at 22% -160px, var(--wash-gold), transparent 70%),
+      radial-gradient(900px 700px at 105% 16%, var(--wash-blue), transparent 70%),
+      linear-gradient(180deg, var(--night-2), var(--night) 900px);
+    background-repeat: no-repeat;
+    color: var(--ink);
     font-family: var(--body);
     font-size: 17px;
     line-height: 1.6;
   }
-  .wrap {
-    max-width: 1040px;
-    margin: 0 auto;
-    padding-inline: 20px;
-    padding-block: 48px 64px;
-    display: grid;
-    gap: 64px;
+  img { max-width: 100%; }
+  a { color: var(--gold); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { color: var(--gold-pale); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 3px; }
+  h1, h2, h3, h4, p, ul, ol, dl, dd, figure { margin: 0; }
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--code-inline); padding: 0.08em 0.36em; border-radius: 3px;
+    overflow-wrap: anywhere;
   }
-  a { color: var(--gold); text-underline-offset: 3px; }
-  a:focus-visible, button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
-  h1, h2 { font-family: var(--display); font-weight: 400; text-wrap: balance; margin: 0; }
-  h2 { font-size: 1.75rem; color: var(--gold); letter-spacing: 0.02em; }
-  p { margin: 0; }
+  kbd {
+    display: inline-block; min-width: 1.9em; text-align: center;
+    font-family: var(--mono); font-size: 0.78em; line-height: 1; color: var(--tip-white);
+    padding: 0.32em 0.45em 0.26em; border-radius: 4px;
+    border: 1px solid var(--tip-edge-dim); border-bottom-width: 2px;
+    background: linear-gradient(var(--btn-dark-hi), var(--btn-dark-lo));
+    vertical-align: 0.06em;
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  /* Page shell: the one place the side gutter is set */
+  .page {
+    display: block;
+    padding-inline: clamp(16px, 4vw, 40px);
+    padding-block: 20px 48px;
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
+  .wrap { max-width: 1140px; margin-inline: auto; display: grid; gap: clamp(72px, 9vw, 108px); }
+  .wrap > * { min-width: 0; }
+  section[id], .qd { scroll-margin-top: 36px; }
+
+  /* Top bar: eyebrow and an action-bar nav */
+  .topbar {
+    position: relative; z-index: 1;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px;
+  }
+  .eyebrow { font-size: 0.82rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+  .actionbar { display: flex; flex-wrap: wrap; gap: 6px; }
+  .actionbar a {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    min-height: 44px; padding: 8px 28px 8px 16px; border-radius: 6px;
+    font-family: var(--display); font-size: 0.98rem; color: var(--ink); text-decoration: none;
+    background: linear-gradient(var(--slot-hi), var(--slot-bg));
+    border: 1px solid var(--bronze-2);
+    box-shadow: inset 0 0 0 1px var(--black), 0 0 0 1px var(--black);
+  }
+  .actionbar a:hover { color: var(--gold); border-color: var(--bronze-1); box-shadow: inset 0 0 0 1px var(--black), 0 0 0 1px var(--black), inset 0 0 16px var(--gold-glow); }
+  .actionbar .hk { position: absolute; top: 3px; right: 8px; font: 500 0.72rem/1 var(--body); color: var(--ink-faint); }
 
   /* Hero */
-  .hero { display: grid; gap: 28px; }
-  .eyebrow {
-    font-size: 0.8rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
-  }
-  h1 {
-    font-size: clamp(2.6rem, 7vw, 4.6rem);
-    line-height: 1.02;
-    color: var(--gold);
-    text-shadow: 0 2px 0 #000, 0 0 28px rgba(255, 209, 0, 0.18);
-  }
-  .pitch { font-size: 1.2rem; max-width: 62ch; }
+  .hero { display: grid; gap: clamp(28px, 4vw, 44px); }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 450px) minmax(0, 1fr); gap: clamp(28px, 4.5vw, 60px); align-items: start; }
+  .hero-item { position: relative; isolation: isolate; z-index: 0; }
+  .hero-side { position: relative; z-index: 1; display: grid; gap: 22px; align-content: start; padding-top: 6px; }
+  .pitch { font-size: clamp(1.15rem, 2.1vw, 1.32rem); line-height: 1.5; max-width: 44ch; }
   .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
   .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 18px;
-    border-radius: 4px;
-    border: 1px solid #7a5a12;
-    background: linear-gradient(#4a1010, #2c0808);
-    color: var(--gold);
-    font-family: var(--display);
-    font-size: 1.05rem;
-    text-decoration: none;
-    box-shadow: inset 0 1px 0 rgba(255, 220, 120, 0.25), 0 2px 0 #000;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; padding: 8px 20px; border-radius: 5px;
+    font-family: var(--display); font-size: 1.05rem; color: var(--gold); text-decoration: none;
+    border: 1px solid var(--bronze-1);
+    background: linear-gradient(var(--btn-red-hi), var(--btn-red) 48%, var(--btn-red-lo));
+    box-shadow: inset 0 1px 0 var(--btn-shine), 0 0 0 1px var(--black), 0 3px 0 var(--black);
+    text-shadow: 0 1px 0 var(--black);
   }
-  .btn:hover { background: linear-gradient(#5c1414, #380a0a); }
-  .btn.ghost { background: transparent; border-color: var(--line); color: var(--fg); }
-  .btn.ghost:hover { border-color: var(--muted); }
-  figure { margin: 0; }
-  .shot {
-    width: 100%; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block;
-    border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+  .btn:hover { color: var(--gold-pale); filter: brightness(1.14); }
+  .btn:active { transform: translateY(1px); }
+  .btn.alt {
+    color: var(--ink); border-color: var(--tip-edge-dim);
+    background: linear-gradient(var(--btn-dark-hi), var(--btn-dark-lo));
   }
-  figcaption { color: var(--muted); font-size: 0.92rem; margin-top: 8px; }
+  .btn.alt:hover { color: var(--gold); }
 
-  /* Features: tooltip + screenshots */
-  .features { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 40px; align-items: start; }
-  .features > * { min-width: 0; }
-  .tooltip {
+  /* Tooltip surface */
+  .tip {
+    position: relative;
     background: var(--tip-bg);
-    border: 2px solid var(--tip-edge);
-    border-radius: 6px;
-    box-shadow: 0 0 0 1px #000, 0 10px 30px rgba(0, 0, 0, 0.5);
-    padding: 14px 16px 16px;
-    font-family: var(--body);
-    font-size: 1rem;
-    line-height: 1.45;
-    color: var(--q-common);
-    display: grid; gap: 2px;
+    border: 1px solid var(--tip-edge);
+    border-radius: 5px;
+    box-shadow:
+      inset 0 0 0 1px var(--tip-gap),
+      inset 0 0 0 2px var(--tip-edge-dim),
+      0 0 0 1px var(--black),
+      0 10px 26px var(--shadow);
+    padding: 12px 15px 13px;
+    color: var(--tip-white);
+    line-height: 1.42;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
   }
-  .tooltip .name { font-family: var(--body); font-weight: 700; font-size: 1.2rem; color: var(--q-legendary); }
-  .tooltip .row { display: flex; justify-content: space-between; gap: 12px; }
-  .tooltip .stat { color: var(--q-common); }
-  .tooltip .equip { color: var(--q-uncommon); }
-  .tooltip .gap { height: 8px; }
-  .tooltip .flavor { color: var(--gold); font-style: italic; margin-top: 8px; }
-  .tooltip .req { color: var(--muted); }
-  .tooltip .set { color: var(--q-epic); }
-  .gallery { display: grid; gap: 20px; }
-  .gallery .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .gallery .pair > * { min-width: 0; }
+  .tip .name { font-family: var(--display); font-weight: 400; font-size: 1.17rem; line-height: 1.25; color: var(--qc, var(--tip-white)); margin-bottom: 2px; }
+  .tip .split { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 14px; }
+  .tip .lines { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 2px; }
+  .tip .fx { color: var(--equip); }
+  .tip .flavor { color: var(--tip-flavor); font-style: italic; margin-top: 7px; }
+  .tip .junk { color: var(--q-poor); }
+  .tip .tip-link { margin-top: 7px; font-size: 0.95rem; }
+  .tip h3 { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--gold); line-height: 1.25; }
 
-  /* Status */
-  .status { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .status > * { min-width: 0; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-    padding: 20px 22px; display: grid; gap: 12px; align-content: start;
+  /* Hero tooltip, Legendary */
+  .tip-hero {
+    padding: 20px 22px 22px;
+    font-size: 1.04rem;
+    box-shadow:
+      inset 0 0 0 1px var(--tip-gap),
+      inset 0 0 0 2px var(--tip-edge-dim),
+      0 0 0 1px var(--black),
+      0 18px 50px var(--shadow-deep),
+      0 0 70px var(--aura-legendary);
   }
-  .card h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 1.25rem; }
-  .card ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
-  .tag { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; }
-  .tag.now { color: var(--q-uncommon); }
-  .tag.progress { color: var(--q-legendary); }
-  .tag.next { color: var(--q-epic); }
+  .item-name {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(2.3rem, 5.2vw, 3.1rem); line-height: 1.02; letter-spacing: 0.01em;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 2px 0 var(--black)) drop-shadow(0 0 16px var(--glow-legendary));
+  }
+  .legend { display: block; color: var(--q-legendary); }
+  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .legend {
+      background-image: linear-gradient(105deg, var(--q-legendary) 0%, var(--q-legendary) 40%, var(--q-legendary-glint) 50%, var(--q-legendary) 60%, var(--q-legendary) 100%);
+      background-size: 300% 100%;
+      background-position: 100% 0;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: glint 1.1s ease-in-out 0.45s 1 both;
+    }
+  }
+  @media (forced-colors: active) {
+    .legend { background: none; -webkit-text-fill-color: currentColor; }
+  }
+  @keyframes glint { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  .tip-hero .set { margin-top: 10px; }
+  .tip-hero .set-name { color: var(--gold); }
+  .tip-hero .req { margin-top: 2px; }
 
-  /* Setup */
-  .setup { display: grid; gap: 20px; }
-  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; counter-reset: step; }
-  .steps li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 12px; counter-increment: step; }
-  .steps li::before {
-    content: counter(step);
-    font-family: var(--display); color: var(--gold); font-size: 1.3rem; line-height: 1.4;
+  /* The one orchestrated moment: a level-up flare behind the hero tooltip */
+  .flare {
+    position: absolute; left: 50%; top: 72px;
+    width: min(170%, 780px); aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    z-index: -1; pointer-events: none;
   }
-  .steps li > div { display: grid; gap: 8px; min-width: 0; }
+  .flare::before, .flare::after { content: ""; position: absolute; inset: 0; border-radius: 50%; opacity: 0; }
+  .flare::before {
+    border: 2px solid var(--gold-flare);
+    box-shadow: 0 0 24px 4px var(--gold-flare-soft), inset 0 0 24px 4px var(--gold-flare-soft);
+    animation: ring 1.2s cubic-bezier(0.16, 0.84, 0.3, 1) 0.1s 1 both;
+  }
+  .flare::after {
+    background:
+      radial-gradient(circle, var(--flare-core) 0, var(--gold-flare-soft) 16%, transparent 46%),
+      repeating-conic-gradient(var(--flare-ray) 0deg 3deg, transparent 3deg 15deg);
+    -webkit-mask-image: radial-gradient(circle, var(--black) 0 22%, transparent 60%);
+    mask-image: radial-gradient(circle, var(--black) 0 22%, transparent 60%);
+    animation: burst 1.2s ease-out 0s 1 both;
+  }
+  .tip-hero::after {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 0 1px var(--gold), 0 0 36px 6px var(--gold-flare-soft);
+    opacity: 0;
+    animation: flash 1.2s ease-out 0.05s 1 both;
+  }
+  @keyframes ring { 0% { transform: scale(0.12); opacity: 0; } 14% { opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+  @keyframes burst { 0% { transform: scale(0.3) rotate(-20deg); opacity: 0; } 22% { opacity: 1; } 100% { transform: scale(1) rotate(10deg); opacity: 0; } }
+  @keyframes flash { 0% { opacity: 0; } 22% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* Game windows (screenshots) */
+  .window {
+    display: flex; flex-direction: column; min-width: 0;
+    border: 3px solid transparent; border-radius: 8px; overflow: hidden;
+    background: linear-gradient(var(--slot-bg), var(--slot-bg)) padding-box, var(--bronze-trim) border-box;
+    box-shadow: 0 0 0 1px var(--black), 0 18px 44px var(--shadow-deep);
+  }
+  .window-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 8px 6px 14px;
+    background: linear-gradient(var(--bar-hi), var(--bar-lo));
+    border-bottom: 1px solid var(--black);
+    box-shadow: inset 0 -1px 0 var(--bronze-3);
+  }
+  .window-title { font-family: var(--display); font-size: 1rem; letter-spacing: 0.04em; color: var(--gold); text-shadow: 0 1px 0 var(--black); }
+  .window-x {
+    position: relative; flex: none; width: 22px; height: 22px; border-radius: 4px;
+    background: linear-gradient(var(--btn-red-hi), var(--btn-red-lo));
+    border: 1px solid var(--bronze-1);
+    box-shadow: 0 0 0 1px var(--black);
+  }
+  .window-x::before, .window-x::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 11px; height: 2px; border-radius: 1px;
+    background: var(--gold-pale); transform: translate(-50%, -50%) rotate(45deg);
+  }
+  .window-x::after { transform: translate(-50%, -50%) rotate(-45deg); }
+  .window img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: var(--panel-bottom); }
+  .window figcaption {
+    flex: 1; padding: 10px 14px 12px; font-size: 0.95rem; color: var(--ink-dim);
+    border-top: 1px solid var(--black);
+    background: linear-gradient(var(--panel-top), var(--panel-bottom));
+  }
+
+  /* Quest tracker under the hero window */
+  .tracker { display: grid; gap: 2px; padding-left: 14px; border-left: 2px solid var(--bronze-2); }
+  .tracker-title { font-family: var(--display); font-size: 1.08rem; color: var(--gold); }
+  .tracker-title a { color: inherit; }
+  .tracker-title span { font-family: var(--body); font-size: 0.9rem; color: var(--ink-faint); }
+  .tracker ul { list-style: none; padding: 0; display: grid; gap: 1px; font-size: 0.96rem; color: var(--ink-dim); }
+  .tracker .done { color: var(--ink); }
+  .tracker .done span { color: var(--equip); }
+
+  /* Bronze-trimmed panels with a header plate */
+  .panel {
+    position: relative;
+    border: 3px solid transparent;
+    border-radius: 10px;
+    padding: 58px clamp(14px, 3.2vw, 36px) clamp(20px, 3.6vw, 36px);
+    background:
+      repeating-linear-gradient(135deg, var(--weave) 0 2px, transparent 2px 7px) padding-box,
+      linear-gradient(180deg, var(--panel-top), var(--panel-bottom)) padding-box,
+      var(--bronze-trim) border-box;
+    box-shadow:
+      0 0 0 1px var(--black),
+      inset 0 0 0 1px var(--black),
+      inset 0 0 0 2px var(--bronze-3),
+      inset 0 0 50px var(--shadow),
+      0 24px 60px var(--shadow-deep);
+  }
+  .panel::before {
+    content: ""; position: absolute; inset: -3px; border-radius: 10px; pointer-events: none;
+    background:
+      radial-gradient(circle at 11px 11px, var(--bronze-hi) 0 1.5px, var(--bronze-1) 2px 3.5px, var(--bronze-4) 4px 4.6px, transparent 5px),
+      radial-gradient(circle at calc(100% - 11px) 11px, var(--bronze-hi) 0 1.5px, var(--bronze-1) 2px 3.5px, var(--bronze-4) 4px 4.6px, transparent 5px),
+      radial-gradient(circle at 11px calc(100% - 11px), var(--bronze-hi) 0 1.5px, var(--bronze-1) 2px 3.5px, var(--bronze-4) 4px 4.6px, transparent 5px),
+      radial-gradient(circle at calc(100% - 11px) calc(100% - 11px), var(--bronze-hi) 0 1.5px, var(--bronze-1) 2px 3.5px, var(--bronze-4) 4px 4.6px, transparent 5px);
+  }
+  .plate {
+    position: absolute; top: -1px; left: 50%; transform: translate(-50%, -50%);
+    max-width: calc(100% - 28px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 7px 34px 8px;
+    border: 2px solid transparent; border-radius: 7px;
+    background:
+      linear-gradient(180deg, var(--plate-hi), var(--plate-lo)) padding-box,
+      linear-gradient(180deg, var(--bronze-hi), var(--bronze-2) 55%, var(--bronze-1)) border-box;
+    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--black), 0 8px 18px var(--shadow);
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(1.3rem, 3.4vw, 1.75rem); line-height: 1.2; letter-spacing: 0.03em;
+    color: var(--gold); text-shadow: 0 1px 0 var(--black), 0 0 14px var(--gold-glow);
+  }
+  .plate::before, .plate::after {
+    content: ""; position: absolute; top: 50%; width: 7px; height: 7px;
+    background: var(--bronze-1); box-shadow: 0 0 0 1px var(--black);
+    transform: translateY(-50%) rotate(45deg);
+  }
+  .plate::before { left: 13px; }
+  .plate::after { right: 13px; }
+
+  /* What's New: the bag */
+  .bag-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 28px; margin-bottom: 26px; }
+  .lede { max-width: 62ch; color: var(--ink-dim); }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 40px;
+    padding: 6px 13px; border-radius: 5px; cursor: pointer;
+    font: 500 0.98rem var(--body); color: var(--qc);
+    background: var(--tip-bg); border: 1px solid var(--tip-edge-dim);
+    box-shadow: 0 0 0 1px var(--black);
+  }
+  .chip .n { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .chip:hover { border-color: var(--qb); }
+  .chip[aria-pressed="true"] {
+    border-color: var(--qb);
+    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--qb), 0 0 16px var(--qg);
+  }
+  .chip[aria-pressed="true"] .n { color: var(--ink); }
+
+  .bag {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px 18px;
+  }
+  .item { display: flex; gap: 10px; align-items: stretch; min-width: 0; }
+  .item > .slot { align-self: flex-start; margin-top: 2px; }
+  .item > .tip { flex: 1; min-width: 0; }
+  .bag.is-sorting > .item:not([hidden]) { animation: bag-in 0.24s ease-out both; }
+  @keyframes bag-in { from { opacity: 0.35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .q-poor { --qc: var(--q-poor); --qb: var(--q-poor); --qg: var(--glow-poor); }
+  .q-common { --qc: var(--q-common); --qb: var(--q-common); --qg: var(--glow-common); }
+  .q-uncommon { --qc: var(--q-uncommon); --qb: var(--q-uncommon); --qg: var(--glow-uncommon); }
+  .q-rare { --qc: var(--q-rare-text); --qb: var(--q-rare); --qg: var(--glow-rare); }
+  .q-epic { --qc: var(--q-epic-text); --qb: var(--q-epic); --qg: var(--glow-epic); }
+  .q-legendary { --qc: var(--q-legendary); --qb: var(--q-legendary); --qg: var(--glow-legendary); }
+  .q-all { --qc: var(--gold); --qb: var(--gold); --qg: var(--gold-glow); }
+
+  .slot {
+    position: relative; flex: none; width: 46px; height: 46px;
+    display: grid; place-items: center; border-radius: 6px;
+    background: radial-gradient(circle at 34% 28%, var(--slot-hi), var(--slot-bg) 72%);
+    border: 2px solid var(--qb, var(--tip-edge-dim));
+    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--black), inset 0 0 12px var(--qg, transparent), 0 0 14px var(--qg, transparent);
+    color: var(--slot-glyph);
+  }
+  .slot::after {
+    content: ""; position: absolute; inset: 0; border-radius: 4px; pointer-events: none;
+    background: radial-gradient(circle at 50% 40%, var(--slot-shine), transparent 70%);
+    opacity: 0; transition: opacity 0.15s ease;
+  }
+  .item:hover .slot::after { opacity: 1; }
+  .slot svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .slot.is-gold { color: var(--gold); }
+
+  /* Quest Log: the one parchment panel */
+  .panel.is-parchment {
+    color: var(--parch-ink);
+    background:
+      radial-gradient(120% 70% at 15% 0%, var(--parch-hi), transparent 60%) padding-box,
+      radial-gradient(60% 50% at 85% 88%, var(--parch-blot), transparent 70%) padding-box,
+      radial-gradient(40% 30% at 30% 72%, var(--parch-blot), transparent 70%) padding-box,
+      linear-gradient(180deg, var(--parch-1), var(--parch-2)) padding-box,
+      var(--bronze-trim) border-box;
+    box-shadow:
+      0 0 0 1px var(--black),
+      inset 0 0 0 1px var(--black),
+      inset 0 0 0 2px var(--bronze-3),
+      inset 0 0 30px var(--parch-burn),
+      0 24px 60px var(--shadow-deep);
+  }
+  .is-parchment :focus-visible { outline-color: var(--parch-focus); }
+  .is-parchment a { color: var(--parch-link); }
+  .is-parchment code { background: var(--parch-code); }
+  .ql-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 20px; margin-bottom: 22px; color: var(--parch-ink-soft); }
+  .ql-count { font-family: var(--display); color: var(--parch-ink); }
+  .ql-grid {
+    display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+    background: linear-gradient(var(--parch-rule), var(--parch-rule)) 320px 0 / 1px 100% no-repeat;
+  }
+  .ql-list { padding-right: 22px; align-self: start; position: sticky; top: 16px; }
+  .ql-details { padding-left: 32px; min-width: 0; }
+  .ql-zone { display: flex; align-items: center; gap: 9px; font-family: var(--display); font-size: 1.02rem; color: var(--parch-ink); margin: 16px 0 6px; }
+  .ql-zone:first-child { margin-top: 0; }
+  .ql-zone::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--parch-select-edge); transform: rotate(45deg); }
+  .ql-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .quest {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 6px 10px 6px 11px; border-radius: 4px; border-left: 3px solid transparent;
+    color: var(--qd); text-decoration: none; font-weight: 700; line-height: 1.3;
+  }
+  .quest .lvl { flex: none; min-width: 2.5em; font-weight: 500; font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+  .quest .qn { flex: 1; min-width: 0; }
+  .quest .qtag { font-weight: 500; font-size: 0.9em; color: var(--parch-ink-soft); white-space: nowrap; }
+  .is-parchment .quest { color: var(--qd); }
+  .is-parchment .quest:hover { background: var(--parch-hover); color: var(--qd); }
+  .is-parchment .quest[aria-current="true"] { background: var(--parch-select); border-left-color: var(--parch-select-edge); color: var(--qd); }
+  .d-orange { --qd: var(--qd-orange); }
+  .d-yellow { --qd: var(--qd-yellow); }
+  .d-green { --qd: var(--qd-green); }
+  .d-grey { --qd: var(--qd-grey); }
+  .ql-legend { margin-top: 18px; font-size: 0.9rem; color: var(--parch-ink-soft); }
+  .ql-legend b { font-weight: 700; color: var(--qd); }
+
+  .qd { display: grid; gap: 12px; align-content: start; }
+  .qd:focus { outline: none; }
+  .qd + .qd { margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--parch-rule); }
+  .is-enhanced .qd + .qd { margin-top: 0; padding-top: 0; border-top: 0; }
+  .qd h3 { font-family: var(--display); font-weight: 400; font-size: clamp(1.45rem, 3vw, 1.9rem); line-height: 1.15; color: var(--parch-ink); }
+  .qmeta { margin-top: -6px; font-size: 0.9rem; letter-spacing: 0.03em; color: var(--parch-ink-soft); }
+  .qtext { font-size: 1.06rem; max-width: 64ch; }
+  .qd h4 { margin-top: 6px; font-family: var(--display); font-weight: 400; font-size: 1.18rem; color: var(--parch-ink); }
+  .objectives { list-style: none; padding: 0; display: grid; gap: 2px; }
+  .objectives .done { color: var(--qd-green); font-weight: 700; }
+  .rules { padding-left: 1.2em; display: grid; gap: 2px; color: var(--parch-ink-soft); }
+  .qsub { font-style: italic; color: var(--parch-ink-soft); margin-top: -4px; }
+  .rewards {
+    list-style: none; padding: 0;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 14px 22px;
+  }
+  .rw { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+  .rw .slot { width: 40px; height: 40px; }
+  .rw .slot svg { width: 24px; height: 24px; }
+  .rw-name { display: block; font-family: var(--display); font-size: 1.05rem; line-height: 1.25; color: var(--parch-ink); }
+  .rw-text { display: block; font-size: 0.98rem; color: var(--parch-ink-soft); }
+  .markers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 3px; }
+  .rm { width: 22px; height: 22px; stroke: var(--rm-line); stroke-width: 0.9; stroke-linejoin: round; }
+  .rm-star { fill: var(--rm-star); }
+  .rm-circle { fill: var(--rm-circle); }
+  .rm-diamond { fill: var(--rm-diamond); }
+  .rm-triangle { fill: var(--rm-triangle); }
+  .rm-moon { fill: var(--rm-moon); }
+  .rm-square { fill: var(--rm-square); }
+  .rm-cross { fill: var(--rm-cross); }
+  .rm-skull { fill: var(--rm-skull); }
+  .rm .eye { fill: var(--rm-line); stroke: none; }
+
+  /* Screenshots */
+  .sec-head { display: grid; gap: 8px; justify-items: center; text-align: center; margin-bottom: 30px; }
+  .sec-title {
+    display: flex; align-items: center; gap: 16px; width: 100%;
+    font-family: var(--display); font-weight: 400; font-size: clamp(1.6rem, 4vw, 2.1rem); line-height: 1.2;
+    color: var(--gold); text-shadow: 0 1px 0 var(--black), 0 0 16px var(--gold-glow);
+  }
+  .sec-title::before, .sec-title::after { content: ""; flex: 1; height: 2px; background: linear-gradient(90deg, transparent, var(--bronze-1)); }
+  .sec-title::after { background: linear-gradient(270deg, transparent, var(--bronze-1)); }
+  .sec-sub { color: var(--ink-dim); max-width: 60ch; }
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+
+  /* Play it yourself */
+  .notice {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 12px 16px; margin-bottom: 30px; border-radius: 6px;
+    background: var(--tip-bg); border: 1px solid var(--bronze-2);
+    box-shadow: inset 0 0 0 1px var(--black), 0 0 0 1px var(--black);
+  }
+  .notice svg { flex: none; width: 26px; height: 26px; margin-top: 1px; color: var(--gold); fill: currentColor; }
+  .notice strong { color: var(--gold); font-weight: 500; }
+  .play-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: clamp(26px, 4vw, 44px); align-items: start; }
+  .steps { list-style: none; padding: 0; display: grid; gap: 26px; }
+  .steps > li { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 14px; }
+  .step-n {
+    width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    font-family: var(--display); font-size: 1.15rem; color: var(--gold);
+    background: radial-gradient(circle at 40% 35%, var(--plate-hi), var(--plate-lo));
+    border: 2px solid var(--bronze-1);
+    box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--black), 0 0 12px var(--gold-glow);
+  }
+  .step-body { display: grid; gap: 10px; min-width: 0; padding-top: 4px; }
+  .step-body h3 { font-family: var(--display); font-weight: 400; font-size: 1.22rem; line-height: 1.25; color: var(--gold); }
+  .label { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: -4px; }
   .cmd {
-    display: flex; align-items: stretch; gap: 0;
-    border: 1px solid var(--line); border-radius: 4px; background: #0d0f14; overflow: hidden;
+    display: flex; align-items: stretch; min-width: 0;
+    border: 1px solid var(--code-edge); border-radius: 5px; background: var(--code-bg);
+    box-shadow: inset 0 1px 6px var(--shadow);
   }
   .cmd code {
-    flex: 1; min-width: 0; overflow-x: auto; white-space: pre;
-    padding: 10px 12px; font-family: var(--mono); font-size: 0.86rem; color: var(--fg);
+    flex: 1; min-width: 0; overflow-x: auto; white-space: pre; overflow-wrap: normal;
+    padding: 11px 14px; background: none; border-radius: 0;
+    font: 400 0.86rem/1.5 var(--mono); color: var(--code-ink);
   }
-  .cmd button {
-    flex: none; border: 0; border-left: 1px solid var(--line); background: var(--panel);
-    color: var(--muted); font: 500 0.82rem var(--body); padding: 0 14px; cursor: pointer;
+  .copy {
+    flex: none; min-width: 76px; padding: 0 14px; cursor: pointer;
+    border: 0; border-left: 1px solid var(--code-edge); border-radius: 0 4px 4px 0;
+    background: linear-gradient(var(--btn-red-hi), var(--btn-red) 50%, var(--btn-red-lo));
+    color: var(--gold); font: 400 0.92rem var(--display); text-shadow: 0 1px 0 var(--black);
   }
-  .cmd button:hover { color: var(--gold); }
-  .label { color: var(--muted); font-size: 0.9rem; }
-  .keys { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--muted); font-size: 0.95rem; }
-  kbd {
-    font-family: var(--mono); font-size: 0.8rem; color: var(--fg);
-    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px;
-    padding: 1px 6px; background: var(--panel);
-  }
+  .copy:hover { color: var(--gold-pale); filter: brightness(1.14); }
+  .copy:focus-visible { outline-offset: -4px; }
+  .play-side { display: grid; gap: 22px; min-width: 0; }
+  .binds h3, .dialog h3 { margin-bottom: 8px; }
+  .binds dl { display: grid; }
+  .binds dl > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; border-top: 1px solid var(--tip-rule); }
+  .binds dt { color: var(--ink); }
+  .binds dd { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; color: var(--ink-dim); font-size: 0.94rem; }
+  .dialog { border-color: var(--bronze-1); padding: 16px 18px 18px; display: grid; gap: 10px; }
+  .dialog .dialog-sub { margin-top: -10px; font-size: 0.9rem; color: var(--ink-faint); letter-spacing: 0.04em; }
+  .dialog ol { padding-left: 1.25em; display: grid; gap: 6px; }
+  .dialog strong { color: var(--gold); font-weight: 500; }
 
-  footer { color: var(--muted); font-size: 0.92rem; display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 24px; }
+  /* Footer */
+  .foot { display: grid; gap: 12px; justify-items: center; text-align: center; color: var(--ink-faint); font-size: 0.94rem; max-width: 74ch; margin-inline: auto; }
+  .foot-orn { display: flex; align-items: center; gap: 12px; width: min(340px, 80%); }
+  .foot-orn::before, .foot-orn::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--bronze-1)); }
+  .foot-orn::after { background: linear-gradient(270deg, transparent, var(--bronze-1)); }
+  .foot-orn span { width: 9px; height: 9px; background: var(--bronze-1); transform: rotate(45deg); box-shadow: 0 0 10px var(--gold-glow); }
+  .nomoney { font-family: var(--display); font-size: 1.12rem; color: var(--gold); }
+  .foot .updated { color: var(--ink-dim); }
 
-  @media (max-width: 820px) {
-    .features, .status { grid-template-columns: 1fr; }
-    .tooltip { max-width: 420px; }
+  /* Responsive */
+  @media (max-width: 920px) {
+    .hero-grid { grid-template-columns: minmax(0, 1fr); }
+    .hero-item { max-width: 560px; }
+    .play-grid { grid-template-columns: minmax(0, 1fr); }
   }
-  @media (max-width: 480px) {
-    .gallery .pair { grid-template-columns: 1fr; }
+  @media (max-width: 760px) {
+    .ql-grid { grid-template-columns: minmax(0, 1fr); background: none; }
+    .ql-list { position: static; padding-right: 0; padding-bottom: 20px; margin-bottom: 24px; border-bottom: 1px solid var(--parch-rule); }
+    .ql-details { padding-left: 0; }
+    .gallery { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 560px) {
     body { font-size: 16px; }
+    .actionbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+    .panel.is-parchment { box-shadow: 0 0 0 1px var(--black), inset 0 0 0 1px var(--black), inset 0 0 0 2px var(--bronze-3), inset 0 0 16px var(--parch-burn), 0 24px 60px var(--shadow-deep); }
+    .tip-hero { padding: 18px 18px 20px; }
+    .steps > li { grid-template-columns: 32px minmax(0, 1fr); gap: 12px; }
+    .step-n { width: 32px; height: 32px; font-size: 1rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .flare, .tip-hero::after { display: none; }
   }
 </style>
 </head>
 <body>
-<main class="wrap">
-  <header class="hero">
-    <div class="eyebrow">Fan-made roguelite · World of Warcraft 1.12</div>
-    <h1>Azeroth Survivors</h1>
-    <p class="pitch">A Megabonk-style survivors game set in vanilla Azeroth. Pick a class, walk into a zone, and hold off the horde for fifteen minutes while your spells cast themselves and a boss shows up every couple of minutes.</p>
-    <div class="actions">
-      <a class="btn" href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">View the code on GitHub</a>
-      <a class="btn ghost" href="#run-it">How to run it</a>
-    </div>
-    <figure>
-      <img class="shot" src="combat.jpg" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
-      <figcaption>Late game in Elwynn Forest: the whole spell pool at full rank against a 200-strong horde.</figcaption>
-    </figure>
-  </header>
+<main class="page" id="top">
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="g-talent" viewBox="0 0 24 24"><path d="M12 7.4V12M12 12l-4.6 4M12 12l4.6 4"/><circle cx="12" cy="5" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></symbol>
+    <symbol id="g-ticket" viewBox="0 0 24 24"><path d="M3 7h18v3.2a1.8 1.8 0 0 0 0 3.6V17H3v-3.2a1.8 1.8 0 0 0 0-3.6z"/><path d="M15.5 7.6v8.8" stroke-dasharray="1.6 1.8"/><path d="M6.5 10.5h5.5M6.5 13.5h3.5"/></symbol>
+    <symbol id="g-party" viewBox="0 0 24 24"><circle cx="8" cy="8" r="2.8"/><circle cx="16.5" cy="9" r="2.4"/><path d="M2.8 19.5c.4-3.4 2.5-5.5 5.2-5.5s4.8 2.1 5.2 5.5"/><path d="M13.6 14.6c.9-.7 1.9-1 2.9-1 2.3 0 4.1 1.8 4.5 4.9"/></symbol>
+    <symbol id="g-horseshoe" viewBox="0 0 24 24"><path d="M6.5 4.5v7a5.5 5.5 0 0 0 11 0v-7" stroke-width="3"/><path d="M4.5 4.5h4M15.5 4.5h4"/></symbol>
+    <symbol id="g-tabard" viewBox="0 0 24 24"><path d="M6.5 3.5h11v16.5L12 17l-5.5 3z"/><path d="M6.5 3.5 4 6M17.5 3.5 20 6"/><path d="M12 7.5l2 2.5-2 2.5-2-2.5z" fill="currentColor"/></symbol>
+    <symbol id="g-levelup" viewBox="0 0 24 24"><path d="M6 12.5l6-6 6 6M6 18.5l6-6 6 6"/></symbol>
+    <symbol id="g-skull" viewBox="0 0 24 24"><path d="M12 3c-4.4 0-7.5 3-7.5 7.2 0 2.6 1.3 4.4 3 5.4V19h9v-3.4c1.7-1 3-2.8 3-5.4C19.5 6 16.4 3 12 3z"/><circle cx="9" cy="10.5" r="1.6" fill="currentColor"/><circle cx="15" cy="10.5" r="1.6" fill="currentColor"/><path d="M10.5 19v-2M13.5 19v-2"/></symbol>
+    <symbol id="g-nova" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/></symbol>
+    <symbol id="g-paw" viewBox="0 0 24 24"><path d="M12 12.5c-2.8 0-5.5 3.2-5.5 5.4 0 1.5 1.2 2.1 2.6 2.1 1.1 0 1.9-.6 2.9-.6s1.8.6 2.9.6c1.4 0 2.6-.6 2.6-2.1 0-2.2-2.7-5.4-5.5-5.4z" fill="currentColor"/><ellipse cx="5.8" cy="10" rx="1.7" ry="2.2" fill="currentColor"/><ellipse cx="9.5" cy="6" rx="1.7" ry="2.3" fill="currentColor"/><ellipse cx="14.5" cy="6" rx="1.7" ry="2.3" fill="currentColor"/><ellipse cx="18.2" cy="10" rx="1.7" ry="2.2" fill="currentColor"/></symbol>
+    <symbol id="g-quest" viewBox="0 0 24 24"><path d="M10.2 3.5h3.6l-.8 11h-2z" fill="currentColor"/><circle cx="12" cy="18.6" r="1.9" fill="currentColor"/></symbol>
+    <symbol id="g-note" viewBox="0 0 24 24"><path d="M9 17.5V5.5l10-2v12M9 9.5l10-2"/><circle cx="6.8" cy="17.6" r="2.3" fill="currentColor"/><circle cx="16.8" cy="15.6" r="2.3" fill="currentColor"/></symbol>
+    <symbol id="g-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.8"/><circle cx="12" cy="12" r="1" fill="currentColor"/></symbol>
+    <symbol id="g-helm" viewBox="0 0 24 24"><path d="M4.5 14a7.5 7.5 0 0 1 15 0v5.5H15V15H9v4.5H4.5z"/><path d="M12 3.5v3M4.5 14H9M15 14h4.5"/></symbol>
+    <symbol id="g-ring" viewBox="0 0 24 24"><circle cx="12" cy="14.5" r="6"/><path d="M9.6 6.2 12 3l2.4 3.2L12 8.6z" fill="currentColor"/></symbol>
+    <symbol id="g-restart" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M17.5 3.5v4h-4"/></symbol>
+    <symbol id="g-pips" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5" fill="currentColor"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="currentColor" fill-opacity=".35"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="g-arena" viewBox="0 0 24 24"><ellipse cx="12" cy="15" rx="9" ry="4.5"/><ellipse cx="12" cy="15" rx="4" ry="1.8"/><path d="M4.5 12.5V7M9 10.8V5M15 10.8V5M19.5 12.5V7"/></symbol>
+    <symbol id="g-book" viewBox="0 0 24 24"><path d="M5 5.5a2 2 0 0 1 2-2h12v14H7a2 2 0 0 0-2 2z"/><path d="M5 19.5a2 2 0 0 0 2 2h12v-4"/><path d="M9 8h6M9 11h4"/></symbol>
+    <symbol id="g-rock" viewBox="0 0 24 24"><path d="M4 17l2.5-7 6-3.5 6 3 1.5 7.5-4 2.5H8z"/><path d="M12 7l-.5 4.5 2.5 2-1 3"/></symbol>
+    <symbol id="g-shield" viewBox="0 0 24 24"><path d="M12 3l7 2.5v5.5c0 4.5-3 8-7 9.5-4-1.5-7-5-7-9.5V5.5z"/><path d="M12 7.5v9M8.5 11h7"/></symbol>
+    <symbol id="g-frames" viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="4.5" rx="1"/><rect x="3" y="10" width="18" height="4.5" rx="1"/><rect x="3" y="16.5" width="12" height="4.5" rx="1"/></symbol>
+    <symbol id="g-flame" viewBox="0 0 24 24"><path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.4 3.6-8.3.9 1.6 1.4 2.9 1.6 4.3C12.4 9 13.6 6.3 13.4 3c3.2 2.4 5.1 6.3 5.1 10.6 0 4.4-2.6 7.4-6.5 7.4z"/><path d="M12 21c-1.7 0-2.8-1.1-2.8-2.7 0-1.8 1.6-2.8 2.4-4.5 1.6 1.3 3.2 2.7 3.2 4.6 0 1.6-1.1 2.6-2.8 2.6z" fill="currentColor"/></symbol>
+    <symbol id="g-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></symbol>
+    <symbol id="g-pack" viewBox="0 0 24 24"><path d="M5 8.5h14v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19.5z"/><path d="M8.5 8.5V6a3.5 3.5 0 0 1 7 0v2.5"/><path d="M9 13h6"/></symbol>
+  </svg>
 
-  <section class="features" aria-labelledby="whats-in">
-    <div style="display:grid; gap:16px;">
-      <h2 id="whats-in">What's in it</h2>
-      <div class="tooltip" role="list">
-        <div class="name" role="listitem">Azeroth Survivors</div>
-        <div role="listitem">Binds when played</div>
-        <div class="row" role="listitem"><span>Two-Hand</span><span>Roguelite</span></div>
-        <div class="row" role="listitem"><span>15:00 Survival</span><span>Speed 1.00</span></div>
-        <div class="stat" role="listitem">+9 Classes</div>
-        <div class="stat" role="listitem">+8 Races, two racial traits each</div>
-        <div class="stat" role="listitem">+16 Zones, Elwynn Forest to Naxxramas</div>
-        <div class="stat" role="listitem">+27 Talent trees</div>
-        <div class="stat" role="listitem">+405 Pieces of real WoW gear</div>
-        <div class="stat" role="listitem">+47 Achievements</div>
-        <div class="stat" role="listitem">+64 Quests and 16 zone quest chains</div>
-        <div class="gap"></div>
-        <div class="equip" role="listitem">Equip: Your spells cast themselves.</div>
-        <div class="equip" role="listitem">Equip: Bosses arrive every 2:15 and drop gear for your class.</div>
-        <div class="equip" role="listitem">Equip: Elites, guardians and treasure chests stalk the battleground.</div>
-        <div class="equip" role="listitem">Equip: Quest givers offer gold, jewelry and bonus XP in the field.</div>
-        <div class="equip" role="listitem">Equip: A pet fetches drops and grows alongside you.</div>
-        <div class="equip" role="listitem">Use: Reroll, skip or banish a level-up hand.</div>
-        <div class="equip" role="listitem">Use: Raise the horde's density, health, damage and speed for up to ×2 rewards.</div>
-        <div class="equip" role="listitem">Chance on victory: The next tier of zones opens.</div>
-        <div class="gap"></div>
-        <div class="set" role="listitem">Meta-progression (4/4)</div>
-        <div class="equip" role="listitem">(1) Talent XP from every run</div>
-        <div class="equip" role="listitem">(2) Gear from Thunderfury to Atiesh</div>
-        <div class="equip" role="listitem">(3) Perks bought with achievement points</div>
-        <div class="equip" role="listitem">(4) A companion pet that fetches your loot, levels up and changes looks</div>
-        <div class="flavor" role="listitem">"Running on a from-scratch World of Warcraft 1.12 client, written in Rust."</div>
-        <div class="req" role="listitem">Requires Rust and a WoW 1.12.1 client</div>
+  <p id="announce" class="sr-only" aria-live="polite"></p>
+
+  <div class="wrap">
+
+    <!-- 1. Hero -->
+    <header class="hero">
+      <div class="topbar">
+        <p class="eyebrow">Fan-made roguelite &#xB7; World of Warcraft 1.12</p>
+        <nav class="actionbar" aria-label="Page sections">
+          <a href="#whats-new"><span class="hk" aria-hidden="true">1</span>What's New</a>
+          <a href="#quest-log"><span class="hk" aria-hidden="true">2</span>Quest Log</a>
+          <a href="#screenshots"><span class="hk" aria-hidden="true">3</span>Screenshots</a>
+          <a href="#run-it"><span class="hk" aria-hidden="true">4</span>Play</a>
+        </nav>
       </div>
-    </div>
-    <div class="gallery">
-      <figure>
-        <img class="shot" src="levelup.jpg" alt="The level-up screen with three spell cards and Reroll, Skip and Banish buttons" loading="lazy">
-        <figcaption>Level up: three cards, coloured by rarity, plus reroll, skip and banish.</figcaption>
-      </figure>
-      <div class="pair">
-        <figure>
-          <img class="shot" src="run-options.jpg" alt="The Run Options panel with sliders for enemy density, health, damage and speed" loading="lazy">
-          <figcaption>Run Options: make it harder, earn more.</figcaption>
+
+      <div class="hero-grid">
+        <div class="hero-item">
+          <div class="flare" aria-hidden="true"></div>
+          <div class="tip tip-hero">
+            <h1 class="item-name"><span class="legend">Azeroth Survivors</span></h1>
+            <p>Binds when played</p>
+            <p>Unique</p>
+            <p class="split"><span>Two-Hand</span><span>Roguelite</span></p>
+            <p class="split"><span>15:00 Survival</span><span>Speed 1.00</span></p>
+            <ul class="lines">
+              <li>+9 Classes</li>
+              <li>+8 Races, two racial traits each</li>
+              <li>+16 Zones, Elwynn Forest to Naxxramas</li>
+              <li>+27 Talent trees</li>
+              <li>+405 Pieces of real WoW gear</li>
+              <li>+47 Achievements</li>
+              <li>+64 Quests and 16 zone quest chains</li>
+            </ul>
+            <ul class="lines fx">
+              <li>Equip: Your spells cast themselves.</li>
+              <li>Equip: Bosses arrive every 2:15 and drop gear for your class.</li>
+              <li>Equip: Elites, guardians and treasure chests stalk the battleground.</li>
+              <li>Equip: Quest givers offer gold, jewelry and bonus XP in the field.</li>
+              <li>Equip: A pet fetches drops and grows alongside you.</li>
+              <li>Use: Reroll, skip or banish a level-up hand.</li>
+              <li>Use: Raise the horde's density, health, damage and speed for up to &#xD7;2 rewards.</li>
+              <li>Chance on victory: The next tier of zones opens.</li>
+            </ul>
+            <div class="set">
+              <p class="set-name">Meta-progression (4/4)</p>
+              <ul class="lines fx">
+                <li>(1) Set: Talent XP from every run</li>
+                <li>(2) Set: Gear from Thunderfury to Atiesh</li>
+                <li>(3) Set: Perks bought with achievement points</li>
+                <li>(4) Set: A companion pet that fetches your loot, levels up and changes looks</li>
+              </ul>
+            </div>
+            <p class="flavor">"Running on a from-scratch World of Warcraft 1.12 client, written in Rust."</p>
+            <p class="req">Requires Rust and a WoW 1.12.1 client</p>
+          </div>
+        </div>
+
+        <div class="hero-side">
+          <p class="pitch">A Megabonk-style survivors game set in vanilla Azeroth. Pick a class, walk into a zone, and hold off the horde for fifteen minutes while your spells cast themselves and a boss shows up every couple of minutes.</p>
+          <div class="actions">
+            <a class="btn" href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">View the code on GitHub</a>
+            <a class="btn alt" href="#run-it">How to run it</a>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><span class="window-title">Elwynn Forest</span><span class="window-x" aria-hidden="true"></span></div>
+            <img src="combat.jpg" width="1280" height="720" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
+            <figcaption>Late game in Elwynn Forest: the whole spell pool at full rank against a 200-strong horde.</figcaption>
+          </figure>
+          <div class="tracker">
+            <p class="tracker-title"><a href="#q-coop">Online Co-op</a> <span>(Group)</span></p>
+            <ul>
+              <li class="done">- Online networking built: <span>1/1</span></li>
+              <li>- Merged into progression: 0/1</li>
+              <li>- Party features and social layer: 0/4</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 2. What's New -->
+    <section class="panel" id="whats-new" aria-labelledby="new-title">
+      <h2 class="plate" id="new-title">What's New</h2>
+      <div class="bag-head">
+        <p class="lede">Everything that's landed on the <code>progression</code> branch, sorted like a tidy bag with the best loot first. <strong>It's playable and freshly built:</strong> 391 tests pass, clippy is clean, and the play build is good to go.</p>
+        <div class="chips" role="group" aria-label="Filter by item quality" data-chips hidden>
+          <button type="button" class="chip q-all" data-filter="all" data-label="" aria-pressed="true">All <span class="n"></span></button>
+          <button type="button" class="chip q-epic" data-filter="epic" data-label="Epic" aria-pressed="false">Epic <span class="n"></span></button>
+          <button type="button" class="chip q-rare" data-filter="rare" data-label="Rare" aria-pressed="false">Rare <span class="n"></span></button>
+          <button type="button" class="chip q-uncommon" data-filter="uncommon" data-label="Uncommon" aria-pressed="false">Uncommon <span class="n"></span></button>
+          <button type="button" class="chip q-poor" data-filter="poor" data-label="Poor" aria-pressed="false">Poor <span class="n"></span></button>
+        </div>
+      </div>
+
+      <ul class="bag" data-bag>
+        <!-- Epic -->
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-talent"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Talents 2.0</h3>
+            <p>Unique</p>
+            <p class="split"><span>Talents</span><span>51 Points</span></p>
+            <p>+81 Real talent effects</p>
+            <ul class="lines fx">
+              <li>Equip: Every tree's 10-, 20- and 30-point talents are real effects now: Presence of Mind, Blast Wave, Ice Block, Sweeping Strikes, Shadowform, Swiftmend, Moonkin Form and friends.</li>
+              <li>Chance on hit: Proc talents like Impact and Ignite actually proc.</li>
+              <li>Equip: The headliners get gold frames.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-ticket"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Darkmoon Faire</h3>
+            <p>Unique</p>
+            <p class="split"><span>Prize Booth</span><span>Tickets</span></p>
+            <ul class="lines fx">
+              <li>Use: Spend in-game tickets at the gacha-style Prize Booth on companion looks: Silver Tabby, Bombay, Cornish Rex, Senegal, Cockatiel, owls, Tree Frog, Crimson Snake, whelplings, Pet Bombling, Lil' Smoky, Smolderweb Hatchling and Disgusting Oozeling.</li>
+              <li>Equip: A Collection tab tracks the 15 classic vanity pets.</li>
+            </ul>
+            <p class="flavor">"Tickets only. Never real money."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Co-op Rules</h3>
+            <p>Binds when played</p>
+            <p class="split"><span>Feature</span><span>Co-op</span></p>
+            <ul class="lines fx">
+              <li>Equip: Downed heroes get revived by allies, and healers do it faster.</li>
+              <li>Equip: Enemies scale with party size and spawn around each player.</li>
+              <li>Equip: The results show each hero's damage, healing and damage taken.</li>
+              <li>Use: Try it with <code>WOW_SURVIVORS_PARTY=3</code>.</li>
+            </ul>
+            <p class="flavor">"Playable solo with bots for now."</p>
+            <p class="tip-link"><a href="#q-coop">Online play is in the Quest Log</a></p>
+          </div>
+        </li>
+
+        <!-- Rare -->
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-horseshoe"/></svg></span>
+          <div class="tip">
+            <h3 class="name">The Stable</h3>
+            <p>Binds when picked up</p>
+            <p class="split"><span>Mount</span><span>Riding</span></p>
+            <ul class="lines fx">
+              <li>Use: Ride the mounts you win for +10% speed, from Brown Horse to Swift Zulian Tiger and the Deathcharger.</li>
+              <li>Use: Put a hat on them.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-tabard"/></svg></span>
+          <div class="tip">
+            <h3 class="name">The Wardrobe</h3>
+            <p class="split"><span>Tabard</span><span>Cosmetic</span></p>
+            <ul class="lines fx">
+              <li>Equip: Tabards show on your hero, and titles sit next to your name.</li>
+              <li>Use: Three toys go on a toy bar, keys <kbd>7</kbd>&#x2013;<kbd>9</kbd>.</li>
+              <li>Equip: A full Darkmoon deck becomes its real trinket: Blue Dragon, Heroism, Maelstrom or Twisting Nether.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span>
+          <div class="tip">
+            <h3 class="name">No Level Wall</h3>
+            <p class="split"><span>Leveling</span><span>Overcharge</span></p>
+            <p>Requires Level 1</p>
+            <ul class="lines fx">
+              <li>Equip: A full run reaches about level 81, enough to max every spell.</li>
+              <li>Equip: Maxed builds get stacking Overcharge picks.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Bosses and Chests</h3>
+            <p class="split"><span>Boss</span><span>Loot</span></p>
+            <ul class="lines fx">
+              <li>Equip: Bosses get a top-centre WoW frame with a skull, health %, a final-boss tag and 1.5&#xD7; roster size.</li>
+              <li>Equip: Wooden caches, iron-bound paid chests and golden, minimap-marked ornate boss chests now tier up.</li>
+              <li>Use: The final boss gets the grandest chest, with loot rolled on opening and a <em>Loot: item</em> banner.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Legendary Skills</h3>
+            <p class="split"><span>Spell</span><span>Upgrade</span></p>
+            <ul class="lines fx">
+              <li>Equip: Legendary skill upgrades now use real special mechanics: procs, echoes, novas and more.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-paw"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Companion 2.0</h3>
+            <p>Unique</p>
+            <p class="split"><span>Companion</span><span>Pet</span></p>
+            <ul class="lines fx">
+              <li>Equip: Your companion fetches drops and levels up.</li>
+              <li>Use: Unlock critter looks through pet level, achievements, quests and the Faire.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot is-gold" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-quest"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Field Quests</h3>
+            <p class="split"><span>Quest</span><span>In-run</span></p>
+            <ul class="lines fx">
+              <li>Use: Field quest givers offer accept, complete and turn-in loops.</li>
+              <li>Equip: Each turn-in pays a cache worth of gold, a jewelry choice and bonus XP.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-note"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Sounds and Music</h3>
+            <p class="split"><span>Audio</span><span>Ambience</span></p>
+            <ul class="lines fx">
+              <li>Equip: Positional, throttled WoW cast and impact sounds, joined by level-up, coin, chest and boss cues.</li>
+              <li>Equip: Every battleground has music and ambience, and the login theme crossfades on the menu.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span>
+          <div class="tip">
+            <h3 class="name">WoW Camera</h3>
+            <p class="split"><span>Camera</span><span>Collision</span></p>
+            <ul class="lines fx">
+              <li>Use: Right-drag to mouselook, scroll to zoom, and <kbd>V</kbd> for the old top-down view.</li>
+              <li>Equip: Proper tree and doodad collision.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Visible Gear</h3>
+            <p class="split"><span>Armor</span><span>Appearance</span></p>
+            <ul class="lines fx">
+              <li>Equip: Equipped gear visibly changes your hero.</li>
+              <li>Equip: Appearance customisation and a hero name carry through to the Character panel and results screen.</li>
+            </ul>
+          </div>
+        </li>
+
+        <!-- Uncommon -->
+        <li class="item q-uncommon" data-quality="uncommon">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-ring"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Jewelry and the C Panel</h3>
+            <p class="split"><span>Jewelry</span><span>Character</span></p>
+            <ul class="lines fx">
+              <li>Equip: Rings, trinkets and necklaces can appear in-run or at quest turn-ins.</li>
+              <li>Use: <kbd>C</kbd> opens your equipped jewelry and the full stat breakdown.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-uncommon" data-quality="uncommon">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-restart"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Quick Restart</h3>
+            <p class="split"><span>Results</span><span>Death</span></p>
+            <ul class="lines fx">
+              <li>Use: <kbd>Enter</kbd> restarts with the same hero, zone and options.</li>
+              <li>Use: <kbd>Esc</kbd> or the button returns to the main menu.</li>
+            </ul>
+            <p class="flavor">"Death results are fast now."</p>
+          </div>
+        </li>
+        <li class="item q-uncommon" data-quality="uncommon">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Honest Talent States</h3>
+            <p class="split"><span>Talents</span><span>Interface</span></p>
+            <ul class="lines fx">
+              <li>Equip: Green when learnable, grey with the reason when points run out, gold at max.</li>
+              <li>Equip: All 51 points are reachable.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-uncommon" data-quality="uncommon">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-arena"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Gurubashi Arena</h3>
+            <p class="split"><span>Zone</span><span>Stranglethorn</span></p>
+            <ul class="lines fx">
+              <li>Equip: The play area now fills the whole pit.</li>
+            </ul>
+          </div>
+        </li>
+        <li class="item q-uncommon" data-quality="uncommon">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Save Format v4</h3>
+            <p class="split"><span>Profile</span><span>Save</span></p>
+            <ul class="lines fx">
+              <li>Equip: Save format v4 is live, and older saves migrate forward.</li>
+            </ul>
+          </div>
+        </li>
+
+        <!-- Poor -->
+        <li class="item q-poor" data-quality="poor">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-rock"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Rough Edges</h3>
+            <p class="split"><span>Junk</span><span>Balance</span></p>
+            <p class="junk">Expect rough edges and balance that needs tuning.</p>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <!-- 3. Quest Log (parchment) -->
+    <section class="panel is-parchment" id="quest-log" aria-labelledby="ql-title" data-questlog>
+      <h2 class="plate" id="ql-title">Quest Log</h2>
+      <div class="ql-top">
+        <p>Tonight's plan first, then what comes after. Pick a quest to read it.</p>
+        <p class="ql-count">Quests: 16/20</p>
+      </div>
+
+      <div class="ql-grid">
+        <nav class="ql-list" aria-label="Quests">
+          <p class="ql-zone" id="z-tonight">Tonight's Run</p>
+          <ul aria-labelledby="z-tonight">
+            <li><a class="quest d-orange" href="#q-coop" aria-current="true"><span class="lvl">[60]</span><span class="qn">Online Co-op <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-yellow" href="#q-wake"><span class="lvl">[56]</span><span class="qn">Wake the Workers</span></a></li>
+            <li><a class="quest d-yellow" href="#q-net"><span class="lvl">[58]</span><span class="qn">Networking Lands</span></a></li>
+            <li><a class="quest d-orange" href="#q-party"><span class="lvl">[59]</span><span class="qn">Merge the Party</span></a></li>
+            <li><a class="quest d-orange" href="#q-social"><span class="lvl">[60]</span><span class="qn">The Social Layer <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-green" href="#q-docs"><span class="lvl">[55]</span><span class="qn">Write It Down</span></a></li>
+          </ul>
+
+          <p class="ql-zone" id="z-next">Coming Up</p>
+          <ul aria-labelledby="z-next">
+            <li><a class="quest d-yellow" href="#q-kit"><span class="lvl">[58]</span><span class="qn">Launch Night Kit <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-orange" href="#q-mc"><span class="lvl">[60]</span><span class="qn">Raid: Molten Core <span class="qtag">(Raid)</span></span></a></li>
+          </ul>
+
+          <p class="ql-zone" id="z-backlog">Backlog</p>
+          <ul aria-labelledby="z-backlog">
+            <li><a class="quest d-green" href="#q-roles"><span class="lvl">[50]</span><span class="qn">Role Cards <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-green" href="#q-transmog"><span class="lvl">[48]</span><span class="qn">Faire Phase 3: Transmog</span></a></li>
+            <li><a class="quest d-green" href="#q-polish"><span class="lvl">[47]</span><span class="qn">Online Polish</span></a></li>
+            <li><a class="quest d-green" href="#q-sight"><span class="lvl">[45]</span><span class="qn">Clear Sight</span></a></li>
+            <li><a class="quest d-grey" href="#q-blink"><span class="lvl">[30]</span><span class="qn">A Fresh Look</span></a></li>
+            <li><a class="quest d-grey" href="#q-hats"><span class="lvl">[28]</span><span class="qn">Hat Check</span></a></li>
+            <li><a class="quest d-grey" href="#q-tidy"><span class="lvl">[20]</span><span class="qn">Spring Cleaning</span></a></li>
+          </ul>
+
+          <p class="ql-zone" id="z-done">Progression Branch</p>
+          <ul aria-labelledby="z-done">
+            <li><a class="quest d-yellow" href="#q-built"><span class="lvl">[60]</span><span class="qn">Playable, Freshly Built <span class="qtag">(Complete)</span></span></a></li>
+          </ul>
+
+          <p class="ql-legend">Title colour shows the size of the job: <b class="d-orange">orange</b> is big, <b class="d-yellow">yellow</b> is solid, <b class="d-green">green</b> is light, <b class="d-grey">grey</b> is a quick fix.</p>
+        </nav>
+
+        <div class="ql-details">
+          <article class="qd" id="q-coop" tabindex="-1" aria-labelledby="q-coop-t">
+            <h3 id="q-coop-t">Online Co-op</h3>
+            <p class="qmeta">Level 60 &#xB7; Group of up to 5 &#xB7; Tonight's run</p>
+            <p class="qtext">Champion, the horde has grown too large to face alone. The networking is built on its own branch and is being merged into <code>progression</code> tonight, along with the party features. When it lands, one of you hosts and the rest join from the menu, up to five heroes. You gather in a party lobby, then fight in one shared world: the host runs the horde and everyone moves their own hero. Play over Tailscale or with a forwarded port.</p>
+            <p class="qtext">Until then, the co-op rules run solo with bots.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li class="done">- Online networking built: 1/1</li>
+              <li>- Networking merged into progression: 0/1</li>
+              <li>- No-pause level-ups: 0/1</li>
+              <li>- Party buffs, shared debuffs and resurrections: 0/1</li>
+              <li>- WoW party UI: 0/1</li>
+              <li>- WoW social layer: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Party Lobby</span><span class="rw-text">Host or Join from the menu, then one shared world with everyone on their own hero.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-levelup"/></svg></span><span><span class="rw-name">No Waiting on Each Other</span><span class="rw-text">Level-ups bank up and you pick from a small card strip while you keep moving. You take less damage while choosing, the world only slows if everyone's choosing at once, a boss kill gives a short breather, and anyone who drops in catches up.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party</span><span class="rw-text">Class buffs for the group (Fortitude, Arcane Intellect, Mark of the Wild, auras, Battle Shout, totems), shared debuffs like Sunder Armor and Curse of the Elements, taunts, and class resurrections: Resurrection, Redemption, Rebirth, Soulstones and the Shaman's Ankh.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-frames"/></svg></span><span><span class="rw-name">WoW Party UI</span><span class="rw-text">Classic party frames, class-coloured nameplates, arrows to off-screen allies, a Recount-style damage meter, and MVP awards on the results screen.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-wake" tabindex="-1" aria-labelledby="q-wake-t">
+            <h3 id="q-wake-t">Wake the Workers</h3>
+            <p class="qmeta">Level 56 &#xB7; Tonight's run, step 1</p>
+            <p class="qtext">Three workers were put to sleep mid-task. Wake them together: networking in the main repo, plus <code>wowparty</code> and <code>wowui</code>, each with its own build folder. Each step of the night only starts when the one before is verified, and nothing is pushed unless the full gate is green.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Networking worker resumed: 0/1</li>
+              <li>- wowparty worker resumed: 0/1</li>
+              <li>- wowui worker resumed: 0/1</li>
+            </ul>
+            <h4>Rules for the night:</h4>
+            <ul class="rules">
+              <li>One build folder per worktree.</li>
+              <li>Check free disk before each wave, and stop if it's under 15 GB.</li>
+              <li>The orchestrator re-runs every gate itself before pushing.</li>
+              <li>No force-pushes.</li>
+              <li>A worker that fails twice is parked and written up rather than retried forever.</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive: a running start. Nothing to play yet.</p>
+          </article>
+
+          <article class="qd" id="q-net" tabindex="-1" aria-labelledby="q-net-t">
+            <h3 id="q-net-t">Networking Lands</h3>
+            <p class="qmeta">Level 58 &#xB7; Tonight's run, step 2</p>
+            <p class="qtext">Bring the networking home to <code>progression</code>. It's verified end to end and only pushed when every gate is green. The test suite already runs a host and a client over a real UDP loopback.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li class="done">- Host and client loopback test: 1/1</li>
+              <li>- rustfmt: 0/1</li>
+              <li>- clippy: 0/1</li>
+              <li>- Survivors tests, with and without <code>coop</code>: 0/1</li>
+              <li>- Play build: 0/1</li>
+              <li>- Pushed: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Host and Join</span><span class="rw-text">Online play on the main branch. To try it on one PC, open two windows: one hosting with <code>WOW_SURVIVORS_HOST=5000</code> and one joining with <code>WOW_SURVIVORS_JOIN=127.0.0.1:5000</code>.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-party" tabindex="-1" aria-labelledby="q-party-t">
+            <h3 id="q-party-t">Merge the Party</h3>
+            <p class="qmeta">Level 59 &#xB7; Tonight's run, step 3</p>
+            <p class="qtext">The <code>wowparty</code> and <code>wowui</code> branches go on top of the networking. Then one integration worker wires them in, so every player in the group sees the same party.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Clients fill the party frames from replicated heroes: 0/1</li>
+              <li>- Party buffs, debuff icons, downed state and resurrection visuals replicate: 0/1</li>
+              <li>- The meter counts remote players: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">A Real Party, Online</span><span class="rw-text">Party buffs, shared debuffs, taunts and class resurrections, seen by everyone.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-frames"/></svg></span><span><span class="rw-name">Party UI for Everyone</span><span class="rw-text">Party frames, nameplates, ally arrows, the Recount-style meter and MVP awards, filled in for every player.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-social" tabindex="-1" aria-labelledby="q-social-t">
+            <h3 id="q-social-t">The Social Layer</h3>
+            <p class="qmeta">Level 60 &#xB7; Group &#xB7; Tonight's run, step 4</p>
+            <p class="qtext">A party that can't talk is just five strangers in the same zone. Two workers build the social layer side by side, and all of it is networked.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Pings and raid markers: 0/1</li>
+              <li>- Emote wheel: 0/1</li>
+              <li>- Ready check: 0/1</li>
+              <li>- Spectate while downed: 0/1</li>
+              <li>- Personal boss loot: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw">
+                <span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span>
+                <span>
+                  <span class="rw-name">Raid Markers and Pings</span>
+                  <span class="markers" aria-hidden="true">
+                    <svg class="rm rm-skull" viewBox="0 0 16 16"><path d="M8 1.5c-3.6 0-6 2.4-6 5.6 0 2 1 3.3 2.4 4.1V14h7.2v-2.8C13 10.4 14 9.1 14 7.1 14 3.9 11.6 1.5 8 1.5z"/><circle class="eye" cx="5.8" cy="7.4" r="1.5"/><circle class="eye" cx="10.2" cy="7.4" r="1.5"/></svg>
+                    <svg class="rm rm-cross" viewBox="0 0 16 16"><path d="M3 1.5 8 6.5l5-5L14.5 3l-5 5 5 5-1.5 1.5-5-5-5 5L1.5 13l5-5-5-5z"/></svg>
+                    <svg class="rm rm-square" viewBox="0 0 16 16"><rect x="2.2" y="2.2" width="11.6" height="11.6"/></svg>
+                    <svg class="rm rm-moon" viewBox="0 0 16 16"><path d="M10.6 1.8a6.4 6.4 0 1 0 3.7 10.5A5.1 5.1 0 0 1 10.6 1.8z"/></svg>
+                    <svg class="rm rm-triangle" viewBox="0 0 16 16"><path d="M8 1.6 15 14H1z"/></svg>
+                    <svg class="rm rm-diamond" viewBox="0 0 16 16"><path d="M8 1l6.5 7L8 15 1.5 8z"/></svg>
+                    <svg class="rm rm-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/></svg>
+                    <svg class="rm rm-star" viewBox="0 0 16 16"><path d="M8 1l2.1 4.6 5 .5-3.8 3.3 1.1 4.9L8 11.8l-4.4 2.5 1.1-4.9L.9 6.1l5-.5z"/></svg>
+                  </span>
+                  <span class="rw-text">Skull, cross, square, moon, triangle, diamond, circle and star, on a spot or an enemy and shown on the minimap. Plus "Help!", "Boss" and "Chest here" pings.</span>
+                </span>
+              </li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Emote Wheel</span><span class="rw-text">The real voice emotes: /wave, /cheer, /dance, /charge and more.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon is-gold" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-quest"/></svg></span><span><span class="rw-name">Ready Check</span><span class="rw-text">The real ready-check pop-up and sound in the lobby, which shows each player's class, title and mount.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Spectate</span><span class="rw-text">Cycle the camera through living allies while you're down.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-skull"/></svg></span><span><span class="rw-name">Personal Boss Loot</span><span class="rw-text">Each player rolls for their own class, and everyone sees the party's loot banners.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-docs" tabindex="-1" aria-labelledby="q-docs-t">
+            <h3 id="q-docs-t">Write It Down</h3>
+            <p class="qmeta">Level 55 &#xB7; Tonight's run, step 5</p>
+            <p class="qtext">Every good night's work ends with a report. Write up how to play online, refresh the roadmap, the README and this page, and leave a summary for the morning.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- How to play online, in <code>docs/MULTIPLAYER.md</code>: 0/1</li>
+              <li>- Roadmap and README: 0/1</li>
+              <li>- This page, with co-op instructions: 0/1</li>
+              <li>- Morning summary: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">The Morning Haul</span><span class="rw-text"><code>progression</code> with online co-op and the party features, a fresh play build, a short list of things to try with friends, and an honest list of what's untested.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-kit" tabindex="-1" aria-labelledby="q-kit-t">
+            <h3 id="q-kit-t">Launch Night Kit</h3>
+            <p class="qmeta">Level 58 &#xB7; Group &#xB7; Coming up</p>
+            <p class="qtext">Four or five friends, one evening, nobody fighting a compiler. Pack everything a friend needs to get from download to the party lobby.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- A prebuilt zip for friends: 0/1</li>
+              <li>- A version check: 0/1</li>
+              <li>- A friend guide: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pack"/></svg></span><span><span class="rw-name">Prebuilt Zip</span><span class="rw-text">A ready-made build, so friends can skip building from source.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span><span><span class="rw-name">Version Check</span><span class="rw-text">So the whole party is on the same build before the pull.</span></span></li>
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-book"/></svg></span><span><span class="rw-name">Friend Guide</span><span class="rw-text">A short guide written for the friends joining in.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-mc" tabindex="-1" aria-labelledby="q-mc-t">
+            <h3 id="q-mc-t">Raid: Molten Core</h3>
+            <p class="qmeta">Level 60 &#xB7; Raid &#xB7; Coming up &#xB7; Epic quest</p>
+            <p class="qtext">Deep beneath Blackrock Mountain, the first raid waits. Before anyone steps in, the engine has to prove it can handle Molten Core. Then come the boss mechanics, the Tier 1 sets and proper Need and Greed rolls.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Engine check: 0/1</li>
+              <li>- Boss mechanics library: 0/1</li>
+              <li>- Tier 1 sets with set bonuses: 0/1</li>
+              <li>- Need/Greed loot: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The First Raid</span><span class="rw-text">Molten Core, with bosses built on a shared mechanics library.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span><span><span class="rw-name">Tier 1 Sets</span><span class="rw-text">Class sets with real set bonuses.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-dice"/></svg></span><span><span class="rw-name">Need and Greed</span><span class="rw-text">Roll Need or Greed on raid loot, the classic way.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-roles" tabindex="-1" aria-labelledby="q-roles-t">
+            <h3 id="q-roles-t">Role Cards</h3>
+            <p class="qmeta">Level 50 &#xB7; Group &#xB7; Backlog</p>
+            <p class="qtext">Once co-op lands, give healers and tanks cards that suit a group.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Heals that also hit the lowest ally: 0/1</li>
+              <li>- +Threat cards: 0/1</li>
+              <li>- Taunt on mobility: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-shield"/></svg></span><span><span class="rw-name">Role Cards in Co-op</span><span class="rw-text">Level-up picks for healing and tanking in a party.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-transmog" tabindex="-1" aria-labelledby="q-transmog-t">
+            <h3 id="q-transmog-t">Faire Phase 3: Transmog</h3>
+            <p class="qmeta">Level 48 &#xB7; Backlog</p>
+            <p class="qtext">The Darkmoon Faire has a third act to open: transmog. No real money, as ever.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Transmog at the Faire: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-tabard"/></svg></span><span><span class="rw-name">Transmog</span><span class="rw-text">Change how your gear looks.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-polish" tabindex="-1" aria-labelledby="q-polish-t">
+            <h3 id="q-polish-t">Online Polish</h3>
+            <p class="qmeta">Level 47 &#xB7; Backlog</p>
+            <p class="qtext">Smooth out the bumps of playing online.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Reconnect: 0/1</li>
+              <li>- Ping and latency display: 0/1</li>
+              <li>- Browser transport: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span><span><span class="rw-name">Steadier Online Play</span><span class="rw-text">Get back in after a drop, see your latency, and a browser transport.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-sight" tabindex="-1" aria-labelledby="q-sight-t">
+            <h3 id="q-sight-t">Clear Sight</h3>
+            <p class="qmeta">Level 45 &#xB7; Backlog</p>
+            <p class="qtext">Joining players should see what the host sees.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Enemy debuff marks: 0/1</li>
+              <li>- Hero auras: 0/1</li>
+              <li>- Mounts: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-uncommon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-eye"/></svg></span><span><span class="rw-name">Shared View</span><span class="rw-text">Clients see enemy debuff marks, hero auras and mounts.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-blink" tabindex="-1" aria-labelledby="q-blink-t">
+            <h3 id="q-blink-t">A Fresh Look</h3>
+            <p class="qmeta">Level 30 &#xB7; Backlog</p>
+            <p class="qtext">New gear deserves a moment.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- The hero blinks for a few frames on a gear change: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-common" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span><span><span class="rw-name">A Visible Gear Swap</span><span class="rw-text">You'll notice the moment new gear goes on.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-hats" tabindex="-1" aria-labelledby="q-hats-t">
+            <h3 id="q-hats-t">Hat Check</h3>
+            <p class="qmeta">Level 28 &#xB7; Backlog</p>
+            <p class="qtext">A few hats and mounts in the Stable need a second look.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Better icons for the Dapper Top Hat and Jack-o'-Lantern Hat: 0/1</li>
+              <li>- Double-check the Gray Kodo skin: 0/1</li>
+              <li>- Double-check the Striped and Winterspring Frostsaber skins: 0/1</li>
+              <li>- Double-check the Swift White Mechanostrider skin: 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-common" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-horseshoe"/></svg></span><span><span class="rw-name">Hats and Mounts That Look Right</span><span class="rw-text">Cleaner icons and checked skins.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-tidy" tabindex="-1" aria-labelledby="q-tidy-t">
+            <h3 id="q-tidy-t">Spring Cleaning</h3>
+            <p class="qmeta">Level 20 &#xB7; Backlog</p>
+            <p class="qtext">Once everything is on <code>progression</code>, sweep out the old branches.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li>- Delete merged remote branches (<code>wip/*</code>, <code>wave3-*</code>, <code>mp-groundwork</code> and the feature branches): 0/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-poor" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-rock"/></svg></span><span><span class="rw-name">A Tidy Repo</span><span class="rw-text">Fewer branches to trip over.</span></span></li>
+            </ul>
+          </article>
+
+          <article class="qd" id="q-built" tabindex="-1" aria-labelledby="q-built-t">
+            <h3 id="q-built-t">Playable, Freshly Built (Complete)</h3>
+            <p class="qmeta">Level 60 &#xB7; Progression branch &#xB7; Ready to turn in</p>
+            <p class="qtext">You've done well. The <code>progression</code> branch is pushed and playable, and every item in the bags above is in it.</p>
+            <h4>Objectives:</h4>
+            <ul class="objectives">
+              <li class="done">- Survivors tests passing: 391/391</li>
+              <li class="done">- Clippy clean: 1/1</li>
+              <li class="done">- Play build ready: 1/1</li>
+              <li class="done">- Co-op rules, solo with bots: 1/1</li>
+            </ul>
+            <h4>Rewards:</h4>
+            <p class="qsub">You will receive:</p>
+            <ul class="rewards">
+              <li class="rw"><span class="slot q-epic is-gold" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-quest"/></svg></span><span><span class="rw-name">Everything in What's New</span><span class="rw-text"><a href="#whats-new">Open the bags</a> to see all of it.</span></span></li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Screenshots -->
+    <section id="screenshots" aria-labelledby="shots-title">
+      <div class="sec-head">
+        <h2 class="sec-title" id="shots-title">Screenshots</h2>
+        <p class="sec-sub">From real runs, rendered from a user-supplied 1.12 client.</p>
+      </div>
+      <div class="gallery">
+        <figure class="window">
+          <div class="window-bar"><span class="window-title">Elwynn Forest</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="combat.jpg" width="1280" height="720" loading="lazy" alt="A Mage in Elwynn Forest surrounded by the horde, spells and damage numbers everywhere">
+          <figcaption>A Mage in Elwynn Forest surrounded by the horde, with spells and damage numbers everywhere.</figcaption>
         </figure>
-        <figure>
-          <img class="shot" src="victory.jpg" alt="The victory screen showing 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches" loading="lazy">
-          <figcaption>A full 15-minute win, with the run in numbers.</figcaption>
+        <figure class="window">
+          <div class="window-bar"><span class="window-title">Level Up</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="levelup.jpg" width="1280" height="720" loading="lazy" alt="The level-up screen with three spell cards and Reroll, Skip and Banish buttons">
+          <figcaption>Level up: three spell cards, coloured by rarity, plus Reroll, Skip and Banish.</figcaption>
+        </figure>
+        <figure class="window">
+          <div class="window-bar"><span class="window-title">Run Options</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="run-options.jpg" width="1280" height="720" loading="lazy" alt="The Run Options panel with sliders for enemy density, health, damage and speed">
+          <figcaption>Run Options: sliders for enemy density, health, damage and speed. Make it harder, earn more.</figcaption>
+        </figure>
+        <figure class="window">
+          <div class="window-bar"><span class="window-title">Victory</span><span class="window-x" aria-hidden="true"></span></div>
+          <img src="victory.jpg" width="1280" height="720" loading="lazy" alt="The victory screen showing 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches">
+          <figcaption>A full 15-minute win, with the run in numbers: 15:00 survived, 7414 kills, 903 gold, 5 elites and 4 caches.</figcaption>
         </figure>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="status" aria-labelledby="where">
-    <div class="card">
-      <span class="tag now">Where it's at</span>
-      <h3 id="where">Playable, freshly built</h3>
-      <ul>
-        <li>391 tests pass, clippy is clean, and the play build is good to go on <code>progression</code>.</li>
-        <li><strong>Stable:</strong> ride the mounts you win (+10% speed), from Brown Horse to Swift Zulian Tiger and the Deathcharger, and put a hat on them.</li>
-        <li><strong>Wardrobe:</strong> tabards show on your hero, titles sit next to your name, three toys go on a toy bar (<kbd>7</kbd>&ndash;<kbd>9</kbd>), and a full Darkmoon deck becomes its real trinket: Blue Dragon, Heroism, Maelstrom or Twisting Nether.</li>
-        <li>No level wall: a full run reaches about level 81, enough to max every spell, and maxed builds get stacking Overcharge picks.</li>
-        <li>Gurubashi Arena's play area now fills the whole pit.</li>
-        <li>Co-op rules are in, playable solo with bots for now: downed heroes get revived by allies (healers faster), enemies scale with party size, and the results show each hero's damage, healing and damage taken.</li>
-        <li>WoW-style camera is in: right-drag mouselook, scroll zoom, <kbd>V</kbd> for the old top-down view, and proper tree and doodad collision.</li>
-        <li>Death results are fast: <kbd>Enter</kbd> restarts the same hero, zone and options; <kbd>Esc</kbd> or the button returns to the main menu.</li>
-        <li>Positional, throttled WoW cast and impact sounds are joined by level-up, coin, chest and boss cues; every battleground now has music and ambience, with the login theme crossfading on the menu.</li>
-        <li>Bosses have a top-centre WoW frame, skull, health %, final-boss tag and 1.5× roster size. Wooden caches, iron-bound paid chests and golden, minimap-marked ornate boss chests now tier up; the final boss gets the grandest, with loot rolled on opening and a <em>Loot: item</em> banner.</li>
-        <li>Equipped gear visibly changes your hero. Appearance customisation and a hero name carry through to the Character panel and results screen.</li>
-        <li>Rings, trinkets and necklaces can appear in-run or at quest turn-ins; <kbd>C</kbd> opens equipped jewelry and the full stat breakdown.</li>
-        <li>Legendary skill upgrades now use real special mechanics: procs, echoes, novas and more.</li>
-        <li>Companion 2.0 fetches drops, levels, and unlocks critter looks through pet level, achievements, quests and the Faire.</li>
-        <li>Field quest givers now offer accept, complete and turn-in loops: a cache worth of gold, a jewelry choice and bonus XP.</li>
-        <li>The Darkmoon Faire's gacha-style Prize Booth spends in-game tickets only&mdash;never real money&mdash;on companion looks: Silver Tabby, Bombay, Cornish Rex, Senegal, Cockatiel, owls, Tree Frog, Crimson Snake, whelplings, Pet Bombling, Lil' Smoky, Smolderweb Hatchling and Disgusting Oozeling. A Collection tab tracks the 15 classic vanity pets.</li>
-        <li>Talent states are honest: green when learnable, grey with the reason when points run out, gold at max; all 51 points are reachable.</li>
-        <li>Talents 2.0: every tree's 10-, 20- and 30-point talents are real effects now, all 81 of them &mdash; Presence of Mind, Blast Wave, Ice Block, Sweeping Strikes, Shadowform, Swiftmend, Moonkin Form and friends. Proc talents like Impact and Ignite actually proc. The headliners get gold frames.</li>
-        <li>Save format v4 is live, with older saves migrated forward.</li>
-        <li>Expect rough edges and balance that needs tuning.</li>
-      </ul>
-    </div>
-    <div class="card">
-      <span class="tag next">Next up</span>
-      <h3>Online co-op, the WoW way</h3>
-      <ul>
-        <li><strong>Online co-op is being built</strong>: Host or Join from the menu, a party lobby, and one shared world where the host runs the horde and everyone moves their own hero. Play over Tailscale or with a forwarded port.</li>
-        <li><strong>No waiting on each other:</strong> level-ups bank up and you pick from a small card strip while you keep moving. You take less damage while choosing, the world only slows if everyone's choosing at once, and a boss kill gives a short breather.</li>
-        <li><strong>A real party:</strong> class buffs for the group (Fortitude, Arcane Intellect, Mark of the Wild, auras, Battle Shout, totems), shared debuffs like Sunder Armor and Curse of the Elements, and class resurrections: Resurrection, Redemption, Rebirth, Soulstones and the Shaman's Ankh.</li>
-        <li><strong>WoW party UI:</strong> classic party frames, class-coloured nameplates, arrows to off-screen allies, a Recount-style damage meter, and MVP awards on the results screen.</li>
-        <li><strong>Next:</strong> raid-marker pings, an emote wheel with the real voice emotes, a ready check in the lobby, spectating while downed, and personal boss loot.</li>
-      </ul>
-    </div>
-  </section>
+    <!-- 5. Play it yourself -->
+    <section class="panel" id="run-it" aria-labelledby="play-title">
+      <h2 class="plate" id="play-title">Play It Yourself</h2>
+      <p class="notice">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#g-quest"/></svg>
+        <span><strong>You need World of Warcraft 1.12.1 client data to play.</strong> Nothing Blizzard-owned is hosted here or in the repo. Step 3 fetches a client's <code>Data</code> folder for you.</span>
+      </p>
 
-  <section class="setup" id="run-it" aria-labelledby="run-title">
-    <h2 id="run-title">Run it yourself</h2>
-    <ol class="steps">
-      <li><div>
-        <p>Install Rust from <a href="https://rustup.rs">rustup.rs</a>, plus Git.</p>
-      </div></li>
-      <li><div>
-        <p>Get the code on the <code>progression</code> branch.</p>
-        <div class="cmd"><code>git clone -b progression https://github.com/deanmathieson/azeroth-survivors-re</code><button type="button" data-copy>Copy</button></div>
-      </div></li>
-      <li><div>
-        <p>Get the game data. The repo ships no Blizzard files; this script downloads a WoW 1.12.1 client's <code>Data</code> folder (about 5.5 GB) into <code>wow-data/</code>. On Windows, run it from Git Bash.</p>
-        <div class="cmd"><code>cd azeroth-survivors-re && bash scripts/fetch-data.sh</code><button type="button" data-copy>Copy</button></div>
-      </div></li>
-      <li><div>
-        <p>Build and play. The first build takes about ten minutes.</p>
-        <span class="label">PowerShell</span>
-        <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; cargo survivors</code><button type="button" data-copy>Copy</button></div>
-        <span class="label">macOS, Linux or Git Bash</span>
-        <div class="cmd"><code>WOW_DATA=wow-data/Data cargo survivors</code><button type="button" data-copy>Copy</button></div>
-      </div></li>
-    </ol>
-    <div class="keys">
-      <span><kbd>WASD</kbd> move</span>
-      <span><kbd>Space</kbd> jump</span>
-      <span><kbd>F</kbd> movement spell</span>
-      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick a card</span>
-      <span><kbd>R</kbd> reroll</span>
-      <span><kbd>B</kbd> banish</span>
-      <span>Right-drag mouselook</span>
-      <span>Scroll zoom</span>
-      <span><kbd>V</kbd> top-down camera</span>
-      <span><kbd>C</kbd> Character panel</span>
-      <span><kbd>Esc</kbd> pause</span>
-    </div>
-  </section>
+      <div class="play-grid">
+        <ol class="steps" role="list">
+          <li>
+            <span class="step-n" aria-hidden="true">1</span>
+            <div class="step-body">
+              <h3>Get the tools</h3>
+              <p>Install Rust from <a href="https://rustup.rs">rustup.rs</a>, plus Git.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-n" aria-hidden="true">2</span>
+            <div class="step-body">
+              <h3>Get the code</h3>
+              <p>Clone the <code>progression</code> branch.</p>
+              <div class="cmd"><code>git clone -b progression https://github.com/deanmathieson/azeroth-survivors-re</code><button type="button" class="copy" data-copy>Copy</button></div>
+            </div>
+          </li>
+          <li>
+            <span class="step-n" aria-hidden="true">3</span>
+            <div class="step-body">
+              <h3>Get the game data</h3>
+              <p>The repo ships no Blizzard files. This script downloads a WoW 1.12.1 client's <code>Data</code> folder (about 5.5 GB) into <code>wow-data/</code>. On Windows, run it from Git Bash.</p>
+              <div class="cmd"><code>cd azeroth-survivors-re &amp;&amp; bash scripts/fetch-data.sh</code><button type="button" class="copy" data-copy>Copy</button></div>
+            </div>
+          </li>
+          <li>
+            <span class="step-n" aria-hidden="true">4</span>
+            <div class="step-body">
+              <h3>Build and play</h3>
+              <p>The first build takes about ten minutes.</p>
+              <p class="label">PowerShell</p>
+              <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; cargo survivors</code><button type="button" class="copy" data-copy>Copy</button></div>
+              <p class="label">macOS, Linux or Git Bash</p>
+              <div class="cmd"><code>WOW_DATA=wow-data/Data cargo survivors</code><button type="button" class="copy" data-copy>Copy</button></div>
+            </div>
+          </li>
+        </ol>
 
-  <footer>
-    <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
-    <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is © Blizzard Entertainment.</p>
-    <p>Last updated: 15 Oct 2026.</p>
-  </footer>
+        <div class="play-side">
+          <div class="tip binds">
+            <h3>Key Bindings</h3>
+            <dl>
+              <div><dt>Move</dt><dd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dd></div>
+              <div><dt>Jump</dt><dd><kbd>Space</kbd></dd></div>
+              <div><dt>Movement spell</dt><dd><kbd>F</kbd></dd></div>
+              <div><dt>Pick a card</dt><dd><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dd></div>
+              <div><dt>Reroll</dt><dd><kbd>R</kbd></dd></div>
+              <div><dt>Banish</dt><dd><kbd>B</kbd></dd></div>
+              <div><dt>Mouselook</dt><dd>Right-drag</dd></div>
+              <div><dt>Zoom</dt><dd>Scroll</dd></div>
+              <div><dt>Top-down camera</dt><dd><kbd>V</kbd></dd></div>
+              <div><dt>Character panel</dt><dd><kbd>C</kbd></dd></div>
+              <div><dt>Toy bar</dt><dd><kbd>7</kbd><kbd>8</kbd><kbd>9</kbd></dd></div>
+              <div><dt>Pause</dt><dd><kbd>Esc</kbd></dd></div>
+              <div><dt>Restart after death</dt><dd><kbd>Enter</kbd></dd></div>
+            </dl>
+          </div>
+
+          <aside class="tip dialog" aria-labelledby="friends-title">
+            <h3 id="friends-title">Playing with Friends</h3>
+            <p class="dialog-sub">Once co-op lands</p>
+            <p>Online co-op is still being merged, so this part isn't live yet. When it is, up to five of you can play together:</p>
+            <ol>
+              <li>Everyone installs <a href="https://tailscale.com">Tailscale</a> on their PC. That's the easiest way. Or the host forwards <strong>UDP port 5000</strong> on their router.</li>
+              <li>The host picks <strong>Host</strong> from the menu, and everyone else picks <strong>Join</strong>.</li>
+            </ol>
+            <p>Want a taste today? The co-op rules already run solo with bots:</p>
+            <div class="cmd"><code>$env:WOW_DATA="$PWD\wow-data\Data"; $env:WOW_SURVIVORS_PARTY="3"; cargo survivors</code><button type="button" class="copy" data-copy>Copy</button></div>
+            <p><a href="#q-coop">Track online co-op in the Quest Log</a></p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Footer -->
+    <footer class="foot">
+      <div class="foot-orn" aria-hidden="true"><span></span></div>
+      <p class="nomoney">No real money, ever: the Faire runs on tickets.</p>
+      <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
+      <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is &#xA9; Blizzard Entertainment.</p>
+      <p class="updated">Last updated: 16 Oct 2026 &#xB7; <a href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">Code on GitHub</a> &#xB7; <a href="#top">Back to top</a></p>
+    </footer>
+
+  </div>
 </main>
 
 <script>
-  document.querySelectorAll("[data-copy]").forEach(function (button) {
-    button.addEventListener("click", function () {
-      var code = button.parentElement.querySelector("code");
-      var text = code.textContent;
-      var done = function () {
-        button.textContent = "Copied";
-        setTimeout(function () { button.textContent = "Copy"; }, 1500);
-      };
-      var selectIt = function () {
-        var range = document.createRange();
-        range.selectNodeContents(code);
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        button.textContent = "Selected";
-        setTimeout(function () { button.textContent = "Copy"; }, 1500);
-      };
-      try {
-        navigator.clipboard.writeText(text).then(done, selectIt);
-      } catch (e) {
-        selectIt();
+  (function () {
+    var announce = document.getElementById("announce");
+    var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    function say(message) {
+      if (!announce) return;
+      announce.textContent = "";
+      setTimeout(function () { announce.textContent = message; }, 40);
+    }
+    function setHash(id) {
+      try { history.replaceState(null, "", location.pathname + location.search + "#" + id); } catch (e) { /* sandboxed: ignore */ }
+    }
+
+    /* Copy buttons */
+    document.querySelectorAll("[data-copy]").forEach(function (button) {
+      var label = button.textContent;
+      var timer;
+      function flash(text) {
+        button.textContent = text;
+        clearTimeout(timer);
+        timer = setTimeout(function () { button.textContent = label; }, 1600);
       }
+      button.addEventListener("click", function () {
+        var code = button.parentElement.querySelector("code");
+        var text = code.textContent;
+        function selectIt() {
+          var range = document.createRange();
+          range.selectNodeContents(code);
+          var selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          flash("Selected");
+          say("Command selected. Press Ctrl+C to copy it.");
+        }
+        try {
+          navigator.clipboard.writeText(text).then(function () {
+            flash("Copied");
+            say("Copied to clipboard.");
+          }).catch(selectIt);
+        } catch (e) {
+          selectIt();
+        }
+      });
     });
-  });
+
+    /* Quality filter for the bag */
+    var bag = document.querySelector("[data-bag]");
+    var chipRow = document.querySelector("[data-chips]");
+    if (bag && chipRow) {
+      var items = Array.prototype.slice.call(bag.querySelectorAll("[data-quality]"));
+      var chips = Array.prototype.slice.call(chipRow.querySelectorAll("[data-filter]"));
+      chips.forEach(function (chip) {
+        var quality = chip.getAttribute("data-filter");
+        var count = quality === "all" ? items.length : items.filter(function (item) {
+          return item.getAttribute("data-quality") === quality;
+        }).length;
+        chip.querySelector(".n").textContent = count;
+        if (!count) chip.hidden = true;
+        chip.addEventListener("click", function () {
+          var shown = 0;
+          chips.forEach(function (other) { other.setAttribute("aria-pressed", String(other === chip)); });
+          items.forEach(function (item) {
+            var on = quality === "all" || item.getAttribute("data-quality") === quality;
+            item.hidden = !on;
+            if (on) shown++;
+          });
+          bag.classList.remove("is-sorting");
+          void bag.offsetWidth;
+          bag.classList.add("is-sorting");
+          say(quality === "all" ? "Showing all " + shown + " items." : "Showing " + shown + " " + chip.getAttribute("data-label") + " items.");
+        });
+      });
+      chipRow.hidden = false;
+    }
+
+    /* Quest Log: list selects the detail pane; without JS every quest stays visible */
+    var log = document.querySelector("[data-questlog]");
+    var selectQuest = null;
+    if (log) {
+      var links = Array.prototype.slice.call(log.querySelectorAll(".quest"));
+      var panes = Array.prototype.slice.call(log.querySelectorAll(".qd"));
+      var list = log.querySelector(".ql-list");
+      var stacked = window.matchMedia("(max-width: 760px)");
+
+      selectQuest = function (id, reveal) {
+        var pane = document.getElementById(id);
+        if (!pane || panes.indexOf(pane) < 0) return false;
+        panes.forEach(function (p) { p.hidden = p !== pane; });
+        links.forEach(function (a) {
+          if (a.getAttribute("href") === "#" + id) a.setAttribute("aria-current", "true");
+          else a.removeAttribute("aria-current");
+        });
+        if (reveal) {
+          var target = stacked.matches ? pane : log;
+          target.scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
+          if (stacked.matches) pane.focus({ preventScroll: true });
+        }
+        return true;
+      };
+
+      log.classList.add("is-enhanced");
+      var fromHash = location.hash.slice(1);
+      if (!(fromHash.indexOf("q-") === 0 && selectQuest(fromHash))) selectQuest(panes[0].id);
+
+      links.forEach(function (a) {
+        a.addEventListener("click", function (event) {
+          event.preventDefault();
+          var id = a.getAttribute("href").slice(1);
+          selectQuest(id, stacked.matches);
+          setHash(id);
+        });
+      });
+
+      list.addEventListener("keydown", function (event) {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        var index = links.indexOf(document.activeElement);
+        if (index < 0) return;
+        event.preventDefault();
+        var step = event.key === "ArrowDown" ? 1 : -1;
+        var next = links[(index + step + links.length) % links.length];
+        next.focus();
+        selectQuest(next.getAttribute("href").slice(1));
+      });
+
+      /* Links elsewhere on the page that point at a quest */
+      document.addEventListener("click", function (event) {
+        var link = event.target.closest && event.target.closest('a[href^="#q-"]');
+        if (!link || link.classList.contains("quest")) return;
+        var id = link.getAttribute("href").slice(1);
+        if (selectQuest(id, true)) {
+          event.preventDefault();
+          setHash(id);
+        }
+      });
+    }
+
+    /* Action bar hotkeys 1 to 4, like the real thing */
+    var hotkeys = { "1": "whats-new", "2": "quest-log", "3": "screenshots", "4": "run-it" };
+    document.addEventListener("keydown", function (event) {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      var target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      var id = hotkeys[event.key];
+      if (!id) return;
+      var section = document.getElementById(id);
+      if (!section) return;
+      event.preventDefault();
+      section.scrollIntoView({ behavior: reduceMotion.matches ? "auto" : "smooth", block: "start" });
+    });
+  })();
 </script>
 </body>
 </html>
