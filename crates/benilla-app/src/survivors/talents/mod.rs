@@ -8,6 +8,7 @@
 //! [`MetaParts::talents`], which every run starts with ([`apply_talents`]).
 
 mod effects;
+mod mechanics;
 mod progress;
 mod rules;
 mod save;
@@ -18,7 +19,9 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use super::bonus::{Bonus, Bonuses};
+use super::mechanics::{self as game_mechanics, MechanicId};
 use super::meta::MetaParts;
+use super::party::{HeroState, LocalHero};
 use super::profile::{slug, Profile};
 use super::{data, hud, Selection};
 
@@ -27,9 +30,17 @@ use rules::{bonuses, can_learn, can_unlearn};
 pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;
 pub(super) use tab::{
-    check_learn, check_reset, check_unlearn, describe_rank, unmet, why_text, TalentAction,
-    TalentArt, TalentFocus, TalentSlot,
+    check_learn, check_reset, check_unlearn, describe_rank, locked_reasons, slot_state, unmet,
+    why_text, SlotState, TalentAction, TalentArt, TalentFocus, TalentSlot,
 };
+
+pub(in crate::survivors) fn mechanic_description(talent: u32, rank: u8) -> Vec<String> {
+    mechanics::describe(talent, rank)
+}
+
+pub(in crate::survivors) fn is_headline(talent: u32) -> bool {
+    mechanics::entry(talent).is_some_and(|entry| entry.headline)
+}
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<TalentFocus>().add_systems(
@@ -38,6 +49,7 @@ pub(super) fn plugin(app: &mut App) {
             build_catalog.run_if(not(resource_exists::<TalentCatalog>)),
             progress::award_xp,
             apply_talents,
+            grant_talents,
             tab::talent_input,
             tab::catalog_arrived,
             // After the Armory has (re)built the tab, so new art fills the same frame.
@@ -46,6 +58,39 @@ pub(super) fn plugin(app: &mut App) {
     );
     if let Some(dev) = TalentDevXp::from_env() {
         app.insert_resource(dev);
+    }
+}
+
+/// Give the local hero the learned talents' active mechanics after `start_run` replaces its state.
+fn grant_talents(
+    catalog: Option<Res<TalentCatalog>>,
+    profile: Option<Res<Profile>>,
+    selection: Res<Selection>,
+    phase: Res<State<super::Phase>>,
+    mut heroes: Query<&mut HeroState, (With<LocalHero>, Changed<HeroState>)>,
+) {
+    if *phase.get() != super::Phase::Playing {
+        return;
+    }
+    let (Some(catalog), Some(profile), Some(class)) = (catalog, profile, selection.class) else {
+        return;
+    };
+    let Some(save) = saved(&profile, class) else {
+        return;
+    };
+    for mut hero in &mut heroes {
+        grant_learned(&mut hero, &save.ranks);
+    }
+}
+
+/// Put every learned active talent on a freshly created hero.  Kept separate from the ECS query
+/// so the exact run-start grant set remains small and directly testable.
+fn grant_learned(hero: &mut HeroState, ranks: &HashMap<u32, u8>) {
+    for (id, rank) in ranks {
+        let specs = mechanics::at_rank(*id, *rank);
+        if !specs.is_empty() {
+            game_mechanics::grant(hero, MechanicId::Talent(*id), specs);
+        }
     }
 }
 
@@ -122,7 +167,11 @@ pub(super) struct Talent {
 impl Talent {
     /// What one rank grants; rank `n` grants `n` times this.
     pub fn effect(&self) -> &'static [Bonus] {
-        effects::per_rank(self.id).unwrap_or(&[])
+        if mechanics::entry(self.id).is_some() {
+            &[]
+        } else {
+            effects::per_rank(self.id).unwrap_or(&[])
+        }
     }
 }
 
@@ -460,6 +509,53 @@ mod tests {
         assert_eq!(ids.len(), cat.talents().len(), "talent ids are unique");
     }
 
+    #[test]
+    fn every_tree_landmark_is_mapped_to_its_rank_one_spell() {
+        let Some((_, cat)) = client() else { return };
+        assert_eq!(mechanics::MILESTONES.len(), 27);
+        let unique: HashSet<u32> = mechanics::MILESTONES
+            .iter()
+            .flat_map(|(_, ids)| ids)
+            .copied()
+            .collect();
+        assert_eq!(unique.len(), 81, "three distinct milestones per tree");
+        for &(tree, ids) in mechanics::MILESTONES {
+            let tree_talents: HashSet<u32> = cat.talents_in(tree).map(|t| t.id).collect();
+            for id in ids {
+                let talent = cat
+                    .talent(id)
+                    .unwrap_or_else(|| panic!("milestone {id} exists"));
+                assert_eq!(
+                    talent.tree, tree,
+                    "{} belongs to its landmark tree",
+                    talent.name
+                );
+                assert!(tree_talents.contains(&id));
+                let mechanic = mechanics::entry(id)
+                    .unwrap_or_else(|| panic!("{} ({id}) has mechanics", talent.name));
+                assert_eq!(mechanic.name, talent.name, "milestone {id} name");
+                assert!(
+                    mechanic
+                        .specs
+                        .iter()
+                        .all(|spec| spec.visual == Some(talent.spells[0])),
+                    "{} uses its rank-one Spell.dbc id as its visual",
+                    talent.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn learned_mechanics_are_granted_under_their_talent_ids() {
+        let mut hero = HeroState::default();
+        let ranks = [(133, 1), (30, 3), (130, 5)].into_iter().collect();
+        grant_learned(&mut hero, &ranks);
+        assert!(game_mechanics::has(&hero, MechanicId::Talent(133)));
+        assert!(game_mechanics::has(&hero, MechanicId::Talent(30)));
+        assert!(!game_mechanics::has(&hero, MechanicId::Talent(130)));
+    }
+
     /// Dev dump of every tree with each talent's effect and the tree's all-ranks totals:
     /// `cargo test -p benilla-app --lib survivors::talents::tests::dump -- --ignored --nocapture`.
     #[test]
@@ -489,6 +585,68 @@ mod tests {
                     }
                 }
                 println!("  every rank: {}", describe_all(&all));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "scratch"]
+    fn scratch_dump() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("spells");
+        let visuals = benilla_formats::load_spell_visual_catalog(&mut chain).expect("vis");
+        let Some((_, cat)) = client() else { return };
+        let vis = |id: u32| -> String {
+            match spells.get(id) {
+                None => format!("{id}:MISSING"),
+                Some(d) => {
+                    let st = visuals.stages(d.visual);
+                    format!(
+                        "{id}:{}[v{} c{} i{} s{} p{} sch{} pas{}]",
+                        d.name,
+                        d.visual,
+                        st.map_or(0, |s| s.cast),
+                        st.map_or(0, |s| s.impact),
+                        st.map_or(0, |s| s.state),
+                        st.map_or(0, |s| s.area_effect),
+                        d.school,
+                        d.passive as u8
+                    )
+                }
+            }
+        };
+        for (class, def) in data::CLASSES.iter().enumerate() {
+            for tree in cat.trees_for(class) {
+                println!("== {} / {} ({})", def.name, tree.name, tree.id);
+                for t in cat.talents_in(tree.id) {
+                    let s = spells.get(t.spells[0]);
+                    let trig: Vec<String> = s
+                        .map(|d| {
+                            d.effect_trigger_spell
+                                .iter()
+                                .filter(|&&x| x != 0)
+                                .map(|&x| vis(x))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let desc = s.and_then(|d| d.description.clone()).unwrap_or_default();
+                    println!(
+                        "  {:>4} t{} c{} x{} {:<30} spells{:?} {} trig{:?} | {}",
+                        t.id,
+                        t.tier,
+                        t.column,
+                        t.max_rank,
+                        t.name,
+                        t.spells,
+                        vis(t.spells[0]),
+                        trig,
+                        desc.replace('\n', " ")
+                            .chars()
+                            .take(160)
+                            .collect::<String>()
+                    );
+                }
             }
         }
     }

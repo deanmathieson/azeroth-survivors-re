@@ -172,6 +172,11 @@ pub(in crate::survivors) fn can_unlearn(
 pub(in crate::survivors) fn bonuses(catalog: &TalentCatalog, allocation: &Allocation) -> Bonuses {
     let mut out = Bonuses::default();
     for (id, rank) in allocation.iter() {
+        // Active talents live on HeroState as MechanicId::Talent instead of also silently
+        // retaining the old stat row from effects.rs.
+        if super::mechanics::entry(id).is_some() {
+            continue;
+        }
         let Some(t) = catalog.talent(id) else {
             continue;
         };

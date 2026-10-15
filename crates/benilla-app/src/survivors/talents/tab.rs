@@ -14,7 +14,8 @@ use super::super::profile::{slug, Profile};
 use super::super::{data, Selection};
 use super::progress::{unspent, TalentDevXp};
 use super::{
-    can_learn, can_unlearn, Allocation, Talent, TalentCatalog, TalentSave, Why, POINTS_PER_TIER,
+    can_learn, can_unlearn, Allocation, Talent, TalentCatalog, TalentSave, Why, MAX_POINTS,
+    POINTS_PER_TIER,
 };
 use crate::glue::widgets::GlueDisabled;
 use crate::glue::GlueClicks;
@@ -71,6 +72,52 @@ pub(in crate::survivors) fn check_learn(
     Ok(())
 }
 
+/// How a talent's button reads, as WoW colours it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) enum SlotState {
+    /// Green: a rank can be learned now (a point to spend, its tier open, its prerequisite met).
+    Learnable,
+    /// Gold: at its last rank.
+    Maxed,
+    /// Grey: anything else, including no points left, and the first reason why.
+    Locked(Why),
+}
+
+/// `talent`'s state on the tab for one class's save (`dev` is [`TalentDevXp`]).
+pub(in crate::survivors) fn slot_state(
+    catalog: &TalentCatalog,
+    save: &TalentSave,
+    dev: u64,
+    talent: u32,
+) -> SlotState {
+    match check_learn(catalog, save, dev, talent) {
+        Ok(()) => SlotState::Learnable,
+        Err(Why::MaxRank) => SlotState::Maxed,
+        Err(why) => SlotState::Locked(why),
+    }
+}
+
+/// Every reason a talent cannot take a rank now, in tooltip words: its unmet tier and
+/// prerequisite ([`unmet`]), then no points to spend. Empty while it can, and at its last rank.
+pub(in crate::survivors) fn locked_reasons(
+    catalog: &TalentCatalog,
+    save: &TalentSave,
+    dev: u64,
+    talent: &Talent,
+) -> Vec<String> {
+    let SlotState::Locked(why) = slot_state(catalog, save, dev, talent.id) else {
+        return Vec::new();
+    };
+    let mut out = unmet(catalog, &save.allocation(), talent);
+    if unspent(save, dev) == 0 || save.spent() >= MAX_POINTS {
+        out.push(why_text(catalog, talent.id, Why::NoPoints));
+    }
+    if out.is_empty() {
+        out.push(why_text(catalog, talent.id, why));
+    }
+    out
+}
+
 /// Whether the class can give back one rank of `talent`.
 pub(in crate::survivors) fn check_unlearn(
     catalog: &TalentCatalog,
@@ -120,7 +167,7 @@ pub(in crate::survivors) fn why_text(catalog: &TalentCatalog, talent: u32, why: 
     };
     match why {
         Why::Unknown => "Unknown talent".into(),
-        Why::NoPoints => "No talent points to spend".into(),
+        Why::NoPoints => "No talent points available".into(),
         Why::MaxRank => "Already at its last rank".into(),
         Why::TierLocked { need, .. } => {
             let tree = catalog
