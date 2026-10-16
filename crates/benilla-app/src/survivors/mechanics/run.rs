@@ -725,6 +725,48 @@ fn land(
                 }
                 show.area(owner, spec.visual, site, &healed);
             }
+            Effect::PartyAura {
+                radius,
+                duration,
+                bonuses,
+            } => {
+                let mut affected = Vec::new();
+                for &(e, pos) in party {
+                    if flat(pos - site.pos).length() > radius {
+                        continue;
+                    }
+                    if let Ok((.., mut ally)) = heroes.get_mut(e) {
+                        if ally.alive() {
+                            burst(&mut ally, fire.uid, duration, bonuses);
+                            affected.push(e);
+                        }
+                    }
+                }
+                show.area(owner, spec.visual, site, &affected);
+            }
+            Effect::BestAllyAura {
+                radius,
+                duration,
+                bonuses,
+            } => {
+                let target = party
+                    .iter()
+                    .filter(|&&(_, pos)| flat(pos - site.pos).length() <= radius)
+                    .filter_map(|&(e, _)| {
+                        heroes
+                            .get(e)
+                            .ok()
+                            .and_then(|(.., ally)| ally.alive().then_some((e, ally.damage_done)))
+                    })
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(e, _)| e);
+                if let Some(target) = target {
+                    if let Ok((.., mut ally)) = heroes.get_mut(target) {
+                        burst(&mut ally, fire.uid, duration, bonuses);
+                        show.on_hero(owner, spec.visual, &[target]);
+                    }
+                }
+            }
             // The hero's own, landed above.
             Effect::Burst { .. }
             | Effect::Shield { .. }

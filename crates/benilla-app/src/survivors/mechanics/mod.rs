@@ -203,6 +203,20 @@ pub(crate) enum Effect {
     Execute { threshold: f32, mult: f32 },
     /// Heals every hero within `radius` for `amount`, through [`super::party::heal`].
     HealPulse { radius: f32, amount: f32 },
+    /// A temporary aura on every living party member within `radius`. Talent auras live here,
+    /// rather than in the class-buff picker, because their owner and duration matter.
+    PartyAura {
+        radius: f32,
+        duration: f32,
+        bonuses: &'static [Bonus],
+    },
+    /// A temporary buff on the party member in range who has dealt the most damage this run.
+    /// This keeps support casts deterministic on the host without requiring client targeting UI.
+    BestAllyAura {
+        radius: f32,
+        duration: f32,
+        bonuses: &'static [Bonus],
+    },
     /// A shield on the hero, through [`super::party::shield`].
     Shield { amount: f32, duration: f32 },
     /// Back up at `heal_frac` of max health and untouchable for `immune` seconds: with
@@ -379,6 +393,28 @@ impl MechanicSpec {
             Effect::HealPulse { radius, amount } => {
                 positive("radius", radius)?;
                 positive("heal", amount)?;
+            }
+            Effect::PartyAura {
+                radius,
+                duration,
+                bonuses,
+            } => {
+                positive("party aura radius", radius)?;
+                positive("party aura duration", duration)?;
+                if bonuses.is_empty() {
+                    return Err("a party aura with no bonuses".into());
+                }
+            }
+            Effect::BestAllyAura {
+                radius,
+                duration,
+                bonuses,
+            } => {
+                positive("ally aura radius", radius)?;
+                positive("ally aura duration", duration)?;
+                if bonuses.is_empty() {
+                    return Err("an ally aura with no bonuses".into());
+                }
             }
             Effect::Shield { amount, duration } => {
                 positive("absorb", amount)?;

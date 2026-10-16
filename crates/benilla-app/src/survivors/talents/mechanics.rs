@@ -386,6 +386,26 @@ fn effect_text(effect: Mech, at: Aim, proc: bool) -> String {
             num(radius),
             num(amount)
         ),
+        Mech::PartyAura {
+            radius,
+            duration,
+            bonuses,
+        } => format!(
+            "you and allies within {} yd gain {} for {}",
+            num(radius),
+            bonus_list(bonuses),
+            secs(duration)
+        ),
+        Mech::BestAllyAura {
+            radius,
+            duration,
+            bonuses,
+        } => format!(
+            "the highest-damage ally within {} yd gains {} for {}",
+            num(radius),
+            bonus_list(bonuses),
+            secs(duration)
+        ),
         Mech::Shield { amount, duration } => format!(
             "a shield absorbs {} damage for {}",
             num(amount),
@@ -785,6 +805,22 @@ static MECHANICS: &[TalentMechanics] = &[
         }
     ),
     proc_mechanic!(
+        121,
+        "Deep Wounds",
+        12834,
+        Trigger::OnCrit {
+            of: Of::Any,
+            chance: 0.33
+        },
+        // Dots are independently tracked per landed proc (up to the enemy's six-dot cap), so
+        // successive weapon criticals build the intended stacking bleed.
+        Mech::Dot {
+            school: School::Physical,
+            dps: 5.0,
+            secs: 5.0
+        }
+    ),
+    proc_mechanic!(
         63,
         "Improved Blizzard",
         11185,
@@ -804,7 +840,22 @@ static MECHANICS: &[TalentMechanics] = &[
     active!(160, "Piercing Howl", 12323, School::Physical),
     aura!(165, "Death Wish", 12328, StatKey::Damage, 0.20),
     teaches!(167, "Bloodthirst", Teach::Spell("bloodthirst")),
-    active!(152, "Concussion Blow", 12809, School::Physical),
+    mechanic!(
+        152,
+        "Concussion Blow",
+        12809,
+        Trigger::Periodic { every: 35.0 },
+        Mech::Nova {
+            school: School::Physical,
+            radius: 6.0,
+            damage: 18.0,
+            knockback: 0.0,
+            cc: Some(Cc {
+                kind: CcKind::Stun,
+                secs: 1.5
+            })
+        }
+    ),
     teaches!(148, "Shield Slam", Teach::Spell("shield_slam")),
     teaches!(1435, "Consecration", Teach::Spell("consecration")),
     aura!(1433, "Divine Favor", 20216, StatKey::CritChance, 0.20),
@@ -812,7 +863,22 @@ static MECHANICS: &[TalentMechanics] = &[
     teaches!(1442, "Blessing of Kings", Teach::Passive("kings")),
     aura!(1431, "Blessing of Sanctuary", 20911, StatKey::Armor, 0.15),
     active!(1430, "Holy Shield", 20925, School::Holy),
-    active!(1481, "Seal of Command", 20375, School::Holy),
+    proc_mechanic!(
+        1481,
+        "Seal of Command",
+        20375,
+        Trigger::OnHit {
+            of: Of::Any,
+            chance: 0.20
+        },
+        Mech::Nova {
+            school: School::Holy,
+            radius: 2.0,
+            damage: 12.0,
+            knockback: 0.0,
+            cc: None
+        }
+    ),
     aura!(1409, "Sanctity Aura", 20218, StatKey::Damage, 0.12),
     active!(1441, "Repentance", 20066, School::Holy),
     aura!(1391, "Bestial Swiftness", 19596, StatKey::MoveSpeed, 0.15),
@@ -820,7 +886,17 @@ static MECHANICS: &[TalentMechanics] = &[
     aura!(1386, "Bestial Wrath", 19574, StatKey::Damage, 0.25),
     teaches!(1345, "Aimed Shot", Teach::Spell("aimed_shot")),
     active!(1353, "Scatter Shot", 19503, School::Physical),
-    aura!(1361, "Trueshot Aura", 19506, StatKey::Damage, 0.15),
+    mechanic!(
+        1361,
+        "Trueshot Aura",
+        19506,
+        Trigger::Periodic { every: 1.0 },
+        Mech::PartyAura {
+            radius: 40.0,
+            duration: 2.0,
+            bonuses: &[Bonus::new(StatKey::Damage, 0.06)]
+        }
+    ),
     aura!(1308, "Deterrence", 19263, StatKey::Armor, 0.20),
     active!(1312, "Counterattack", 19306, School::Physical),
     active!(1325, "Wyvern Sting", 19386, School::Nature),
@@ -833,8 +909,28 @@ static MECHANICS: &[TalentMechanics] = &[
     active!(303, "Ghostly Strike", 14278, School::Physical),
     active!(381, "Premeditation", 14183, School::Physical),
     aura!(348, "Inner Focus", 14751, StatKey::CritChance, 0.15),
-    aura!(351, "Divine Spirit", 14752, StatKey::Regen, 1.0),
-    aura!(322, "Power Infusion", 10060, StatKey::Damage, 0.20),
+    mechanic!(
+        351,
+        "Divine Spirit",
+        14752,
+        Trigger::Periodic { every: 1.0 },
+        Mech::PartyAura {
+            radius: 40.0,
+            duration: 2.0,
+            bonuses: &[Bonus::new(StatKey::Regen, 0.6)]
+        }
+    ),
+    mechanic!(
+        322,
+        "Power Infusion",
+        10060,
+        Trigger::Periodic { every: 45.0 },
+        Mech::BestAllyAura {
+            radius: 40.0,
+            duration: 10.0,
+            bonuses: &[Bonus::new(StatKey::Damage, 0.08)]
+        }
+    ),
     teaches!(442, "Holy Nova", Teach::Spell("holy_nova")),
     teaches!(1637, "Lightwell", Teach::Spec),
     teaches!(501, "Mind Flay", Teach::Spell("mind_flay")),
@@ -875,7 +971,17 @@ static MECHANICS: &[TalentMechanics] = &[
     aura!(789, "Nature's Grace", 16880, StatKey::CritChance, 0.12),
     active!(804, "Feral Charge", 16979, School::Physical),
     active!(1162, "Faerie Fire (Feral)", 16857, School::Nature),
-    aura!(809, "Leader of the Pack", 17007, StatKey::CritChance, 0.12),
+    mechanic!(
+        809,
+        "Leader of the Pack",
+        17007,
+        Trigger::Periodic { every: 1.0 },
+        Mech::PartyAura {
+            radius: 40.0,
+            duration: 2.0,
+            bonuses: &[Bonus::new(StatKey::CritChance, 0.05)]
+        }
+    ),
     teaches!(827, "Insect Swarm", Teach::Spell("insect_swarm")),
     aura!(831, "Nature's Swiftness", 17116, StatKey::Cooldown, 0.15),
 ];
@@ -910,5 +1016,42 @@ mod tests {
             panic!("Impact listens for hits")
         };
         assert!((chance - 0.10).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn party_talents_are_short_range_auras_with_real_combat_effects() {
+        for id in [1361, 351, 809] {
+            let spec = at_rank(id, 1).pop().unwrap();
+            assert!(spec.validate().is_ok(), "{id}: {spec:?}");
+            let Mech::PartyAura { radius, .. } = spec.effect else {
+                panic!("{id} is not a party aura");
+            };
+            assert!((radius - 40.0).abs() < f32::EPSILON);
+        }
+        let Mech::BestAllyAura { radius, .. } = at_rank(322, 1).pop().unwrap().effect else {
+            panic!("Power Infusion is not an ally aura");
+        };
+        assert!((radius - 40.0).abs() < f32::EPSILON);
+        assert!(matches!(
+            at_rank(121, 3).pop().unwrap().effect,
+            Mech::Dot {
+                school: School::Physical,
+                ..
+            }
+        ));
+        assert!(matches!(
+            at_rank(1481, 1).pop().unwrap().trigger,
+            Trigger::OnHit { .. }
+        ));
+        assert!(matches!(
+            at_rank(152, 1).pop().unwrap().effect,
+            Mech::Nova {
+                cc: Some(Cc {
+                    kind: CcKind::Stun,
+                    ..
+                }),
+                ..
+            }
+        ));
     }
 }

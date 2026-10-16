@@ -146,7 +146,7 @@ pub(super) fn run_guardians(
     time: Res<Time>,
     run: Res<Run>,
     world: WorldPoint,
-    mut heroes: Query<(&Transform, &mut HeroState), (With<Hero>, Without<SpecGuardian>)>,
+    mut heroes: Query<(Entity, &Transform, &mut HeroState), (With<Hero>, Without<SpecGuardian>)>,
     mut guardians: Query<
         (
             Entity,
@@ -165,7 +165,7 @@ pub(super) fn run_guardians(
         return;
     }
     for (me, mut tf, mv, mut g) in &mut guardians {
-        let Ok((h, mut owner)) = heroes.get_mut(g.owner) else {
+        let Ok((_, h, owner)) = heroes.get_mut(g.owner) else {
             continue;
         };
         let def = g.def;
@@ -200,6 +200,10 @@ pub(super) fn run_guardians(
             spot,
             (stats.speed * 1.2).max(flat(spot - pos).length() * 2.0),
         );
+        // No guardian action needs the owner's mutable state until a healer credits its work.
+        // Releasing this borrow lets a Lightwell/Healing Stream reach every party member.
+        let _ = h;
+        let _ = owner;
         match def.act {
             Act::Melee if !down => {
                 if let Some((foe, at, gap)) = nearest(pos, hpos, def.range) {
@@ -232,9 +236,18 @@ pub(super) fn run_guardians(
             }
             Act::Heal if !down && g.next <= 0.0 && away <= def.range => {
                 g.next = def.every;
-                let healed = party::heal(&mut owner, power);
-                owner.healing_done += f64::from(healed);
-                fx.cast(me, def.spell, &[g.owner], None);
+                let mut healed = 0.0;
+                let mut targets = Vec::new();
+                for (ally, pos, mut state) in heroes.iter_mut() {
+                    if flat(pos.translation - tf.translation).length() <= def.range {
+                        healed += party::heal(&mut state, power);
+                        targets.push(ally);
+                    }
+                }
+                if let Ok((.., mut owner)) = heroes.get_mut(g.owner) {
+                    owner.healing_done += f64::from(healed);
+                }
+                fx.cast(me, def.spell, &targets, None);
             }
             _ => {}
         }
@@ -304,5 +317,16 @@ mod tests {
             .filter(|s| matches!(&s.summon, Summon::Form(f) if f.shape.is_some()))
             .count();
         assert_eq!(shifts, 2, "Moonkin and Cat");
+    }
+
+    #[test]
+    fn party_healing_guardians_have_group_sized_reach() {
+        for talent in [1637, 590] {
+            let Summon::Guardian(def) = &by_talent(talent).unwrap().summon else {
+                panic!("{talent} is a guardian");
+            };
+            assert_eq!(def.act, Act::Heal);
+            assert!(def.range >= 15.0, "{talent} must reach nearby allies");
+        }
     }
 }

@@ -3,6 +3,17 @@
 Code: `crates/benilla-app/src/survivors/talents/` (`mechanics.rs` for the audit's resolutions,
 `spec.rs` for the specs, `guardian.rs` for the summons in the world).
 
+## Party talent pass
+
+- **Lightwell** and **Healing Stream Totem** now pulse every living hero inside the guardian's
+  stated range; the host credits the owner and emits the spell visual on every recipient.
+- **Trueshot Aura**, **Divine Spirit**, and **Leader of the Pack** are true 40-yard party auras.
+  Their short refresh window means the benefit follows range, including for remote heroes.
+- **Power Infusion** is a modest, visible ally burst: every 45 seconds it picks the living
+  in-range party member with the most damage done (the priest in solo) for 8% damage for 10 sec.
+- **Deep Wounds** is a stacking Physical bleed, **Seal of Command** is a holy-strike proc, and
+  **Concussion Blow** is a stunning blow rather than a stat row.
+
 ## The rule: one name, one thing
 
 A talent that is also a spell (or passive) the run offers never grants a second, separate effect
