@@ -251,6 +251,7 @@ pub(super) struct TipBody;
 #[derive(Component, Clone, Copy, PartialEq)]
 pub(super) enum UiAction {
     Resume,
+    Options,
     /// From the results: the next run at once, on the same pick ([`Replay`]).
     PlayAgain,
     MainMenu,
@@ -877,6 +878,7 @@ pub(super) fn setup_hud(
             root.spawn(centered(f, "Paused", 46.0, GOLD));
             for (label, action) in [
                 ("Resume", UiAction::Resume),
+                ("Options", UiAction::Options),
                 ("Abandon run", UiAction::MainMenu),
                 ("Quit game", UiAction::Quit),
             ] {

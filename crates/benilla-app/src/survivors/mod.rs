@@ -37,6 +37,7 @@ mod quests;
 mod racials;
 mod rewards;
 mod run_options;
+mod settings;
 mod sfx;
 mod stable;
 mod strip;
@@ -78,6 +79,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(grade::plugin)
             .add_plugins(armory::plugin)
             .add_plugins(run_options::plugin)
+            .add_plugins(settings::plugin)
             .add_plugins(talents::plugin)
             .add_plugins(gear::plugin)
             .add_plugins(achievements::plugin)
