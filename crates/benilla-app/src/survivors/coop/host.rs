@@ -17,6 +17,7 @@ use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
 use super::super::run_options::RunOptions;
 use super::super::synergy;
+use super::super::talents::{self, HeroSpec};
 use super::super::units::Marks;
 use super::super::{
     env_bonuses, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, RunEntity, Selection,
@@ -36,6 +37,7 @@ pub(super) struct Peer {
     pub(super) sex: u8,
     pub(super) trainer: u32,
     pub(super) bonuses: super::super::bonus::Bonuses,
+    pub(super) talents: Vec<(u32, u8)>,
     pub(super) hero: Option<Entity>,
 }
 
@@ -204,6 +206,7 @@ pub(super) fn greet(
             sex: h.sex,
             trainer: h.trainer,
             bonuses: h.bonuses.clone(),
+            talents: h.talents.clone(),
             // A repeated hello (sent until welcomed) keeps the hero it has.
             hero: peers.get(client).ok().and_then(|(_, p)| p.hero),
         });
@@ -502,10 +505,12 @@ pub(super) fn spawn_peer_hero(
         peer.race,
         peer.bonuses.clone(),
     );
+    let spec = talents::grant_learned(&mut state, &peer.talents);
     // Joining a run under way, it banks a hand for every level the party has made.
     state.picks = super::super::strip::catch_up(run.level);
     let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
-    commands.entity(e).insert((
+    let mut remote = commands.entity(e);
+    remote.insert((
         party::Remote,
         Owner(client),
         HeldHand::default(),
@@ -519,6 +524,9 @@ pub(super) fn spawn_peer_hero(
         },
         MemberName(peer.name.clone()),
     ));
+    if let Some(spec) = spec {
+        remote.insert(HeroSpec(spec));
+    }
     e
 }
 

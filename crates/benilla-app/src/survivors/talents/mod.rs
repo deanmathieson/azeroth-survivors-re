@@ -144,7 +144,10 @@ fn grant_talents(
 /// Put every learned active talent on a freshly created hero, what the learned talents teach,
 /// and the spec its capstone makes it, which it returns. Kept separate from the ECS query so the
 /// exact run-start grant set remains small and directly testable.
-fn grant_learned(hero: &mut HeroState, ranks: &[(u32, u8)]) -> Option<&'static spec::SpecDef> {
+pub(super) fn grant_learned(
+    hero: &mut HeroState,
+    ranks: &[(u32, u8)],
+) -> Option<&'static spec::SpecDef> {
     for (id, rank) in ranks {
         let specs = mechanics::at_rank(*id, *rank);
         if !specs.is_empty() {

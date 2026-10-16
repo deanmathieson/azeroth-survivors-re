@@ -272,8 +272,8 @@ impl WireDecision {
 // Client → host
 // ---------------------------------------------------------------------------------------------
 
-/// A client introduces itself on connecting: its name, its pick, and its profile's bonuses (the
-/// host builds its hero on them).
+/// A client introduces itself on connecting: its name, pick, and profile's bonuses and learned
+/// talent ranks (the host builds its hero and spec on them).
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) name: String,
@@ -282,6 +282,8 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) sex: u8,
     pub(in crate::survivors) trainer: u32,
     pub(in crate::survivors) bonuses: Bonuses,
+    /// Talent id and learned rank, from the picked class's saved allocation.
+    pub(in crate::survivors) talents: Vec<(u32, u8)>,
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -528,6 +530,7 @@ mod tests {
             sex: 0,
             trainer: 4000,
             bonuses: bonuses.clone(),
+            talents: vec![(36, 1)],
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);

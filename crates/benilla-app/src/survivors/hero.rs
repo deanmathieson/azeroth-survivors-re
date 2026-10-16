@@ -753,18 +753,15 @@ pub(super) fn hero_vitals(
         if hero.passives.iter().any(|(p, _)| p.key == "renew") {
             shown.push(139);
         }
-<<<<<<< HEAD
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
-=======
         // A spec's form: its stance, aura or shapeshift glow, held all run.
         if let Some(spell) = spec.and_then(|s| s.form_aura()) {
             shown.push(spell);
         }
->>>>>>> specs
         marks.set(&shown);
         marks.flush(entity, guid.0, &mut store, &mut fields);
 

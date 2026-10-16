@@ -35,15 +35,10 @@ pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
 use super::{enemies, hud, profile, treasure, Phase, Selection};
 pub(super) use looks::results_title;
-<<<<<<< HEAD
 pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, HeroNames, LooksDice};
-pub(super) use outfit::{wear, Dresser};
-=======
-pub(super) use looks_ui::{hero_name, looks_panel, HeroNameText, HeroNames};
 #[cfg_attr(not(feature = "coop"), allow(unused_imports))]
 pub(super) use loot::{GroupDrops, WonLoot};
-pub(super) use outfit::Dresser;
->>>>>>> social
+pub(super) use outfit::{wear, Dresser};
 pub(super) use save::GearSave;
 pub(super) use store::class_gear;
 pub(super) use ui::{GearAction, GearView, ItemIcon};

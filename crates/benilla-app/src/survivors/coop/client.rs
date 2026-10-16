@@ -15,8 +15,10 @@ use super::super::hero::Hero;
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandOutbox};
 use super::super::partyui::{self, FillPartyView, HeroRead, PartyView};
+use super::super::profile::Profile;
 use super::super::run_options::RunOptions;
 use super::super::synergy::{self, PartyBuff};
+use super::super::talents;
 use super::super::units::{self, Look, Marks};
 use super::super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Run, Selection};
 use super::host::own_bonuses;
@@ -103,6 +105,7 @@ fn watch_link(
     session: Res<Session>,
     selection: Res<Selection>,
     meta: Res<MetaBonuses>,
+    profile: Option<Res<Profile>>,
     name: Res<PlayerName>,
     mut hello: MessageWriter<Hello>,
     build: Option<Res<crate::BuildId>>,
@@ -125,6 +128,10 @@ fn watch_link(
                 sex,
                 trainer,
                 bonuses: own_bonuses(&meta),
+                talents: selection
+                    .class
+                    .and_then(|class| profile.as_deref().and_then(|p| talents::saved(p, class)))
+                    .map_or_else(Vec::new, |saved| saved.ranks.clone()),
                 build: super::build_tag(build.as_deref()),
             });
         }
@@ -293,6 +300,7 @@ pub(super) fn apply_stats(hero: &mut HeroState, s: &NetStats) {
     hero.damage_taken = s.damage_taken;
     hero.revives_given = s.revives;
     hero.gold_collected = s.gold;
+    hero.gold = s.gold;
     hero.times_downed = s.downs;
 }
 

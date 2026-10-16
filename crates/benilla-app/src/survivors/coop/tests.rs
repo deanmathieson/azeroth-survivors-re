@@ -17,7 +17,8 @@ use super::super::hero::Hero;
 use super::super::hud::Choice;
 use super::super::party::{self, HandDecision, LOCAL_PLAYER};
 use super::super::partyui::PartyView;
-use super::super::units::Look;
+use super::super::talents::HeroSpec;
+use super::super::units::{self, Look, UnitSpec};
 use super::super::{data, HeroState, LocalHero, Phase, Rng, Run, Selection};
 use super::client::{apply_build, fill_party_view, local_player, playable};
 use super::host::{self, decide, owns, Owner, Peer};
@@ -363,6 +364,7 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         sex: 1,
         trainer: 3000,
         bonuses: Bonuses::default(),
+        talents: vec![(61, 5), (71, 1)],
         hero: None,
     };
     let (host_hero, theirs) = {
@@ -378,6 +380,10 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         (mine, theirs)
     };
     world.flush();
+    assert_eq!(
+        world.get::<HeroSpec>(theirs).map(|s| s.0.title),
+        Some("Frost Mage")
+    );
     world.get_mut::<HeroState>(theirs).unwrap().picks = 1;
     let heroes = |c: &mut App| {
         c.world_mut()
@@ -403,6 +409,44 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
     let jaina = seen.iter().find(|h| h.0.player == 1).unwrap();
     assert_eq!((jaina.0.name.as_str(), jaina.0.trainer), ("Jaina", 3000));
     assert!(host_app.world().get::<Replicated>(host_hero).is_some());
+
+    // A spec guardian is an ordinary run unit: its Look and NetPos make it to every client,
+    // and despawning it on the host removes its client body with the owner/spec.
+    let guardian = {
+        let mut commands = host_app.world_mut().commands();
+        units::spawn_unit(
+            &mut commands,
+            &UnitSpec {
+                serial: 99,
+                display: 510,
+                scale: 1.0,
+                level: 60,
+                faction: units::FACTION_FRIENDLY,
+                bytes0: 1 << 8,
+                weapons: &[],
+                sheath: 0,
+            },
+            at + Vec3::Z * 4.0,
+            0.0,
+        )
+    };
+    host_app.world_mut().flush();
+    pump(&mut host_app, &mut client_app, |_, c| {
+        c.world_mut()
+            .query::<(&Look, &NetPos)>()
+            .iter(c.world())
+            .any(|(look, pos)| {
+                matches!(look, Look::Unit { display: 510, .. })
+                    && pos.pos().distance(at + Vec3::Z * 4.0) < 0.01
+            })
+    });
+    host_app.world_mut().despawn(guardian);
+    pump(&mut host_app, &mut client_app, |_, c| {
+        !c.world_mut()
+            .query::<&Look>()
+            .iter(c.world())
+            .any(|look| matches!(look, Look::Unit { display: 510, .. }))
+    });
 
     // The client walks its hero: the host moves the client's hero, and only that one.
     let walked = [130.0, 31.0, -40.0];
@@ -536,6 +580,7 @@ fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
         sex: 0,
         trainer: 4000,
         bonuses: Bonuses::default(),
+        talents: Vec::new(),
         hero: None,
     };
     // Joining at level 6, it banks five hands; and one jewelry choice from a cache.
@@ -624,6 +669,7 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
         sex: 1,
         trainer: 3000,
         bonuses: Bonuses::default(),
+        talents: vec![(36, 1)],
         build: build.into(),
     };
     let (stale, fresh) = (world.spawn_empty().id(), world.spawn_empty().id());
@@ -653,6 +699,10 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
     assert_eq!(cut[0].client, stale);
     assert!(world.get::<Peer>(stale).is_none());
     assert_eq!(world.get::<Peer>(fresh).map(|p| p.player), Some(1));
+    assert_eq!(
+        world.get::<Peer>(fresh).map(|p| p.talents.as_slice()),
+        Some(&[(36, 1)][..])
+    );
     let welcomed: Vec<_> = world
         .resource_mut::<Messages<ToClients<Welcome>>>()
         .drain()
