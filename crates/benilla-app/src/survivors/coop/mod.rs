@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 5;
+pub(super) const PROTOCOL: u32 = 6;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -161,6 +161,7 @@ pub(super) fn protocol(app: &mut App) {
     app.replicate::<Look>()
         .replicate::<NetPos>()
         .replicate::<NetHero>()
+        .replicate::<NetLooks>()
         .replicate::<NetVitals>()
         .replicate::<NetBuild>()
         .replicate::<NetEnemy>()

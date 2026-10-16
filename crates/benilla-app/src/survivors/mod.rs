@@ -118,6 +118,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<enemies::Spawner>()
             .init_resource::<hud::Offer>()
             .init_resource::<hud::Replay>()
+            .init_resource::<hud::CoopMenu>()
             .init_resource::<treasure::BossRolls>()
             .init_resource::<cards::PendingPick>()
             .init_resource::<hand::HandMode>()

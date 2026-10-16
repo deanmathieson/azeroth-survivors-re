@@ -10,7 +10,7 @@ use bevy_replicon::prelude::{ClientState, ClientSystems};
 
 use super::super::data;
 use super::super::enemies::{self, Enemy};
-use super::super::gear::{Dresser, HeroNames};
+use super::super::gear::{wear, Dresser, GearRead, HeroNames, Slot};
 use super::super::hero::Hero;
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandOutbox};
@@ -56,6 +56,7 @@ pub(super) fn plugin(app: &mut App) {
                 (welcome, lobby, start, run_phase).run_if(joined_or_joining),
                 (
                     materialize,
+                    redress,
                     mirror_heroes,
                     mirror_auras,
                     enemy_life,
@@ -90,6 +91,30 @@ pub(super) fn plugin(app: &mut App) {
         );
 }
 
+/// A replicated look can arrive after the body. Replacing only the display keeps the existing
+/// mirrored hero and its interpolation state intact.
+fn redress(
+    mut dresser: Dresser,
+    mut heroes: Query<
+        (
+            &NetHero,
+            &NetLooks,
+            &mut crate::net::NetEntity,
+            &mut ObjectStore,
+        ),
+        (Changed<NetLooks>, With<bevy_replicon::prelude::Remote>),
+    >,
+) {
+    for (hero, looks, mut net, mut store) in &mut heroes {
+        let display = dresser.display_remote(
+            usize::from(hero.class).min(data::CLASSES.len() - 1),
+            (hero.trainer, hero.race, hero.sex),
+            looks,
+        );
+        wear(display, &mut net, &mut store);
+    }
+}
+
 fn joined_or_joining(session: Res<Session>) -> bool {
     matches!(session.link, Link::Joining { .. } | Link::Joined { .. })
 }
@@ -107,6 +132,7 @@ fn watch_link(
     meta: Res<MetaBonuses>,
     profile: Option<Res<Profile>>,
     displays: Option<Res<crate::entities::ItemDisplays>>,
+    gear: GearRead,
     name: Res<PlayerName>,
     mut hello: MessageWriter<Hello>,
     build: Option<Res<crate::BuildId>>,
@@ -116,7 +142,11 @@ fn watch_link(
     }
     let now = *state.get();
     let before = seen.1.replace(now);
-    if now == ClientState::Connected && matches!(session.link, Link::Joining { .. }) {
+    // Keep the lobby identity fresh too: changing the character screen while waiting for the
+    // host must change the body the host and the other clients render.
+    if now == ClientState::Connected
+        && matches!(session.link, Link::Joining { .. } | Link::Joined { .. })
+    {
         seen.2 -= time.delta_secs();
         if before != Some(now) || seen.2 <= 0.0 {
             seen.2 = 1.0;
@@ -126,12 +156,20 @@ fn watch_link(
                 .as_deref()
                 .map(|p| super::super::stable::selected_cosmetics(p, displays.as_deref()))
                 .unwrap_or((0, None));
+            let class = selection.class.unwrap_or(0);
+            let saved = gear.get(class);
             hello.write(Hello {
                 name: name.0.clone(),
-                class: selection.class.unwrap_or(0) as u8,
+                class: class as u8,
                 race,
                 sex,
                 trainer,
+                looks: NetLooks {
+                    features: saved.looks.features(race, sex),
+                    gear: std::array::from_fn(|i| {
+                        saved.worn(Slot::ALL[i]).map_or(0, |p| p.display_id)
+                    }),
+                },
                 bonuses: own_bonuses(&meta),
                 talents: selection
                     .class
@@ -359,6 +397,7 @@ fn materialize(
             &Look,
             Option<&NetPos>,
             Option<&NetHero>,
+            Option<&NetLooks>,
             Option<&NetBuild>,
             Option<&NetEnemy>,
         ),
@@ -366,16 +405,14 @@ fn materialize(
     >,
     mut dresser: Dresser,
 ) {
-    for (e, look, pos, hero, build, enemy) in &fresh {
+    for (e, look, pos, hero, looks, build, enemy) in &fresh {
         let pos = pos.copied().unwrap_or_default();
         let mut look = look.clone();
         if let (Some(h), Look::Unit { display, .. }) = (hero, &mut look) {
             let class = usize::from(h.class).min(data::CLASSES.len() - 1);
-            *display = if h.player == session.me {
-                dresser.display(class, (h.trainer, h.race, h.sex))
-            } else {
-                h.trainer
-            };
+            *display = looks.map_or(h.trainer, |looks| {
+                dresser.display_remote(class, (h.trainer, h.race, h.sex), looks)
+            });
         }
         let mut ec = commands.entity(e);
         units::dress(&mut ec, look, pos.pos(), pos.yaw());

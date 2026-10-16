@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::super::bonus::Bonuses;
 use super::super::data;
+use super::super::gear::Features;
+use super::super::gear::Slot;
 use super::super::hand::Struck;
 use super::super::hud::Choice;
 use super::super::party::HandDecision;
@@ -80,6 +82,16 @@ pub(in crate::survivors) struct NetHero {
     pub(in crate::survivors) mount_display: u32,
     /// The mount hat model and its mount-specific seat nudge.
     pub(in crate::survivors) mount_hat: Option<(u32, [f32; 3])>,
+}
+
+/// The character-create choices and equipped display ids belonging to a hero.  This is separate
+/// from [`NetHero`] so a body can be re-dressed without changing its identity.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::survivors) struct NetLooks {
+    /// `None` means use the trainer's features for this body.
+    pub(in crate::survivors) features: Option<Features>,
+    /// Armour and held-weapon display ids in [`Slot::ALL`] order; zero means the starter outfit.
+    pub(in crate::survivors) gear: [u32; Slot::ALL.len()],
 }
 
 /// A hero's health bar and whether it is down.
@@ -285,6 +297,7 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) race: u8,
     pub(in crate::survivors) sex: u8,
     pub(in crate::survivors) trainer: u32,
+    pub(in crate::survivors) looks: NetLooks,
     pub(in crate::survivors) bonuses: Bonuses,
     /// Talent id and learned rank, from the picked class's saved allocation.
     pub(in crate::survivors) talents: Vec<(u32, u8)>,
@@ -535,6 +548,10 @@ mod tests {
             race: 2,
             sex: 0,
             trainer: 4000,
+            looks: NetLooks {
+                features: Some(Features::from_array([2, 1, 3, 4, 5])),
+                gear: [100, 101, 102, 103, 104, 105, 106, 107, 108],
+            },
             bonuses: bonuses.clone(),
             talents: vec![(36, 1)],
             mount_display: 2404,

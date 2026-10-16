@@ -10,6 +10,7 @@ use bevy_replicon::server::server_tick::ServerTick;
 
 use super::super::data;
 use super::super::enemies::{self, Enemy};
+use super::super::gear::GearRead;
 use super::super::hand;
 use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
@@ -37,6 +38,7 @@ pub(super) struct Peer {
     pub(super) race: u8,
     pub(super) sex: u8,
     pub(super) trainer: u32,
+    pub(super) looks: NetLooks,
     pub(super) bonuses: super::super::bonus::Bonuses,
     pub(super) talents: Vec<(u32, u8)>,
     pub(super) mount_display: u32,
@@ -201,6 +203,10 @@ pub(super) fn greet(
             h.name,
             player + 1
         );
+        let old_hero = peers.get(client).ok().and_then(|(_, p)| p.hero);
+        if let Some(hero) = old_hero {
+            commands.entity(hero).try_insert(h.looks.clone());
+        }
         commands.entity(client).try_insert(Peer {
             player,
             name: h.name.chars().take(24).collect(),
@@ -208,12 +214,13 @@ pub(super) fn greet(
             race: h.race,
             sex: h.sex,
             trainer: h.trainer,
+            looks: h.looks.clone(),
             bonuses: h.bonuses.clone(),
             talents: h.talents.clone(),
             mount_display: h.mount_display,
             mount_hat: h.mount_hat,
             // A repeated hello (sent until welcomed) keeps the hero it has.
-            hero: peers.get(client).ok().and_then(|(_, p)| p.hero),
+            hero: old_hero,
         });
         let to = SendTargets::Single(hello.client_id);
         welcome.write(ToClients {
@@ -529,6 +536,7 @@ pub(super) fn spawn_peer_hero(
             mount_display: peer.mount_display,
             mount_hat: peer.mount_hat,
         },
+        peer.looks.clone(),
         MemberName(peer.name.clone()),
     ));
     if let Some(spec) = spec {
@@ -577,6 +585,7 @@ pub(super) fn tag(
     selection: Res<Selection>,
     name: Res<PlayerName>,
     profile: Option<Res<Profile>>,
+    gear: GearRead,
     displays: Option<Res<crate::entities::ItemDisplays>>,
     fresh: Query<
         (
@@ -624,6 +633,16 @@ pub(super) fn tag(
                     trainer,
                     mount_display: cosmetics.0,
                     mount_hat: cosmetics.1,
+                });
+                let class = selection.class.unwrap_or(0);
+                let saved = gear.get(class);
+                ec.try_insert(NetLooks {
+                    features: saved.looks.features(race, sex),
+                    gear: std::array::from_fn(|i| {
+                        saved
+                            .worn(super::super::gear::Slot::ALL[i])
+                            .map_or(0, |piece| piece.display_id)
+                    }),
                 });
                 ec.try_insert(MemberName(name.0.clone()));
             }
