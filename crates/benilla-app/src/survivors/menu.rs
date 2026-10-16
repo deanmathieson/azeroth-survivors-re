@@ -221,20 +221,20 @@ fn apply_pick(text: &str, creatures: &crate::entities::Creatures, selection: &mu
 }
 
 /// Every class's looks, `(display, race, sex)`, indexed like [`data::CLASSES`].
-fn all_looks(creatures: &crate::entities::Creatures) -> Vec<Vec<(u32, u8, u8)>> {
+pub(super) fn all_looks(creatures: &crate::entities::Creatures) -> Vec<Vec<(u32, u8, u8)>> {
     data::CLASSES
         .iter()
         .map(|c| looks_for(c, creatures))
         .collect()
 }
 
-fn find(looks: &[(u32, u8, u8)], race: Option<u8>, sex: Option<u8>) -> Option<usize> {
+pub(super) fn find(looks: &[(u32, u8, u8)], race: Option<u8>, sex: Option<u8>) -> Option<usize> {
     looks
         .iter()
         .position(|&(_, r, s)| race.is_none_or(|x| x == r) && sex.is_none_or(|x| x == s))
 }
 
-fn set(sel: &mut Selection, all: &[Vec<(u32, u8, u8)>], class: usize, look: usize) {
+pub(super) fn set(sel: &mut Selection, all: &[Vec<(u32, u8, u8)>], class: usize, look: usize) {
     sel.class = Some(class);
     sel.looks = all[class].clone();
     sel.look = Some(look);
@@ -850,6 +850,7 @@ pub(super) fn menu_clicks(
     mut next: ResMut<NextState<Phase>>,
     profile: Option<Res<super::profile::Profile>>,
     mut dice: Option<ResMut<super::gear::LooksDice>>,
+    mut create: ResMut<super::gear::looks_create::CreateSession>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
@@ -907,8 +908,7 @@ pub(super) fn menu_clicks(
             }
         }
         MenuAction::Customize => {
-            // The Character tab is the dedicated appearance editor.  It shares the hero's
-            // persisted body and feature catalogue with this create screen.
+            super::gear::looks_create::open(&mut create, &selection);
             return;
         }
         // The class comes back as its hero was last picked, else keeps the race and gender

@@ -117,14 +117,14 @@ pub(in crate::survivors) fn hero_name(world: &World, class: usize) -> Option<&st
 }
 
 /// The pick: its class, trainer display, race and sex.
-fn pick(selection: &Selection) -> Option<(usize, u32, u8, u8)> {
+pub(super) fn pick(selection: &Selection) -> Option<(usize, u32, u8, u8)> {
     let class = selection.class?;
     let &(display, race, sex) = selection.look.and_then(|i| selection.looks.get(i))?;
     Some((class, display, race, sex))
 }
 
 /// The features the pick wears now and each one's count.
-fn current(
+pub(super) fn current(
     gear: &super::GearSave,
     trainer_display: u32,
     race: u8,

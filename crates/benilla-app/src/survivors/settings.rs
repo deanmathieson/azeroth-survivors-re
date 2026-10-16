@@ -118,9 +118,9 @@ enum Action {
     Toggle(&'static str),
 }
 #[derive(Component)]
-struct Value(&'static str, Kind);
-#[derive(Component)]
 struct Body;
+
+type MenuBuildRoot = (With<MenuRoot>, With<MenuBuilt>, Without<Built>);
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<State>().add_systems(
@@ -131,7 +131,7 @@ pub(super) fn plugin(app: &mut App) {
 
 fn build(
     mut commands: Commands,
-    roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<Built>)>,
+    roots: Query<Entity, MenuBuildRoot>,
     buttons: Query<Entity, With<MenuButtons>>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
@@ -452,7 +452,7 @@ fn row(
                         ..default()
                     },
                     (),
-                    Value(setting.cvar, setting.kind),
+                    (),
                     GlueText {
                         text: &value,
                         size: 14.0,

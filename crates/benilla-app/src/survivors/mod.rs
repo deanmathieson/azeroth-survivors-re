@@ -331,7 +331,7 @@ pub(super) enum Phase {
 pub(super) struct RunEntity;
 
 /// The class, look and battleground picked at the menu; the battleground holds for the run.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(super) struct Selection {
     pub class: Option<usize>,
     /// `(display, race, sex)`, one per race and sex the class's trainers come in.
