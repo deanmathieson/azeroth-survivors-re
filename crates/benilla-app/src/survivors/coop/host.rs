@@ -1,6 +1,8 @@
 //! The host's half: it takes clients into the lobby, spawns their heroes in its run, applies their
-//! walks and level-up choices, and replicates its world to them: every body's look and place,
-//! heroes' vitals and builds, enemies' health and deaths, the run, and the spell visuals.
+//! walks, level-up choices and self-resurrections, and replicates its world to them: every body's
+//! look and place, heroes' vitals and builds, enemies' health and deaths, the run, the spell
+//! visuals, and at [`super::SLOW_HZ`] the auras, group buffs and per-hero numbers the party UI
+//! shows.
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
@@ -12,7 +14,10 @@ use super::super::hand;
 use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandDecision};
+use super::super::partyui::MemberName;
 use super::super::run_options::RunOptions;
+use super::super::synergy;
+use super::super::units::Marks;
 use super::super::{
     env_bonuses, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, RunEntity, Selection,
 };
@@ -57,7 +62,13 @@ fn hosting_run(session: Res<Session>) -> bool {
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         PreUpdate,
-        (greet, apply_moves, apply_focus, hand_actions)
+        (
+            greet,
+            apply_moves,
+            apply_focus,
+            apply_self_res,
+            hand_actions,
+        )
             .after(ServerSystems::Receive)
             .run_if(hosting),
     )
@@ -83,6 +94,7 @@ pub(super) fn plugin(app: &mut App) {
                 sync_heroes,
                 sync_enemies,
                 sync_run,
+                sync_slow,
                 relay_fx,
             )
                 .run_if(hosting_run),
@@ -283,6 +295,21 @@ pub(super) fn apply_focus(
         for (owner, mut hero) in &mut heroes {
             if owns(*owner, m.client_id) && hero.focused != m.message.0 {
                 hero.focused = m.message.0;
+            }
+        }
+    }
+}
+
+/// Each client's self-resurrection key, on its own hero while it is down: the soulstone or ankh
+/// it holds gets it up ([`synergy`]), as the host's own key does for the host's hero.
+pub(super) fn apply_self_res(
+    mut msgs: MessageReader<FromClient<SelfRes>>,
+    mut heroes: Query<(&Owner, &mut HeroState), With<party::Remote>>,
+) {
+    for m in msgs.read() {
+        for (owner, mut hero) in &mut heroes {
+            if owns(*owner, m.client_id) && !hero.alive() {
+                hero.synergy.res.asked = true;
             }
         }
     }
@@ -490,6 +517,7 @@ pub(super) fn spawn_peer_hero(
             sex: peer.sex,
             trainer: peer.trainer,
         },
+        MemberName(peer.name.clone()),
     ));
     e
 }
@@ -540,6 +568,7 @@ pub(super) fn tag(
             Option<&MovementState>,
             Option<&Enemy>,
             Option<&HeroState>,
+            Option<&Marks>,
             Has<NetHero>,
         ),
         (
@@ -549,11 +578,19 @@ pub(super) fn tag(
         ),
     >,
 ) {
-    for (e, tf, mv, enemy, hero, described) in &fresh {
+    for (e, tf, mv, enemy, hero, marks, described) in &fresh {
         let mut ec = commands.entity(e);
         ec.try_insert((Replicated, pos_of(tf, mv)));
+        if hero.is_some() || enemy.is_some() {
+            ec.try_insert(auras_of(marks));
+        }
         if let Some(hero) = hero {
-            ec.try_insert((vitals_of(hero), build_of(hero)));
+            ec.try_insert((
+                vitals_of(hero),
+                build_of(hero),
+                stats_of(hero),
+                buffs_of(hero),
+            ));
             if !described {
                 let look = selection.look.and_then(|i| selection.looks.get(i));
                 let (trainer, race, sex) = look.copied().unwrap_or((0, 0, 0));
@@ -624,6 +661,62 @@ pub(super) fn sync_heroes(mut q: Query<(&HeroState, &mut NetVitals, &mut NetBuil
     for (hero, mut vitals, mut build) in &mut q {
         vitals.set_if_neq(vitals_of(hero));
         build.set_if_neq(build_of(hero));
+    }
+}
+
+/// The auras `marks` shows, in slot order.
+fn auras_of(marks: Option<&Marks>) -> NetAuras {
+    NetAuras(marks.map(|m| m.spells().collect()).unwrap_or_default())
+}
+
+pub(super) fn stats_of(hero: &HeroState) -> NetStats {
+    NetStats {
+        damage_done: hero.damage_done,
+        healing_done: hero.healing_done,
+        damage_taken: hero.damage_taken,
+        revives: hero.revives_given,
+        gold: hero.gold_collected,
+        downs: hero.times_downed,
+    }
+}
+
+/// The group buffs on `hero`, by their place in [`synergy::BUFFS`].
+pub(super) fn buffs_of(hero: &HeroState) -> NetBuffs {
+    NetBuffs(
+        hero.synergy
+            .buffs
+            .iter()
+            .filter_map(|b| {
+                let i = synergy::BUFFS.iter().position(|d| std::ptr::eq(d, b.def))?;
+                Some((i as u8, b.strength))
+            })
+            .collect(),
+    )
+}
+
+/// The party UI's slower parts, at [`super::SLOW_HZ`] on the wall clock: every hero's and enemy's
+/// auras, the heroes' group buffs and their numbers so far. On the results, every frame: the
+/// clients' awards are the host's final numbers.
+#[allow(clippy::type_complexity)]
+pub(super) fn sync_slow(
+    time: Res<Time<Real>>,
+    phase: Res<State<Phase>>,
+    mut acc: Local<f32>,
+    mut heroes: Query<(&HeroState, &mut NetStats, &mut NetBuffs)>,
+    mut auras: Query<(Option<&Marks>, &mut NetAuras)>,
+) {
+    let interval = 1.0 / super::SLOW_HZ;
+    *acc += time.delta_secs();
+    if *acc < interval && *phase.get() != Phase::GameOver {
+        return;
+    }
+    *acc = (*acc - interval).clamp(0.0, interval);
+    for (hero, mut stats, mut buffs) in &mut heroes {
+        stats.set_if_neq(stats_of(hero));
+        buffs.set_if_neq(buffs_of(hero));
+    }
+    for (marks, mut net) in &mut auras {
+        net.set_if_neq(auras_of(marks));
     }
 }
 

@@ -11,6 +11,10 @@
 //!   it ([`client`]).
 //! - Level-ups: the host rolls each player's hand and sends it to that player; the pick, rerolls,
 //!   banishes and skips come back as client messages and the host applies them.
+//! - The party UI ([`super::partyui`]) reads the same view on every machine: a client fills it
+//!   from the replicated heroes, their auras ([`wire::NetAuras`], which also carry the enemies'
+//!   shared debuffs), group buffs ([`wire::NetBuffs`]) and run so far ([`wire::NetStats`]), all
+//!   at [`SLOW_HZ`].
 //! - The menu's Multiplayer panel hosts, joins and shows the lobby ([`ui`]).
 //!
 //! Test aids: `WOW_SURVIVORS_HOST=<port>` hosts and `WOW_SURVIVORS_JOIN=<address>` joins once the
@@ -35,7 +39,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 2;
+pub(super) const PROTOCOL: u32 = 3;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -50,6 +54,9 @@ pub(super) fn mismatch(name: &str) -> String {
 
 /// Replication and message rounds a second, each way.
 const RATE_HZ: f32 = 30.0;
+/// How often the party UI's slower parts ([`NetAuras`], [`NetStats`]) may change on the wire, a
+/// second: enough for frames and a meter, a fraction of the walk's rate.
+pub(super) const SLOW_HZ: f32 = 5.0;
 
 /// This machine's link to a co-op session, and what the lobby shows.
 #[derive(Resource, Default)]
@@ -155,10 +162,14 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetEnemy>()
         .replicate::<NetLife>()
         .replicate::<NetRun>()
+        .replicate::<NetAuras>()
+        .replicate::<NetStats>()
+        .replicate::<NetBuffs>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<HandAction>(Channel::Ordered)
         .add_client_message::<FocusInput>(Channel::Ordered)
+        .add_client_message::<SelfRes>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()

@@ -107,6 +107,29 @@ pub(in crate::survivors) struct NetBuild {
     pub(in crate::survivors) jewels: u32,
 }
 
+/// The party's group buffs on a hero ([`super::super::synergy`]), each by its index in the
+/// buff table and its strength: its stats and Character panel count them, as the host's do.
+/// Sent at most [`super::SLOW_HZ`] times a second.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(in crate::survivors) struct NetBuffs(pub(in crate::survivors) Vec<(u8, f32)>);
+
+/// The auras a unit shows, in their slots' order: a hero's buffs, stance, soulstone and marks, an
+/// enemy's shared debuffs and elite mark. Sent at most [`super::SLOW_HZ`] times a second.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::survivors) struct NetAuras(pub(in crate::survivors) Vec<u32>);
+
+/// A hero's share of the run so far, for the damage meter and the results' awards: sent at most
+/// [`super::SLOW_HZ`] times a second, and once more as the run ends.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::survivors) struct NetStats {
+    pub(in crate::survivors) damage_done: f64,
+    pub(in crate::survivors) healing_done: f64,
+    pub(in crate::survivors) damage_taken: f64,
+    pub(in crate::survivors) revives: u32,
+    pub(in crate::survivors) gold: u32,
+    pub(in crate::survivors) downs: u32,
+}
+
 /// An enemy's kind (its place in the stage's roster) and rank, sent once.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub(in crate::survivors) struct NetEnemy {
@@ -280,6 +303,11 @@ pub(in crate::survivors) struct FocusInput(pub(in crate::survivors) bool);
 /// A choice at the client's level-up hand.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct HandAction(pub(in crate::survivors) WireDecision);
+
+/// The client's player pressed the self-resurrection key while its hero is down: a soulstone or
+/// an ankh gets it up on the host, as the local player's key does there.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct SelfRes;
 
 // ---------------------------------------------------------------------------------------------
 // Host → client
@@ -515,6 +543,7 @@ mod tests {
         };
         assert_eq!(round(&mv), mv);
         assert_eq!(round(&FocusInput(true)), FocusInput(true));
+        assert_eq!(round(&SelfRes), SelfRes);
         for d in [
             HandDecision::Pick(2),
             HandDecision::Reroll,
@@ -571,6 +600,23 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(round(&run), run);
+        // The party UI's parts: lean, as they go to every client a few times a second.
+        let auras = NetAuras(vec![1243, 1459, 19752]);
+        assert_eq!(round(&auras), auras);
+        assert!(size(&auras) <= 10);
+        let buffs = NetBuffs(vec![(0, 1.0), (7, 1.4)]);
+        assert_eq!(round(&buffs), buffs);
+        assert!(size(&buffs) <= 11);
+        let stats = NetStats {
+            damage_done: 123_456.5,
+            healing_done: 2_048.25,
+            damage_taken: 900.0,
+            revives: 2,
+            gold: 310,
+            downs: 1,
+        };
+        assert_eq!(round(&stats), stats);
+        assert!(size(&stats) <= 30);
         let e = |i: u32| Ent(Entity::from_raw_u32(i).unwrap());
         let fx = NetFx::Go {
             caster: e(4),

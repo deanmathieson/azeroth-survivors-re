@@ -34,6 +34,9 @@ pub(super) use buffs::{bonuses as buff_bonuses, reflect, PartyBuff};
 pub(super) use debuffs::{afflict, Debuffs};
 #[cfg(test)]
 pub(super) use threat::{taunts, TAUNT_SECS};
+// What online co-op mirrors on a client: the group buffs by their place, and the key it sends.
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+pub(super) use {buffs::BUFFS, res::SELF_RES_KEY};
 
 /// A real 1.12 spell: its `Spell.dbc` id, and the name and icon the data tests know it by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

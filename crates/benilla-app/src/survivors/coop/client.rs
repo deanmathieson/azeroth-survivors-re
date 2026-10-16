@@ -1,18 +1,22 @@
 //! The client's half: it shows the host's run and simulates none of it. Every replicated body is
 //! built from its look, everything but this player's own hero eases toward the host's place, and
 //! the host's spell visuals and numbers play here. This player's hero walks here, and its place
-//! goes to the host ~30 times a second; level-up hands come from the host and the choices go back.
+//! goes to the host ~30 times a second; level-up hands come from the host and the choices go back,
+//! as does the self-resurrection key. The party UI's view is filled here from the replicated
+//! heroes ([`fill_party_view`]), as the host fills its own from its heroes.
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, ClientSystems};
 
 use super::super::data;
 use super::super::enemies::{self, Enemy};
-use super::super::gear::Dresser;
+use super::super::gear::{Dresser, HeroNames};
 use super::super::hero::Hero;
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandOutbox};
+use super::super::partyui::{self, FillPartyView, HeroRead, PartyView};
 use super::super::run_options::RunOptions;
+use super::super::synergy::{self, PartyBuff};
 use super::super::units::{self, Look, Marks};
 use super::super::{HeroState, LocalHero, MetaBonuses, Owned, Phase, Run, Selection};
 use super::host::own_bonuses;
@@ -51,6 +55,7 @@ pub(super) fn plugin(app: &mut App) {
                 (
                     materialize,
                     mirror_heroes,
+                    mirror_auras,
                     enemy_life,
                     copy_run,
                     receive_hands,
@@ -70,13 +75,14 @@ pub(super) fn plugin(app: &mut App) {
                 hold_solo_starts
                     .after(super::super::hud::keys)
                     .after(super::super::menu::menu_clicks),
+                fill_party_view.in_set(FillPartyView),
             )
                 .run_if(linked),
         )
         .add_systems(OnEnter(Phase::Menu), quit_run.run_if(joined))
         .add_systems(
             PostUpdate,
-            (send_move, send_hand, send_focus)
+            (send_move, send_hand, send_focus, send_self_res)
                 .before(ClientSystems::Send)
                 .run_if(joined),
         );
@@ -280,6 +286,33 @@ pub(super) fn apply_build(hero: &mut HeroState, build: &NetBuild) {
     hero.jewelry.picks = build.jewels;
 }
 
+/// The hero's numbers so far, into the mirror `hero`: the meter and the awards read them.
+pub(super) fn apply_stats(hero: &mut HeroState, s: &NetStats) {
+    hero.damage_done = s.damage_done;
+    hero.healing_done = s.healing_done;
+    hero.damage_taken = s.damage_taken;
+    hero.revives_given = s.revives;
+    hero.gold_collected = s.gold;
+    hero.times_downed = s.downs;
+}
+
+/// The group buffs on the hero, into the mirror `hero`: its stats count them, as on the host.
+/// They last until the host says otherwise.
+pub(super) fn apply_buffs(hero: &mut HeroState, buffs: &NetBuffs) {
+    hero.synergy.buffs = buffs
+        .0
+        .iter()
+        .filter_map(|&(i, strength)| {
+            Some(PartyBuff {
+                def: synergy::BUFFS.get(usize::from(i))?,
+                strength,
+                left: f32::INFINITY,
+                caster: Entity::PLACEHOLDER,
+            })
+        })
+        .collect();
+}
+
 /// Health, shield and down, into the mirror `hero`.
 pub(super) fn apply_vitals(hero: &mut HeroState, v: &NetVitals, local: bool) {
     hero.hp = v.hp;
@@ -358,6 +391,8 @@ fn materialize(
             let Some(def) = list.get(usize::from(n.index)).or(list.first()) else {
                 continue;
             };
+            // Its shared debuffs and elite mark show as the host's do ([`mirror_auras`]).
+            ec.try_insert(Marks::debuffs());
             ec.try_insert(Enemy {
                 def,
                 hp: n.max_hp,
@@ -387,29 +422,36 @@ fn materialize(
     }
 }
 
-/// The heroes' vitals and builds into their mirrors. A hero going down plays its death and wears
-/// the revive glow; one revived on the host gets up.
+/// The heroes' vitals, builds, group buffs and numbers into their mirrors. A hero going down
+/// plays its death; one revived on the host gets up. Its glows are its auras ([`mirror_auras`]).
 #[allow(clippy::type_complexity)]
 fn mirror_heroes(
     mut heroes: Query<(
-        Entity,
-        &Guid,
         Ref<NetVitals>,
         Ref<NetBuild>,
+        Option<Ref<NetStats>>,
+        Option<Ref<NetBuffs>>,
         &mut HeroState,
         &mut ObjectStore,
-        &mut Marks,
         Has<LocalHero>,
     )>,
     mut run: ResMut<Run>,
-    mut fields: MessageWriter<FieldChanged>,
 ) {
-    for (entity, guid, vitals, build, mut hero, mut store, mut marks, local) in &mut heroes {
+    for (vitals, build, stats, buffs, mut hero, mut store, local) in &mut heroes {
         if build.is_changed() {
             apply_build(&mut hero, &build);
             if local {
                 run.version += 1;
             }
+        }
+        if let Some(buffs) = buffs.filter(|b| b.is_changed()) {
+            apply_buffs(&mut hero, &buffs);
+            if local {
+                run.version += 1;
+            }
+        }
+        if let Some(stats) = stats.filter(|s| s.is_changed()) {
+            apply_stats(&mut hero, &stats);
         }
         if vitals.is_changed() {
             let was_up = hero.alive();
@@ -419,16 +461,74 @@ fn mirror_heroes(
                 (false, true) => units::raise_unit(&mut store),
                 _ => {}
             }
-            // Down: the revive glow; Focused: Divine Protection's.
-            if !hero.alive() {
-                marks.set(&[party::REVIVE_MARK]);
-            } else if vitals.focus {
-                marks.set(&[super::super::strip::FOCUS_MARK]);
-            } else {
-                marks.clear();
-            }
-            marks.flush(entity, guid.0, &mut store, &mut fields);
         }
+    }
+}
+
+/// A unit's auras as the host shows them, into its buff or debuff slots: a hero's group buffs,
+/// stance, soulstone and its revive or Focus glow, an enemy's shared debuffs and elite mark, each
+/// with its spell's visual.
+fn mirror_auras(
+    mut q: Query<(Entity, &Guid, &NetAuras, &mut Marks, &mut ObjectStore), Changed<NetAuras>>,
+    mut fields: MessageWriter<FieldChanged>,
+) {
+    for (entity, guid, auras, mut marks, mut store) in &mut q {
+        marks.set(&auras.0);
+        marks.flush(entity, guid.0, &mut store, &mut fields);
+    }
+}
+
+/// The party UI's view on a client ([`partyui`]): the replicated heroes, in the session's player
+/// order, each by its player's name and at the host's max health. The default filler reads the
+/// heroes' own state, which only the host has.
+#[allow(clippy::type_complexity)]
+pub(super) fn fill_party_view(
+    run: Res<Run>,
+    selection: Res<Selection>,
+    names: HeroNames,
+    heroes: Query<
+        (
+            Entity,
+            &HeroState,
+            &Transform,
+            Option<&Marks>,
+            Has<LocalHero>,
+            &NetHero,
+            &NetVitals,
+        ),
+        With<Hero>,
+    >,
+    mut view: ResMut<PartyView>,
+) {
+    let own = selection.class.and_then(|c| names.name(c));
+    let mut members = partyui::members_of(
+        heroes
+            .iter()
+            .map(|(e, hero, tf, marks, local, net, _)| HeroRead {
+                entity: e,
+                hero,
+                position: tf.translation,
+                buffs: marks.map(|m| m.spells().collect()).unwrap_or_default(),
+                local,
+                bot: false,
+                name: Some(net.name.as_str()),
+            }),
+        run.level,
+        own,
+    );
+    for m in &mut members {
+        if let Ok((.., net, vitals)) = heroes.get(m.entity) {
+            m.player = net.player;
+            m.max_hp = vitals.max_hp;
+        }
+    }
+    members.sort_by_key(|m| m.player);
+    let want = PartyView {
+        members,
+        elapsed: run.elapsed,
+    };
+    if *view != want {
+        *view = want;
     }
 }
 
@@ -695,6 +795,20 @@ fn send_focus(
     if *sent != now {
         *sent = now;
         out.write(FocusInput(now));
+    }
+}
+
+/// This player's self-resurrection key while its hero is down, to the host: a soulstone or an
+/// ankh gets it up there.
+fn send_self_res(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    session: Res<Session>,
+    local: Query<&HeroState, With<LocalHero>>,
+    mut out: MessageWriter<SelfRes>,
+) {
+    let pressed = keys.is_some_and(|k| k.just_pressed(synergy::SELF_RES_KEY));
+    if pressed && session.in_run && local.single().is_ok_and(|me| !me.alive()) {
+        out.write(SelfRes);
     }
 }
 

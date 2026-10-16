@@ -13,11 +13,13 @@ use bevy_replicon_renet2::RepliconRenetPlugins;
 use super::super::bonus::Bonuses;
 use super::super::hand;
 use super::super::hero;
+use super::super::hero::Hero;
 use super::super::hud::Choice;
 use super::super::party::{self, HandDecision, LOCAL_PLAYER};
+use super::super::partyui::PartyView;
 use super::super::units::Look;
-use super::super::{data, HeroState, Rng, Run, Selection};
-use super::client::{apply_build, local_player, playable};
+use super::super::{data, HeroState, LocalHero, Phase, Rng, Run, Selection};
+use super::client::{apply_build, fill_party_view, local_player, playable};
 use super::host::{self, decide, owns, Owner, Peer};
 use super::wire::*;
 use super::{net, PlayerName, Session};
@@ -275,17 +277,27 @@ fn app() -> App {
     app
 }
 
-/// Both apps a round, a moment apart, until `done` holds; panics after ~5 s.
+/// How long [`pump`] waits on the loopback: generous, since `cargo test` runs every test at once
+/// and a loaded machine updates both apps slowly. A healthy session gets anywhere in well under
+/// a second.
+const PUMP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Both apps a round, a moment apart, until `done` holds; panics once [`PUMP_DEADLINE`] of wall
+/// clock has passed without it.
 fn pump(host: &mut App, client: &mut App, mut done: impl FnMut(&mut App, &mut App) -> bool) {
-    for _ in 0..1000 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < PUMP_DEADLINE {
         client.update();
         host.update();
         if done(host, client) {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    panic!("the loopback session never got there");
+    panic!(
+        "the loopback session never got there in {:?}",
+        PUMP_DEADLINE
+    );
 }
 
 fn drain<M: Message>(app: &mut App) -> Vec<M> {
@@ -299,11 +311,20 @@ fn drain<M: Message>(app: &mut App) -> Vec<M> {
 fn a_host_and_a_client_play_over_udp_on_the_loopback() {
     let mut host_app = app();
     let mut client_app = app();
+    host_app.init_state::<Phase>();
     host_app.add_systems(
         PreUpdate,
-        (host::apply_moves, host::hand_actions).after(ServerSystems::Receive),
+        (host::apply_moves, host::hand_actions, host::apply_self_res).after(ServerSystems::Receive),
     );
-    host_app.add_systems(Update, (host::serve_hands, host::tag, host::sync_heroes));
+    host_app.add_systems(
+        Update,
+        (
+            host::serve_hands,
+            host::tag,
+            host::sync_heroes,
+            host::sync_slow,
+        ),
+    );
 
     // Host on a free port; join it on 127.0.0.1.
     let channels = host_app.world().resource::<RepliconChannels>();
@@ -365,7 +386,12 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
             .map(|(h, p, v, l)| (h.clone(), *p, *v, l.clone()))
             .collect::<Vec<_>>()
     };
+    // The host deals the banked pick as soon as the hero stands, so its hand may land while the
+    // session is still getting there: kept from every round, as a message is only held for two
+    // updates, and a loaded machine takes many before the hand is looked for.
+    let mut hands: Vec<Hand> = Vec::new();
     pump(&mut host_app, &mut client_app, |_, c| {
+        hands.extend(drain::<Hand>(c));
         let seen = heroes(c);
         seen.len() == 2 && seen.iter().all(|h| h.2.hp > 0.0)
     });
@@ -381,6 +407,7 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
     // The client walks its hero: the host moves the client's hero, and only that one.
     let walked = [130.0, 31.0, -40.0];
     pump(&mut host_app, &mut client_app, |h, c| {
+        hands.extend(drain::<Hand>(c));
         c.world_mut().write_message(MoveInput {
             at: walked,
             yaw: 0.5,
@@ -400,12 +427,11 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
 
     // The host deals the client's banked pick as a hand; the client's pick comes back and lands
     // on its hero, and the picker closes with an empty hand.
-    let mut hand = None;
     pump(&mut host_app, &mut client_app, |_, c| {
-        hand = drain::<Hand>(c).into_iter().next();
-        hand.is_some()
+        hands.extend(drain::<Hand>(c));
+        !hands.is_empty()
     });
-    let hand = hand.unwrap();
+    let hand = hands.remove(0);
     assert!(!hand.choices.is_empty() && hand.build.picks == 1);
     let before = ranks(host_app.world().get::<HeroState>(theirs).unwrap());
     client_app
@@ -426,6 +452,52 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         host_app.world().get::<HeroState>(host_hero).unwrap().picks,
         2,
         "the host's hero is untouched"
+    );
+
+    // The party UI's numbers and buffs reach the client at their slower pace.
+    {
+        let mut h = host_app.world_mut().get_mut::<HeroState>(theirs).unwrap();
+        h.damage_done = 1234.5;
+        h.gold_collected = 7;
+        h.times_downed = 1;
+    }
+    let stats = |c: &mut App| {
+        c.world_mut()
+            .query::<(&NetHero, &NetStats, &NetAuras, &NetBuffs)>()
+            .iter(c.world())
+            .find(|(h, ..)| h.player == 1)
+            .map(|(_, s, ..)| *s)
+    };
+    pump(&mut host_app, &mut client_app, |_, c| {
+        stats(c).is_some_and(|s| s.damage_done == 1234.5)
+    });
+    let seen = stats(&mut client_app).unwrap();
+    assert_eq!((seen.gold, seen.downs, seen.revives), (7, 1, 0));
+
+    // Down, the client's player presses its self-resurrection key: the host is asked to raise its
+    // hero, and no other.
+    for e in [host_hero, theirs] {
+        let mut h = host_app.world_mut().get_mut::<HeroState>(e).unwrap();
+        h.dead_t = Some(0.5);
+        h.hp = 0.0;
+    }
+    pump(&mut host_app, &mut client_app, |h, c| {
+        c.world_mut().write_message(SelfRes);
+        h.world()
+            .get::<HeroState>(theirs)
+            .unwrap()
+            .synergy
+            .res
+            .asked
+    });
+    assert!(
+        !host_app
+            .world()
+            .get::<HeroState>(host_hero)
+            .unwrap()
+            .synergy
+            .res
+            .asked
     );
 
     // The client leaves: the host sees the connection go.
@@ -592,4 +664,72 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
     assert_eq!(host::free_player(&[1, 2, 3]), Some(4));
     assert_eq!(host::free_player(&[1, 2, 3, 4]), None);
     assert_eq!(party::scale(5), 3.4);
+}
+
+#[test]
+fn a_client_fills_the_party_view_from_the_replicated_heroes() {
+    let mut world = World::new();
+    world.insert_resource(Run {
+        level: 6,
+        elapsed: 90.0,
+        ..Default::default()
+    });
+    world.init_resource::<Selection>();
+    world.init_resource::<PartyView>();
+    let net = |player: u8, name: &str| NetHero {
+        player,
+        name: name.into(),
+        class: 0,
+        race: 1,
+        sex: 0,
+        trainer: 0,
+    };
+    let vitals = |max_hp: f32| NetVitals {
+        hp: max_hp,
+        max_hp,
+        ..Default::default()
+    };
+    // This machine is player 2: its own mirror is local player 0, the host's is 2.
+    let mut mine = hero_of(local_player(2, 2), 0);
+    mine.damage_done = 50.0;
+    let mut hosts = hero_of(local_player(0, 2), 1);
+    hosts.damage_done = 75.0;
+    hosts.revives_given = 1;
+    let me = world
+        .spawn((
+            Hero::default(),
+            LocalHero,
+            mine,
+            Transform::default(),
+            net(2, "Thrall"),
+            vitals(180.0),
+        ))
+        .id();
+    let host = world
+        .spawn((
+            Hero::default(),
+            hosts,
+            Transform::default(),
+            net(0, "Jaina"),
+            vitals(240.0),
+        ))
+        .id();
+    world.run_system_once(fill_party_view).unwrap();
+    let view = world.resource::<PartyView>();
+    // In the session's order, by the players' names, at the host's max health and numbers.
+    let order: Vec<(Entity, u8, &str)> = view
+        .members
+        .iter()
+        .map(|m| (m.entity, m.player, m.name.as_str()))
+        .collect();
+    assert_eq!(order, [(host, 0, "Jaina"), (me, 2, "Thrall")]);
+    assert_eq!(view.members[0].max_hp, 240.0);
+    assert_eq!(view.members[0].level, 6);
+    assert_eq!(
+        (view.members[0].damage_done, view.members[0].revives),
+        (75.0, 1)
+    );
+    assert!(view.members[1].is_local && !view.members[0].is_local);
+    assert_eq!(view.elapsed, 90.0);
+    assert_eq!(view.allies().len(), 1);
 }

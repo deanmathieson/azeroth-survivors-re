@@ -205,6 +205,12 @@ impl PartyView {
     }
 }
 
+/// A hero's player's own name, where it has one (an online player's, as it gave it in the
+/// lobby): its frame, plate and results row show it rather than its slot's.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+pub(super) struct MemberName(pub String);
+
 /// Where [`PartyView`] is filled: the UI's systems run after it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct FillPartyView;
@@ -257,6 +263,7 @@ pub(super) fn fill_party_view(
             Option<&Marks>,
             Has<LocalHero>,
             Has<Bot>,
+            Option<&MemberName>,
         ),
         With<Hero>,
     >,
@@ -266,13 +273,14 @@ pub(super) fn fill_party_view(
     let members = members_of(
         heroes
             .iter()
-            .map(|(e, hero, tf, marks, local, bot)| HeroRead {
+            .map(|(e, hero, tf, marks, local, bot, name)| HeroRead {
                 entity: e,
                 hero,
                 position: tf.translation,
                 buffs: marks.map(|m| m.spells().collect()).unwrap_or_default(),
                 local,
                 bot,
+                name: name.map(|n| n.0.as_str()),
             }),
         run.level,
         own,
@@ -294,10 +302,13 @@ pub(super) struct HeroRead<'a> {
     pub buffs: Vec<u32>,
     pub local: bool,
     pub bot: bool,
+    /// Its player's own name ([`MemberName`]), if it has one.
+    pub name: Option<&'a str>,
 }
 
 /// The members for `heroes`, in player order: at the party's `level`, the local hero by its own
-/// name where it has one, and a downed hero showing no buffs (only its revive).
+/// name where it has one, any other by its player's, and a downed hero showing no buffs (only
+/// its revive).
 pub(super) fn members_of<'a>(
     heroes: impl IntoIterator<Item = HeroRead<'a>>,
     level: u32,
@@ -312,7 +323,12 @@ pub(super) fn members_of<'a>(
             if !m.downed {
                 m.buffs = read.buffs;
             }
-            if let (true, Some(name)) = (read.local, own_name) {
+            let name = if read.local {
+                own_name.or(read.name)
+            } else {
+                read.name
+            };
+            if let Some(name) = name {
                 m.name = name.to_string();
             }
             m
@@ -423,6 +439,7 @@ mod tests {
             buffs: buffs.to_vec(),
             local,
             bot,
+            name: None,
         };
         let members = members_of(
             [

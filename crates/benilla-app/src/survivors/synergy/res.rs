@@ -101,6 +101,9 @@ pub(in crate::survivors) struct ResState {
     pub soulstone: bool,
     /// Seconds before a shaman's ankh is ready again.
     pub ankh_cd: f32,
+    /// Its player pressed [`SELF_RES_KEY`] on another machine (a co-op client's, sent to the
+    /// host): it gets up as the local player's key would get it up.
+    pub asked: bool,
 }
 
 /// A downed hero up at [`party::REVIVED_HP`], standing again on screen.
@@ -293,11 +296,13 @@ pub(super) fn self_revive(
     for ((e, guid, _, mut store, mut marks, mut h), local) in &mut heroes {
         let res = &mut h.synergy.res;
         res.ankh_cd = (res.ankh_cd - dt).max(0.0);
+        // A remote player's key counts once, now or never.
+        let asked = std::mem::take(&mut res.asked);
         let Some(t) = h.dead_t.filter(|_| party) else {
             continue;
         };
         let Some(spell) = self_res(&h) else { continue };
-        if !(t >= SELF_RES_AUTO || (local && pressed)) {
+        if !(t >= SELF_RES_AUTO || (local && pressed) || asked) {
             continue;
         }
         if spell == SOULSTONE {
@@ -449,6 +454,26 @@ mod tests {
         w.insert_resource(keys);
         w.run_system_once(self_revive).unwrap();
         assert!(!is_down(&w, hs[0]), "pressed, at once");
+    }
+
+    #[test]
+    fn a_remote_player_rises_on_its_own_key_sent_over() {
+        let mut w = world(0.1);
+        let hs = heroes(&mut w, &[("Warlock", 0.0), ("Mage", 5.0)]);
+        w.run_system_once(soulstone).unwrap();
+        assert!(hero(&w, hs[1]).synergy.res.soulstone);
+        lie(&mut w, hs[1], 0.1);
+        // The host's own key is no one else's.
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(SELF_RES_KEY);
+        w.insert_resource(keys);
+        w.run_system_once(self_revive).unwrap();
+        assert!(is_down(&w, hs[1]));
+        // Its own player's, from its machine.
+        w.get_mut::<HeroState>(hs[1]).unwrap().synergy.res.asked = true;
+        w.run_system_once(self_revive).unwrap();
+        assert!(!is_down(&w, hs[1]), "asked, at once");
+        assert!(!hero(&w, hs[1]).synergy.res.asked, "spent");
     }
 
     #[test]
