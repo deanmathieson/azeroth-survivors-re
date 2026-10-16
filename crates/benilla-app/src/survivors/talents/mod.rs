@@ -6,12 +6,19 @@
 //! Each recorded run pays its class talent XP, which buys points ([`progress`]); the Armory's
 //! Talents tab spends them ([`tab`]); and the picked class's learned ranks become
 //! [`MetaParts::talents`], which every run starts with ([`apply_talents`]).
+//!
+//! A tree's 31-point capstone makes the hero its spec for every run ([`spec`]): a new start spell
+//! and a signature summon ([`guardian`]) or form. A talent that is also a spell or passive the run
+//! offers teaches it instead of doubling it ([`mechanics::Teach`]; the audit is
+//! `docs/TALENTS.md`).
 
 mod effects;
+mod guardian;
 mod mechanics;
 mod progress;
 mod rules;
 mod save;
+mod spec;
 mod tab;
 
 use std::collections::HashMap;
@@ -39,9 +46,36 @@ pub(in crate::survivors) fn mechanic_description(talent: u32, rank: u8) -> Vec<S
 }
 
 pub(in crate::survivors) use mechanics::milestones;
+pub(in crate::survivors) use spec::HeroSpec;
 
 pub(in crate::survivors) fn is_headline(talent: u32) -> bool {
     mechanics::entry(talent).is_some_and(|entry| entry.headline)
+}
+
+/// The spec lines of a tree's 31-point capstone, empty for any other talent: "Becomes: Frost
+/// Mage.", "Starts with Frostbolt.", "Summons a Water Elemental."
+pub(in crate::survivors) fn spec_lines(talent: u32) -> Vec<String> {
+    spec::by_talent(talent)
+        .map(spec::SpecDef::tooltip)
+        .unwrap_or_default()
+}
+
+/// Whether the class spell or passive `key` may be offered to `hero`: one a talent teaches is
+/// offered only to the heroes who learned it, if it is a spell.
+pub(in crate::survivors) fn offered(hero: &HeroState, key: &str) -> bool {
+    match mechanics::teacher_of(key).and_then(|t| t.teaches) {
+        Some(mechanics::Teach::Spell(_)) => hero.mechanics.taught(key),
+        _ => true,
+    }
+}
+
+/// The rank `hero` takes the spell or passive `key` at: 2 when a learned talent teaches it.
+pub(in crate::survivors) fn first_rank(hero: &HeroState, key: &str) -> u8 {
+    if hero.mechanics.taught(key) {
+        2
+    } else {
+        1
+    }
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -52,6 +86,15 @@ pub(super) fn plugin(app: &mut App) {
             progress::award_xp,
             apply_talents,
             grant_talents,
+            (
+                guardian::spawn_guardians,
+                guardian::run_guardians,
+                guardian::wear_forms,
+            )
+                .chain()
+                .after(grant_talents)
+                .run_if(in_state(super::Phase::Playing))
+                .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
             tab::talent_input,
             tab::catalog_arrived,
             // After the Armory has (re)built the tab, so new art fills the same frame.
@@ -63,12 +106,18 @@ pub(super) fn plugin(app: &mut App) {
     }
 }
 
-/// Give the local hero the learned talents' active mechanics after `start_run` replaces its state.
+/// Give the local hero the learned talents' active mechanics, the spells and passives they teach,
+/// and its spec, after `start_run` replaces its state.
+#[allow(clippy::type_complexity)]
 fn grant_talents(
+    mut commands: Commands,
     profile: Option<Res<Profile>>,
     selection: Res<Selection>,
     phase: Res<State<super::Phase>>,
-    mut heroes: Query<&mut HeroState, (With<LocalHero>, Changed<HeroState>)>,
+    mut heroes: Query<
+        (Entity, &mut HeroState, Option<&HeroSpec>),
+        (With<LocalHero>, Changed<HeroState>),
+    >,
 ) {
     if *phase.get() != super::Phase::Playing {
         return;
@@ -76,23 +125,42 @@ fn grant_talents(
     let (Some(profile), Some(class)) = (profile, selection.class) else {
         return;
     };
-    let Some(save) = saved(&profile, class) else {
-        return;
-    };
-    for mut hero in &mut heroes {
-        grant_learned(&mut hero, &save.ranks);
+    let ranks = saved(&profile, class).map_or(&[][..], |s| s.ranks.as_slice());
+    for (e, mut hero, had) in &mut heroes {
+        let spec = grant_learned(&mut hero, ranks);
+        match (spec, had) {
+            (Some(spec), Some(had)) if std::ptr::eq(spec, had.0) => {}
+            (Some(spec), _) => {
+                commands.entity(e).insert(HeroSpec(spec));
+            }
+            (None, Some(_)) => {
+                commands.entity(e).remove::<HeroSpec>();
+            }
+            (None, None) => {}
+        }
     }
 }
 
-/// Put every learned active talent on a freshly created hero.  Kept separate from the ECS query
-/// so the exact run-start grant set remains small and directly testable.
-fn grant_learned(hero: &mut HeroState, ranks: &[(u32, u8)]) {
+/// Put every learned active talent on a freshly created hero, what the learned talents teach,
+/// and the spec its capstone makes it, which it returns. Kept separate from the ECS query so the
+/// exact run-start grant set remains small and directly testable.
+fn grant_learned(hero: &mut HeroState, ranks: &[(u32, u8)]) -> Option<&'static spec::SpecDef> {
     for (id, rank) in ranks {
         let specs = mechanics::at_rank(*id, *rank);
         if !specs.is_empty() {
             game_mechanics::grant(hero, MechanicId::Talent(*id), specs);
         }
+        if *rank > 0 {
+            if let Some(mechanics::Teach::Spell(key) | mechanics::Teach::Passive(key)) =
+                mechanics::entry(*id).and_then(|m| m.teaches)
+            {
+                hero.mechanics.teach(key);
+            }
+        }
     }
+    let spec = spec::learned(ranks)?;
+    spec::grant(hero, spec);
+    Some(spec)
 }
 
 /// One class's saved talents (an index into [`data::CLASSES`]), if it has a record.
@@ -550,12 +618,363 @@ mod tests {
     #[test]
     fn learned_mechanics_are_granted_under_their_talent_ids() {
         let mut hero = HeroState::default();
-        let ranks = vec![(133, 1), (30, 3), (130, 5)];
-        grant_learned(&mut hero, &ranks);
-        assert!(game_mechanics::has(&hero, MechanicId::Talent(133)));
+        let ranks = vec![(75, 1), (30, 3), (130, 5)];
+        assert!(grant_learned(&mut hero, &ranks).is_none(), "no capstone");
+        assert!(game_mechanics::has(&hero, MechanicId::Talent(75)));
         assert!(game_mechanics::has(&hero, MechanicId::Talent(30)));
         assert!(!game_mechanics::has(&hero, MechanicId::Talent(130)));
     }
+
+    /// The 31 points: the spec's start replaces the class's, and the spec rides on the hero.
+    #[test]
+    fn thirty_one_points_grant_the_spec() {
+        let mage = data::CLASSES.iter().find(|c| c.name == "Mage").unwrap();
+        let mut hero = HeroState::new(0, mage, 1, Bonuses::default());
+        assert_eq!(hero.abilities[0].def.key, "fireball");
+        let spec = grant_learned(&mut hero, &[(61, 5), (71, 1)]).expect("Ice Barrier is Frost's");
+        assert_eq!(spec.title, "Frost Mage");
+        assert_eq!(hero.abilities[0].def.key, "frostbolt");
+        assert!(matches!(&spec.summon, spec::Summon::Guardian(g) if g.name == "Water Elemental"));
+        assert!(
+            game_mechanics::has(&hero, MechanicId::Talent(71)),
+            "and Ice Barrier itself"
+        );
+
+        // Through the system: the local hero carries its spec, and loses it with the points.
+        let mut app = App::new();
+        let mut profile = Profile::default();
+        profile.classes.insert(
+            "mage".into(),
+            super::super::profile::ClassRecord {
+                talents: TalentSave {
+                    xp: 0,
+                    ranks: vec![(36, 1)],
+                },
+                ..default()
+            },
+        );
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .insert_state(super::super::Phase::Playing)
+            .insert_resource(profile)
+            .insert_resource(Selection {
+                class: data::CLASSES.iter().position(|c| c.name == "Mage"),
+                ..default()
+            })
+            .add_systems(Update, grant_talents);
+        let e = app
+            .world_mut()
+            .spawn((HeroState::new(0, mage, 1, Bonuses::default()), LocalHero))
+            .id();
+        app.update();
+        let carried = app.world().get::<HeroSpec>(e).map(|s| s.0.title);
+        assert_eq!(carried, Some("Fire Mage"));
+        assert_eq!(
+            app.world().get::<HeroState>(e).unwrap().abilities[0]
+                .def
+                .key,
+            "pyroblast"
+        );
+        app.world_mut()
+            .resource_mut::<Profile>()
+            .classes
+            .get_mut("mage")
+            .unwrap()
+            .talents
+            .ranks
+            .clear();
+        app.world_mut().get_mut::<HeroState>(e).unwrap().hp -= 1.0;
+        app.update();
+        assert!(app.world().get::<HeroSpec>(e).is_none());
+    }
+
+    /// A taught spell is offered only to its learners, at rank 2; a taught passive is offered to
+    /// all, its learners taking it at rank 2.
+    #[test]
+    fn talents_teach_their_spells_instead_of_doubling_them() {
+        let mage = data::CLASSES.iter().find(|c| c.name == "Mage").unwrap();
+        let mut hero = HeroState::new(0, mage, 1, Bonuses::default());
+        assert!(
+            !offered(&hero, "pyroblast"),
+            "no Pyroblast without the talent"
+        );
+        assert!(offered(&hero, "frostbolt") && offered(&hero, "kings"));
+        assert_eq!(first_rank(&hero, "pyroblast"), 1);
+        grant_learned(&mut hero, &[(29, 1), (1442, 1)]);
+        assert!(offered(&hero, "pyroblast"));
+        assert_eq!(first_rank(&hero, "pyroblast"), 2);
+        assert_eq!(first_rank(&hero, "kings"), 2);
+        assert!(
+            !game_mechanics::has(&hero, MechanicId::Talent(29)),
+            "the talent is the spell, not a second Pyroblast"
+        );
+        assert_eq!(
+            mechanic_description(29, 1),
+            ["Teaches Pyroblast: your runs offer it, and you take it at rank 2."]
+        );
+    }
+
+    fn title(key: &str) -> String {
+        key.split('_')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next()
+                    .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Every name the run offers as a card: the class spells (by key), the passives and the
+    /// legendary transformations, each with the spell or passive key it belongs to.
+    fn offered_names() -> Vec<(String, &'static str)> {
+        let mut out: Vec<(String, &'static str)> = data::CLASSES
+            .iter()
+            .flat_map(|c| c.pool.iter())
+            .map(|k| (title(k), *k))
+            .collect();
+        out.extend(data::PASSIVES.iter().map(|p| (p.name.to_string(), p.key)));
+        out.extend(
+            data::LEGENDARIES
+                .iter()
+                .map(|l| (l.name.to_string(), l.ability)),
+        );
+        out
+    }
+
+    /// No talent mechanic shares its name with a spell, passive or legendary the run offers,
+    /// unless it teaches exactly that one (the resolution flag).
+    #[test]
+    fn no_talent_and_offered_spell_share_a_name_unresolved() {
+        let offered = offered_names();
+        let mut clashes = Vec::new();
+        for m in mechanics::all() {
+            for (name, key) in &offered {
+                if !name.eq_ignore_ascii_case(m.name) {
+                    continue;
+                }
+                let resolved = matches!(
+                    m.teaches,
+                    Some(mechanics::Teach::Spell(k) | mechanics::Teach::Passive(k)) if k == *key
+                );
+                if !resolved {
+                    clashes.push(format!("talent {} {} vs {key}", m.id, m.name));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{clashes:#?}");
+        // A spec's summon or form is never a second effect under a learned talent's name either,
+        // but for the capstone whose effect it is.
+        for s in spec::SPECS {
+            for m in mechanics::all() {
+                if m.name == s.summon_name() {
+                    let own = m.id == s.talent;
+                    let shown_only = matches!(&s.summon, spec::Summon::Form(f) if f.bonuses.is_empty() && f.specs.is_empty());
+                    assert!(
+                        own && (m.teaches == Some(mechanics::Teach::Spec) || shown_only),
+                        "{} vs talent {}",
+                        s.title,
+                        m.id
+                    );
+                }
+            }
+        }
+        // Every teacher teaches something real, and only its own class's spell.
+        for t in mechanics::teachers() {
+            match t.teaches {
+                Some(mechanics::Teach::Spell(k)) => {
+                    data::ability(k);
+                    assert_eq!(title(k).to_ascii_lowercase(), t.name.to_ascii_lowercase());
+                }
+                Some(mechanics::Teach::Passive(k)) => {
+                    let p = data::PASSIVES.iter().find(|p| p.key == k).unwrap();
+                    assert_eq!(p.name, t.name);
+                }
+                Some(mechanics::Teach::Spec) => {
+                    assert_eq!(spec::by_talent(t.id).map(|s| s.summon_name()), Some(t.name));
+                }
+                None => unreachable!(),
+            }
+        }
+    }
+
+    /// The same audit over the client's own names: every talent in the 27 trees (mechanics or
+    /// not) against every spell, passive and legendary the run offers, by `Spell.dbc` name.
+    #[test]
+    fn no_talent_shares_a_client_name_with_an_offered_spell() {
+        let Some((_, cat)) = client() else { return };
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("spells");
+        let mut offered: Vec<(String, &'static str)> = data::CLASSES
+            .iter()
+            .flat_map(|c| c.pool.iter())
+            .map(|k| {
+                let name = spells
+                    .get(data::ability(k).spell)
+                    .map_or_else(|| title(k), |s| s.name.clone());
+                (name, *k)
+            })
+            .collect();
+        offered.extend(data::PASSIVES.iter().map(|p| (p.name.to_string(), p.key)));
+        offered.extend(
+            data::LEGENDARIES
+                .iter()
+                .map(|l| (l.name.to_string(), l.ability)),
+        );
+        let mut clashes = Vec::new();
+        for t in cat.talents() {
+            for (name, key) in &offered {
+                if !name.eq_ignore_ascii_case(&t.name) {
+                    continue;
+                }
+                let resolved = matches!(
+                    mechanics::entry(t.id).and_then(|m| m.teaches),
+                    Some(mechanics::Teach::Spell(k) | mechanics::Teach::Passive(k)) if k == *key
+                );
+                if !resolved {
+                    clashes.push(format!("talent {} {} vs {key}", t.id, t.name));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{clashes:#?}");
+    }
+
+    /// The specs against the client's tables: each capstone is its tree's tier-7 talent, each
+    /// start spell is named as the spec says, and each summon's spell and model is real.
+    #[test]
+    fn specs_name_real_capstones_spells_and_models() {
+        let Some((_, cat)) = client() else { return };
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("spells");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let mut bad = Vec::new();
+        for s in spec::SPECS {
+            let Some(t) = cat.talent(s.talent) else {
+                bad.push(format!("{}: no talent {}", s.title, s.talent));
+                continue;
+            };
+            if t.tree != s.tree || t.tier != 6 {
+                bad.push(format!(
+                    "{}: {} is not tier 7 of {}",
+                    s.title, t.name, s.tree
+                ));
+            }
+            let tree = cat.tree(s.tree).map(|t| t.name.as_str()).unwrap_or("");
+            if !s.title.starts_with(tree.split(' ').next().unwrap_or("?")) {
+                bad.push(format!("{}: tree {tree}", s.title));
+            }
+            let start = data::ability(s.start);
+            // A start's spell may be its effect row ("Explosive Trap Effect", "Arcane Missile").
+            match spells.get(start.spell) {
+                Some(d)
+                    if d.name.starts_with(s.start_name) || s.start_name.starts_with(&d.name) => {}
+                other => bad.push(format!(
+                    "{}: {} is {:?}",
+                    s.title,
+                    start.spell,
+                    other.map(|d| &d.name)
+                )),
+            }
+            match &s.summon {
+                spec::Summon::Guardian(g) => {
+                    if g.spell != 0 && spells.get(g.spell).is_none() {
+                        bad.push(format!("{}: spell {}", g.name, g.spell));
+                    }
+                    if g.display != 0 && !g.object && creatures.model(g.display).is_none() {
+                        bad.push(format!("{}: display {} has no model", g.name, g.display));
+                    }
+                }
+                spec::Summon::Form(f) => {
+                    if let Some(a) = f.aura {
+                        match spells.get(a) {
+                            Some(d) if d.name == f.name => {}
+                            other => bad.push(format!(
+                                "{}: aura {a} is {:?}",
+                                f.name,
+                                other.map(|d| &d.name)
+                            )),
+                        }
+                    }
+                    for m in f.specs {
+                        if let Some(v) = m.visual.filter(|v| spells.get(*v).is_none()) {
+                            bad.push(format!("{}: visual {v}", f.name));
+                        }
+                    }
+                    if let Some((elf, tauren)) = f.shape {
+                        for d in [elf, tauren] {
+                            let path = creatures
+                                .model(d)
+                                .map(|m| m.model_path.to_ascii_lowercase())
+                                .unwrap_or_default();
+                            if !path.contains("creature\\druid") {
+                                bad.push(format!("{}: shape {d} is {path:?}", f.name));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{bad:#?}");
+    }
+
+    /// Each guardian's model is the creature it is named for.
+    #[test]
+    fn guardians_wear_their_creatures_models() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let objects = benilla_formats::load_gameobject_catalog(&mut chain).expect("objects");
+        let mut bad = Vec::new();
+        for s in spec::SPECS {
+            let spec::Summon::Guardian(g) = &s.summon else {
+                continue;
+            };
+            if g.display == 0 {
+                continue;
+            }
+            let want = GUARDIAN_MODELS
+                .iter()
+                .find(|(name, _)| *name == g.name)
+                .map(|(_, m)| *m)
+                .unwrap_or_else(|| panic!("{} has no expected model", g.name));
+            let got = if g.object {
+                objects
+                    .model_path(g.display)
+                    .map(str::to_ascii_lowercase)
+                    .unwrap_or_default()
+            } else {
+                creatures
+                    .model(g.display)
+                    .map(|m| m.model_path.to_ascii_lowercase())
+                    .unwrap_or_default()
+            };
+            if !got.contains(want) {
+                bad.push(format!("{}: display {} is {got:?}", g.name, g.display));
+            }
+        }
+        assert!(bad.is_empty(), "{bad:#?}");
+    }
+
+    /// The model folder each guardian's display must come from.
+    const GUARDIAN_MODELS: &[(&str, &str)] = &[
+        ("Frostsaber", "creature\\tiger\\"),
+        ("Lightwell", "lightwell"),
+        ("Air Elemental", "creature\\airelemental\\"),
+        ("Spirit Wolf", "creature\\wolf\\wolf_ghost"),
+        (
+            "Healing Stream Totem",
+            "creature\\spells\\waterelementaltotem",
+        ),
+        ("Mana Fiend", "creature\\manafiend\\"),
+        ("Fire Elemental", "creature\\fireelemental\\"),
+        ("Water Elemental", "creature\\waterelemental\\"),
+        ("Felhunter", "creature\\felhound\\"),
+        ("Doomguard", "creature\\doomguard\\"),
+        ("Infernal", "creature\\infernal\\"),
+        ("Treant", "creature\\ancientprotector\\"),
+    ];
 
     /// Dev dump of every tree with each talent's effect and the tree's all-ranks totals:
     /// `cargo test -p benilla-app --lib survivors::talents::tests::dump -- --ignored --nocapture`.

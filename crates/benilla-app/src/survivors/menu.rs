@@ -808,6 +808,8 @@ pub(super) fn menu_clicks(
     unlocks: Res<Unlocks>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    profile: Option<Res<super::profile::Profile>>,
+    mut dice: Option<ResMut<super::gear::LooksDice>>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
@@ -858,12 +860,22 @@ pub(super) fn menu_clicks(
             if !picks.is_empty() {
                 let (c, l) = picks[rng.index(picks.len())];
                 set(&mut selection, &all, c, l);
+                // The create screen's dice roll the features too.
+                if let Some(dice) = dice.as_deref_mut() {
+                    dice.0 = true;
+                }
             }
         }
-        // The class keeps the race and gender where it can.
+        // The class comes back as its hero was last picked, else keeps the race and gender
+        // where it can.
         MenuAction::Class(c) => {
             let looks = &all[c];
-            let l = find(looks, race, Some(sex))
+            let saved = profile
+                .as_deref()
+                .and_then(|p| super::gear::saved_body(p, c));
+            let l = saved
+                .and_then(|(r, s)| find(looks, Some(r), Some(s)))
+                .or_else(|| find(looks, race, Some(sex)))
                 .or_else(|| find(looks, race, None))
                 .or_else(|| find(looks, None, Some(sex)))
                 .or_else(|| find(looks, None, None));

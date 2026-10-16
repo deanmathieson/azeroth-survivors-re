@@ -7,6 +7,10 @@
 //! The name box is the glue edit box over the engine's own text input ([`crate::textinput`]):
 //! click it to type, letters only, at most 12; Enter or a click elsewhere ends the edit and Esc
 //! drops it. While it has the focus, the keys it takes reach nothing else.
+//!
+//! The menu is the create screen around them: its race and gender picks are the class hero's
+//! body, saved with its looks ([`remember_body`]) and brought back when the class is picked again
+//! ([`saved_body`]); its Randomize dice roll the features too ([`LooksDice`]).
 
 use benilla_ui::widget::EditBoxState;
 use bevy::ecs::system::SystemParam;
@@ -17,9 +21,10 @@ use bevy::prelude::*;
 use super::super::armory::{panel, ArmoryState, TabCtx};
 use super::super::hud::{HudFont, MenuRoot};
 use super::super::menu::MenuBuilt;
-use super::super::{Rng, Selection};
+use super::super::profile::{slug, Profile};
+use super::super::{data, Phase, Rng, Selection};
 use super::looks::{
-    feature_counts, feature_labels, has_facial, normalize_name, random_name, worn_features,
+    feature_counts, feature_labels, has_facial, normalize_name, random_name, worn_features, Body,
     Features, FACIAL, FEATURES, NAME_MAX,
 };
 use super::store::{class_gear, GearRead, GearStore};
@@ -402,13 +407,71 @@ pub(super) fn looks_clicks(
             }
         }
         LooksAction::Randomize => {
-            let mut next = Features::random(counts, &mut rng);
-            if !has_facial(cc.as_deref().map(|c| &c.0), race, sex) {
-                next.facial_hair = now.facial_hair;
-            }
+            let facial = has_facial(cc.as_deref().map(|c| &c.0), race, sex);
+            let next = now.rolled(counts, facial, &mut rng);
             store.edit(class, |g| g.looks.set_features(race, sex, next));
         }
     }
+}
+
+/// The menu's Randomize, the create screen's dice, asks for the new pick's features to be rolled
+/// as well: set by the menu, spent by [`roll_dice`].
+#[derive(Resource, Default)]
+pub(in crate::survivors) struct LooksDice(pub bool);
+
+/// The race and gender class `class` (an index into [`data::CLASSES`]) was last picked as.
+pub(in crate::survivors) fn saved_body(profile: &Profile, class: usize) -> Option<(u8, u8)> {
+    let class = data::CLASSES.get(class)?;
+    let body = profile.classes.get(&slug(class.name))?.gear.looks.body?;
+    Some((body.race, body.sex))
+}
+
+/// Every race and gender picked at the menu is the class hero's body, saved with its looks.
+pub(super) fn remember_body(
+    phase: Res<State<Phase>>,
+    selection: Res<Selection>,
+    mut store: GearStore,
+) {
+    if *phase.get() != Phase::Menu || !selection.is_changed() {
+        return;
+    }
+    let Some((class, _, race, sex)) = pick(&selection) else {
+        return;
+    };
+    let body = Some(Body { race, sex });
+    if store.get(class).looks.body != body {
+        store.edit(class, |g| g.looks.body = body);
+    }
+}
+
+/// The menu's dice: the pick it rolled wears features rolled for it, as the create screen's
+/// Randomize rolls them.
+pub(super) fn roll_dice(
+    mut dice: ResMut<LooksDice>,
+    selection: Res<Selection>,
+    cc: Option<Res<CharCreate>>,
+    creatures: Option<Res<Creatures>>,
+    mut store: GearStore,
+    mut rng: ResMut<Rng>,
+) {
+    if !dice.0 {
+        return;
+    }
+    dice.0 = false;
+    let Some((class, trainer, race, sex)) = pick(&selection) else {
+        return;
+    };
+    let (now, counts) = current(
+        store.get(class),
+        trainer,
+        race,
+        sex,
+        cc.as_deref(),
+        creatures.as_deref(),
+    );
+    let facial = has_facial(cc.as_deref().map(|c| &c.0), race, sex);
+    let next = now.rolled(counts, facial, &mut rng);
+    store.edit(class, |g| g.looks.set_features(race, sex, next));
 }
 
 /// Typing into the focused name box, ahead of every other key reader: letters through the

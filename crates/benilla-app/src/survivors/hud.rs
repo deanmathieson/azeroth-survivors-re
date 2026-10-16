@@ -1164,7 +1164,9 @@ pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
     }
     if hero.abilities.len() < data::MAX_ABILITIES {
         for key in hero.class.pool {
-            if !hero.abilities.iter().any(|o| o.def.key == *key) {
+            if !hero.abilities.iter().any(|o| o.def.key == *key)
+                && super::talents::offered(hero, key)
+            {
                 pool.push((Choice::NewAbility(data::ability(key)), 1.0));
             }
         }
@@ -1261,16 +1263,23 @@ pub(super) fn roll_offer(
 /// `choice` joins `hero`'s build; a top rank transforms its ability for the rest of the run.
 pub(super) fn take(hero: &mut HeroState, choice: Choice) {
     match choice {
-        Choice::NewAbility(def) => hero.abilities.push(Owned {
-            def,
-            level: 1,
-            cd: 0.3,
-        }),
+        Choice::NewAbility(def) => {
+            // A spell a learned talent teaches comes in at rank 2.
+            let level = super::talents::first_rank(hero, def.key);
+            hero.abilities.push(Owned {
+                def,
+                level,
+                cd: 0.3,
+            });
+        }
         Choice::Upgrade(k) => {
             hero.abilities[k].level += 1;
             super::mechanics::sync_legendaries(hero);
         }
-        Choice::NewPassive(p) => hero.passives.push((p, 1)),
+        Choice::NewPassive(p) => {
+            let rank = super::talents::first_rank(hero, p.key);
+            hero.passives.push((p, rank));
+        }
         Choice::UpPassive(k) => hero.passives[k].1 += 1,
         Choice::Overcharge(kind) => hero.overcharges[kind.index()] += 1,
         // The healthstone heals no downed hero, as no heal does.

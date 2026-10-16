@@ -474,6 +474,9 @@ pub(crate) struct Mechanics {
     /// Transformations just taken, whose visual plays on the hero next frame.
     flourish: Vec<u32>,
     next_uid: u32,
+    /// The spells and passives learned talents teach, by key: offered to this hero, and taken
+    /// at rank 2 ([`super::talents`]).
+    taught: Vec<&'static str>,
 }
 
 impl Mechanics {
@@ -508,6 +511,18 @@ impl Mechanics {
 
     pub(crate) fn has(&self, id: MechanicId) -> bool {
         self.granted.iter().any(|g| g.id == id)
+    }
+
+    /// A learned talent teaches the spell or passive `key` for the run.
+    pub(crate) fn teach(&mut self, key: &'static str) {
+        if !self.taught(key) {
+            self.taught.push(key);
+        }
+    }
+
+    /// Whether a learned talent teaches the spell or passive `key`.
+    pub(crate) fn taught(&self, key: &str) -> bool {
+        self.taught.contains(&key)
     }
 
     /// Every granted mechanic, with its id, in the order granted.

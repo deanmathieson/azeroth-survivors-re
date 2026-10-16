@@ -1,7 +1,7 @@
-//! The hero's looks, kept per class beside its gear ([`super::GearSave::looks`]): its name, and the
-//! five features the character-create screen offers for each race and sex: skin colour, face,
-//! hair style, hair colour, and facial hair or the race's own equivalent (horns, tusks, earrings,
-//! markings, features). The counts are the create screen's, read from `CharSections.dbc`,
+//! The hero's looks, kept per class beside its gear ([`super::GearSave::looks`]): its name, the
+//! race and gender it was last picked as ([`Body`]), and the five features the character-create
+//! screen offers for each race and sex: skin colour, face, hair style, hair colour, and facial
+//! hair or the race's own equivalent (horns, tusks, earrings, markings, features). The counts are the create screen's, read from `CharSections.dbc`,
 //! `CharHairGeosets.dbc` and `CharacterFacialHairStyles.dbc` ([`CharCreateCatalog::ranges`]), and
 //! the labels are its own `GlueStrings` captions, keyed by the race's `ChrRaces` tokens.
 
@@ -88,22 +88,43 @@ impl Features {
     pub fn random(counts: [u8; FEATURES], rng: &mut Rng) -> Self {
         Self::from_array(counts.map(|n| rng.index(usize::from(n.max(1))) as u8))
     }
+
+    /// The create screen's Randomize (its dice): every feature at random within its count, the
+    /// facial one kept as `self` has it when the body has none to offer.
+    pub fn rolled(self, counts: [u8; FEATURES], facial: bool, rng: &mut Rng) -> Self {
+        let mut next = Self::random(counts, rng);
+        if !facial {
+            next.facial_hair = self.facial_hair;
+        }
+        next
+    }
 }
 
-/// A class hero's looks: its name, and its features per race and sex.
+/// A class hero's race and gender, as the create screen picks them (`ChrRaces` id, 0 male).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(in crate::survivors) struct Body {
+    pub race: u8,
+    pub sex: u8,
+}
+
+/// A class hero's looks: its name, its race and gender, and its features per race and sex.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(in crate::survivors) struct HeroLooks {
     /// The hero's name, [`valid_name`]; empty until one is given.
     pub name: String,
+    /// The race and gender the class hero was last picked as; `None` until it is. Picking the
+    /// class again at the menu brings it back.
+    pub body: Option<Body>,
     /// The features each body wears, by [`body_key`]. A body not here wears its class trainer's.
     pub features: BTreeMap<String, Features>,
 }
 
 impl HeroLooks {
-    /// No name and the trainers' features, for a class without a record.
+    /// No name, no body and the trainers' features, for a class without a record.
     pub const EMPTY: Self = Self {
         name: String::new(),
+        body: None,
         features: BTreeMap::new(),
     };
 
@@ -431,6 +452,55 @@ mod tests {
             let r = Features::random(counts, &mut rng).to_array();
             assert!(r.iter().zip(&counts).all(|(v, n)| v < n), "{r:?}");
         }
+        // The dice keep a facial feature the body does not offer.
+        let now = Features::from_array([0, 0, 0, 0, 2]);
+        for _ in 0..50 {
+            assert_eq!(now.rolled(counts, false, &mut rng).facial_hair, 2);
+        }
+        let rolled: std::collections::HashSet<u8> = (0..200)
+            .map(|_| now.rolled(counts, true, &mut rng).facial_hair)
+            .collect();
+        assert_eq!(rolled.len(), 3, "all three facial styles come up");
+    }
+
+    /// The create screen's option counts for every playable race and gender, as the client's own
+    /// `CharSections.dbc`, `CharHairGeosets.dbc` and `CharacterFacialHairStyles.dbc` give them:
+    /// skin colour, face, hair style, hair colour, facial hair (or horns, tusks, features...).
+    #[test]
+    fn option_counts_per_race_and_gender_are_the_clients() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cc = CharCreateCatalog::load(&mut chain).expect("character create tables");
+        let want: [((u8, u8), [u8; FEATURES]); 16] = [
+            ((1, 0), [10, 12, 12, 10, 9]),
+            ((1, 1), [10, 15, 19, 10, 7]),
+            ((2, 0), [9, 9, 7, 8, 11]),
+            ((2, 1), [9, 9, 7, 8, 7]),
+            ((3, 0), [9, 10, 11, 10, 11]),
+            ((3, 1), [9, 10, 14, 10, 6]),
+            ((4, 0), [9, 9, 7, 8, 6]),
+            ((4, 1), [9, 9, 7, 8, 10]),
+            ((5, 0), [6, 10, 10, 10, 17]),
+            ((5, 1), [6, 10, 10, 10, 8]),
+            ((6, 0), [19, 5, 8, 3, 7]),
+            ((6, 1), [11, 4, 7, 3, 5]),
+            ((7, 0), [5, 7, 7, 9, 8]),
+            ((7, 1), [5, 7, 7, 9, 7]),
+            ((8, 0), [6, 5, 6, 10, 11]),
+            ((8, 1), [6, 6, 5, 10, 6]),
+        ];
+        for ((race, sex), counts) in want {
+            assert_eq!(
+                feature_ranges(Some(&cc), race, sex),
+                Some(counts),
+                "race {race} sex {sex}"
+            );
+        }
+        assert_eq!(
+            feature_ranges(Some(&cc), 9, 0),
+            None,
+            "goblins are not creatable"
+        );
     }
 
     #[test]
@@ -473,6 +543,7 @@ mod tests {
     fn looks_round_trip_and_old_saves_read() {
         let mut looks = HeroLooks {
             name: "Thrall".into(),
+            body: Some(Body { race: 2, sex: 0 }),
             ..HeroLooks::default()
         };
         looks.set_features(2, 0, Features::from_array([1, 2, 3, 4, 5]));
@@ -480,6 +551,20 @@ mod tests {
         let text = toml::to_string_pretty(&looks).unwrap();
         assert!(text.contains("2-0"), "{text}");
         assert_eq!(toml::from_str::<HeroLooks>(&text).unwrap(), looks);
+        // Through the whole profile, as it is saved.
+        let mut profile = super::super::super::profile::Profile::default();
+        profile
+            .classes
+            .entry("shaman".into())
+            .or_default()
+            .gear
+            .looks = looks.clone();
+        let text = toml::to_string_pretty(&profile).unwrap();
+        let back: super::super::super::profile::Profile = toml::from_str(&text).unwrap();
+        assert_eq!(back.classes["shaman"].gear.looks, looks);
+        // A save from before bodies were kept reads with none.
+        let old: HeroLooks = toml::from_str("name = \"Thrall\"\n").unwrap();
+        assert_eq!((old.name(), old.body), (Some("Thrall"), None));
         assert_eq!(toml::from_str::<HeroLooks>("").unwrap(), HeroLooks::EMPTY);
         // A partial body record keeps its other features at 0.
         let part: HeroLooks = toml::from_str("[features.1-0]\nskin = 4\n").unwrap();

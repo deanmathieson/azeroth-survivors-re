@@ -880,6 +880,89 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
             duration: 10.0
         }
     ),
+    // --- Spec signatures: the 31-point talents' starting spells the pools lacked ---
+    ability!(
+        "bloodthirst",
+        23881,
+        Melee {
+            damage: 30.0,
+            cooldown: 1.6,
+            range: 5.5,
+            effect: Effect::Drain(0.15)
+        }
+    ),
+    ability!(
+        "shield_slam",
+        23922,
+        Melee {
+            damage: 34.0,
+            cooldown: 2.6,
+            range: 6.0,
+            radius: 2.5,
+            effect: Effect::Stun(0.8)
+        }
+    ),
+    ability!(
+        "crusader_strike",
+        2537,
+        Melee {
+            damage: 22.0,
+            cooldown: 1.3,
+            range: 6.0,
+            count: 2
+        }
+    ),
+    ability!(
+        "backstab",
+        53,
+        Melee {
+            damage: 30.0,
+            cooldown: 1.5,
+            range: 5.0
+        }
+    ),
+    ability!(
+        "ambush",
+        8676,
+        Melee {
+            damage: 46.0,
+            cooldown: 2.6,
+            range: 5.5,
+            radius: 2.0
+        }
+    ),
+    ability!(
+        "mind_flay",
+        15407,
+        Strike {
+            damage: 13.0,
+            cooldown: 1.1,
+            range: 20.0,
+            effect: Effect::Slow(0.5, 1.5),
+            mark: 15407
+        }
+    ),
+    ability!(
+        "stormstrike",
+        17364,
+        Melee {
+            damage: 32.0,
+            cooldown: 2.2,
+            range: 6.0,
+            count: 2
+        }
+    ),
+    ability!(
+        "shred",
+        5221,
+        Melee {
+            damage: 24.0,
+            cooldown: 1.1,
+            range: 5.0,
+            dot: 3.0,
+            duration: 4.0
+        }
+    ),
 ];
 
 pub(crate) fn ability(key: &str) -> &'static AbilityDef {
@@ -1010,7 +1093,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "fireball",
-        name: "Pyroblast",
+        name: "Hot Streak",
         text: "Swells into a Pyroblast that bursts wide and leaves the ground ablaze.",
         mechanics: &[
             M::new(hit("fireball"), nova(School::Fire, 4.5, 10.0, 1.5)).visual(2136),
@@ -1094,7 +1177,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "fire_blast",
-        name: "Combustion",
+        name: "Inferno Blast",
         text: "Each blast erupts in a ring of fire; a critical blast readies all your spells.",
         mechanics: &[
             M::new(hit("fire_blast"), nova(School::Fire, 5.0, 12.0, 2.0)).visual(8349),
@@ -1257,7 +1340,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "retaliation",
-        name: "Last Stand",
+        name: "Die by the Sword",
         text: "Every 90 sec, a killing blow leaves you standing; each use raises a shield.",
         mechanics: &[
             M::new(
@@ -1283,7 +1366,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     // --- Rogue ---
     LegendaryDef {
         ability: "sinister_strike",
-        name: "Hemorrhage",
+        name: "Crimson Edge",
         text: "Every strike opens a bleeding wound, and critical strikes swing again.",
         mechanics: &[
             M::new(hit("sinister_strike"), dot(School::Physical, 5.0, 6.0)).visual(16511),
@@ -1413,7 +1496,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "holy_fire",
-        name: "Searing Light",
+        name: "Sacred Flame",
         text: "Sets the ground ablaze with holy fire where it strikes.",
         mechanics: &[
             M::new(hit("holy_fire"), ground(School::Holy, 4.0, 7.0, 4.0))
@@ -1529,7 +1612,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "immolate",
-        name: "Conflagrate",
+        name: "Chaos Bolt",
         text: "Leaves the ground burning, and critical hits detonate in a fiery blast.",
         mechanics: &[
             M::new(hit("immolate"), ground(School::Fire, 3.5, 6.0, 4.0))
@@ -1612,7 +1695,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "multi_shot",
-        name: "Volley",
+        name: "Chimera Shot",
         text: "Arcane arrows, and every few seconds a volley rains on the thickest pack.",
         mechanics: &[
             M::new(cast("multi_shot"), ground(School::Arcane, 6.0, 8.0, 3.0))
@@ -1657,7 +1740,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "concussive_shot",
-        name: "Scatter Shot",
+        name: "Binding Shot",
         text: "Ricochets through two more enemies, and may daze its victim.",
         mechanics: &[
             M::new(
@@ -2045,7 +2128,7 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
     },
     LegendaryDef {
         ability: "entangling_roots",
-        name: "Nature's Grasp",
+        name: "Earthen Grasp",
         text: "Roots spread to the two beside each victim and crush all they hold.",
         mechanics: &[
             M::new(hit("entangling_roots"), cc(CcKind::Root, 3.0))
@@ -2106,6 +2189,153 @@ pub(crate) static LEGENDARIES: &[LegendaryDef] = &[
             .cooldown(45.0),
         ],
         visual_spell: 740,
+    },
+    // --- Spec signatures ---
+    LegendaryDef {
+        ability: "bloodthirst",
+        name: "Rampage",
+        text: "Critical strikes swing again, and every kill drives you on to more damage.",
+        mechanics: &[
+            M::new(crit("bloodthirst"), Mech::Echo { extra_casts: 1 }).cooldown(0.5),
+            M::new(
+                kill("bloodthirst"),
+                Mech::Burst {
+                    duration: 6.0,
+                    bonuses: &[Bonus::new(StatKey::Damage, 0.15)],
+                },
+            )
+            .visual(23881)
+            .cooldown(1.0),
+        ],
+        visual_spell: 23881,
+    },
+    LegendaryDef {
+        ability: "shield_slam",
+        name: "Devastate",
+        text: "Each slam splits into two more and raises a shield that soaks the blows.",
+        mechanics: &[
+            M::new(
+                hit("shield_slam"),
+                Mech::Split {
+                    count: 2,
+                    spread: 6.0,
+                },
+            )
+            .visual(23922),
+            M::new(
+                cast("shield_slam"),
+                Mech::Shield {
+                    amount: 20.0,
+                    duration: 6.0,
+                },
+            )
+            .visual(23922)
+            .cooldown(6.0),
+        ],
+        visual_spell: 23922,
+    },
+    LegendaryDef {
+        ability: "crusader_strike",
+        name: "Divine Storm",
+        text: "Each strike leaps on to two more foes and heals you as it lands.",
+        mechanics: &[
+            M::new(
+                hit("crusader_strike"),
+                Mech::Chain {
+                    jumps: 2,
+                    falloff: 0.8,
+                },
+            )
+            .visual(2537),
+            M::new(
+                cast("crusader_strike"),
+                Mech::HealPulse {
+                    radius: 2.0,
+                    amount: 5.0,
+                },
+            )
+            .at(Aim::Hero)
+            .visual(2537)
+            .cooldown(1.0),
+        ],
+        visual_spell: 2537,
+    },
+    LegendaryDef {
+        ability: "backstab",
+        name: "Mutilate",
+        text: "Every stab poisons its victim, and critical stabs strike twice.",
+        mechanics: &[
+            M::new(hit("backstab"), dot(School::Nature, 5.0, 6.0)).visual(53),
+            M::new(crit("backstab"), Mech::Echo { extra_casts: 1 }).cooldown(0.5),
+        ],
+        visual_spell: 53,
+    },
+    LegendaryDef {
+        ability: "ambush",
+        name: "Shadow Dance",
+        text: "Kills from the shadows make every ability ready at once.",
+        mechanics: &[
+            M::new(kill_by("ambush", 0.5), Mech::ResetCooldowns)
+                .visual(8676)
+                .cooldown(8.0),
+            M::new(
+                hit("ambush"),
+                Mech::Split {
+                    count: 2,
+                    spread: 6.0,
+                },
+            )
+            .visual(8676),
+        ],
+        visual_spell: 8676,
+    },
+    LegendaryDef {
+        ability: "mind_flay",
+        name: "Mind Sear",
+        text: "Flays two more minds at once, and its victims may flee in terror.",
+        mechanics: &[
+            M::new(
+                hit("mind_flay"),
+                Mech::Split {
+                    count: 2,
+                    spread: 8.0,
+                },
+            )
+            .visual(8092),
+            M::new(hit_by("mind_flay", 0.15), cc(CcKind::Fear, 1.5)).visual(5782),
+        ],
+        visual_spell: 15407,
+    },
+    LegendaryDef {
+        ability: "stormstrike",
+        name: "Maelstrom",
+        text: "Every strike calls lightning that leaps through three more foes.",
+        mechanics: &[M::new(
+            hit("stormstrike"),
+            Mech::Chain {
+                jumps: 3,
+                falloff: 0.7,
+            },
+        )
+        .visual(421)],
+        visual_spell: 17364,
+    },
+    LegendaryDef {
+        ability: "shred",
+        name: "Mangle",
+        text: "Shreds tear at two more foes and leave them bleeding.",
+        mechanics: &[
+            M::new(
+                hit("shred"),
+                Mech::Split {
+                    count: 2,
+                    spread: 6.0,
+                },
+            )
+            .visual(5221),
+            M::new(hit("shred"), dot(School::Physical, 6.0, 6.0)).visual(1822),
+        ],
+        visual_spell: 5221,
     },
 ];
 
@@ -2227,6 +2457,8 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "execute",
             "mortal_strike",
             "retaliation",
+            "bloodthirst",
+            "shield_slam",
         ],
         looks: &[
             1300, 1374, 1375, 1504, 1578, 1599, 1707, 1721, 1880, 2096, 2103, 2113, 2196, 2198,
@@ -2251,6 +2483,7 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "hammer_of_justice",
             "divine_shield",
             "judgement",
+            "crusader_strike",
         ],
         looks: &[
             1299, 1499, 1622, 3087, 3088, 3089, 3284, 3289, 3346, 3393, 7356,
@@ -2294,6 +2527,8 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "rupture",
             "gouge",
             "kidney_shot",
+            "backstab",
+            "ambush",
         ],
         looks: &[
             1297, 1327, 1328, 1507, 1580, 1603, 1704, 1725, 1886, 2231, 2243, 2252, 2631, 2639,
@@ -2316,6 +2551,7 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "holy_nova",
             "psychic_scream",
             "power_word_shield",
+            "mind_flay",
         ],
         looks: &[
             1295, 1495, 1579, 1602, 1708, 1733, 1897, 2137, 2138, 2139, 2200, 2201, 2202, 2618,
@@ -2340,6 +2576,7 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "searing_totem",
             "magma_totem",
             "lightning_shield",
+            "stormstrike",
         ],
         looks: &[
             1360, 1878, 2082, 2102, 2123, 3746, 3816, 4231, 4552, 10180, 13341,
@@ -2352,10 +2589,10 @@ pub(crate) static CLASSES: &[ClassDef] = &[
         name: "Mage",
         color: 0x69CCF0,
         power: 0,
-        start: "frostbolt",
+        start: "fireball",
         pool: &[
-            "frostbolt",
             "fireball",
+            "frostbolt",
             "arcane_missiles",
             "frost_nova",
             "arcane_explosion",
@@ -2413,6 +2650,7 @@ pub(crate) static CLASSES: &[ClassDef] = &[
             "entangling_roots",
             "thorns",
             "rejuvenation",
+            "shred",
         ],
         looks: &[
             1706, 1732, 2106, 2115, 2121, 2250, 2255, 2261, 3300, 3301, 3302, 3819, 3820, 7357,
