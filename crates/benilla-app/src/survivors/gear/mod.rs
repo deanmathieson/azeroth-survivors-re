@@ -41,7 +41,7 @@ pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, Hero
 pub(super) use loot::{GroupDrops, WonLoot};
 pub(super) use outfit::{wear, Dresser};
 pub(super) use save::GearSave;
-pub(super) use store::class_gear;
+pub(super) use store::{class_gear, GearRead};
 pub(super) use ui::{GearAction, GearView, ItemIcon};
 pub(super) use view::{
     boss_rows, clock, percent, progress, rarity_label, sources, summed, zone_rows, zones_dropping,
