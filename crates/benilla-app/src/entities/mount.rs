@@ -17,9 +17,14 @@ use bevy::prelude::*;
 use crate::net::{NetEntity, ObjectStore};
 use benilla_world::rig_anim::RigPose;
 
-/// The ItemDisplayInfo id of a cosmetic hat requested for this mount child.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MountHat(pub(crate) u32);
+/// A cosmetic hat requested for this mount child: its ItemDisplayInfo id, and a nudge from the
+/// generic head seat ([`mount_hat_seat`]) in the mount model's Bevy space, for a head whose crown
+/// sits off the common lift.
+#[derive(Component, Clone, Copy, PartialEq)]
+pub(crate) struct MountHat {
+    pub(crate) display: u32,
+    pub(crate) nudge: Vec3,
+}
 
 /// The hat that the mount's ordinary equipment path has applied.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -30,8 +35,10 @@ type MountHatQuery<'w, 's> = Query<
     's,
     (
         Entity,
+        &'static NetEntity,
         Option<&'static MountHat>,
         Option<&'static AppliedMountHat>,
+        Option<&'static mut super::BoneAttach>,
     ),
     With<MountBody>,
 >;
@@ -347,19 +354,91 @@ pub(super) fn reseat_mounts(
     }
 }
 
-/// Feed a mount hat through the normal held-item attachment path. A missing model or attachment
-/// is already a no-op there, which keeps unusual mount rigs harmless.
+/// A mount hat's seat above the head bone's pivot, in the mount model's own units (Bevy space:
+/// up, and a little forward, -Z): the pivot is the poll, the joint behind the skull, and a helm's
+/// origin, the human helm point, sits near its crown with the brim hanging below it.
+const HAT_LIFT: Vec3 = Vec3::new(0.0, 0.5, -0.05);
+
+/// From the Breath point (17), on the muzzle, back up under the crown, for a model with no Head
+/// key bone; [`HAT_LIFT`] goes on top. Of the catalog mounts only the Stormpike Battle Charger, a
+/// ram whose muzzle hangs well below its poll, takes this path; tuned on it in game.
+const BREATH_TO_POLL: Vec3 = Vec3::new(0.0, 0.9, 0.1);
+
+/// A mount hat's size against the human head it was modelled for. A riding model is drawn at its
+/// mount scale, so its head runs two to three helm widths: a little oversized reads as a hat on
+/// purpose, not a stray prop.
+pub(crate) const HAT_SCALE: f32 = 2.0;
+
+/// Where a mount hat sits, `(bone, offset from its pivot)` in the model's Bevy space: an authored
+/// helm point (11) when a model has one, which no 1.12 riding model does; else just above the
+/// Head key bone (6); else above the Breath point (17), on the muzzle's bone; else the Head
+/// attachment (20). `None` when a model has none of them.
+pub(crate) fn mount_hat_seat(
+    head_bone: Option<u16>,
+    attachment: impl Fn(u16) -> Option<(u16, Vec3)>,
+) -> Option<(u16, Vec3)> {
+    const HELM: u16 = super::equipment::attach_id::HELM;
+    const BREATH: u16 = 17;
+    const HEAD: u16 = 20;
+    attachment(HELM)
+        .or_else(|| head_bone.map(|bone| (bone, HAT_LIFT)))
+        .or_else(|| {
+            attachment(BREATH).map(|(bone, offset)| (bone, offset + BREATH_TO_POLL + HAT_LIFT))
+        })
+        .or_else(|| attachment(HEAD))
+}
+
+/// Feed a mount hat through the normal held-item attachment path, seated at
+/// [`super::equipment::attach_id::MOUNT_HAT`], which this adds to the mount's [`super::BoneAttach`]
+/// once its model is built. A mount with no seat stays bare.
 pub(super) fn resolve_mount_hats(
     mut commands: Commands,
-    mounts: MountHatQuery,
+    mut mounts: MountHatQuery,
     displays: Option<ResMut<super::equipment::ItemDisplays>>,
+    creatures: Option<Res<super::Creatures>>,
     asset_server: Res<AssetServer>,
 ) {
     let Some(mut displays) = displays else {
         return;
     };
-    for (entity, hat, applied) in &mounts {
-        let want = hat.map(|hat| hat.0);
+    for (entity, net, hat, applied, bones) in &mut mounts {
+        let want = hat.map(|hat| hat.display);
+        // The seat first, re-added whenever the mount's attachment table is rebuilt without it:
+        // the attach path latches a slot whose point is missing, so the hat waits for its seat.
+        if want.is_some() {
+            let Some(mut bones) = bones else {
+                continue; // the mount model is still building
+            };
+            // Read before any write: a `Mut` borrowed for `entry` would mark the table changed
+            // on every frame.
+            let seated = bones
+                .points
+                .contains_key(&super::equipment::attach_id::MOUNT_HAT);
+            if !seated {
+                let seat = net
+                    .display_id
+                    .and_then(|d| creatures.as_deref()?.models.get(&d))
+                    .and_then(|dm| {
+                        mount_hat_seat(dm.skeleton.head_bone, |id| {
+                            dm.attachments
+                                .iter()
+                                .find(|a| a.id == id)
+                                .map(|a| (a.bone, a.offset))
+                        })
+                    });
+                let Some((bone, offset)) = seat else {
+                    continue; // no head to wear it: the mount stays bare
+                };
+                let seat = (bone, offset + hat.map_or(Vec3::ZERO, |hat| hat.nudge));
+                debug!(
+                    "mount hat seat: mount {entity} display {:?} → bone {} offset {}",
+                    net.display_id, seat.0, seat.1
+                );
+                bones
+                    .points
+                    .insert(super::equipment::attach_id::MOUNT_HAT, seat);
+            }
+        }
         if applied.is_some_and(|applied| applied.0 == want) {
             continue;
         }
@@ -375,6 +454,33 @@ pub(super) fn resolve_mount_hats(
             super::equipment::HeldItems::mount_hat(want),
             AppliedMountHat(want),
         ));
+    }
+}
+
+/// Size each attached mount hat by [`HAT_SCALE`]: its root's transform for a static mesh, and the
+/// rider placement for a skinned one, which composes from the mount's rig, not the root.
+pub(super) fn size_mount_hats(
+    mut commands: Commands,
+    mounts: Query<&super::equipment::HeldAttached, (With<MountBody>, With<MountHat>)>,
+    mut roots: Query<(
+        &mut Transform,
+        Option<&benilla_world::rig_rider::RiderScale>,
+    )>,
+) {
+    let want = benilla_world::rig_rider::RiderScale(HAT_SCALE);
+    for attached in &mounts {
+        let Some(root) = attached.spawned_slots()[super::equipment::HAT_SLOT] else {
+            continue;
+        };
+        let Ok((mut tf, scale)) = roots.get_mut(root) else {
+            continue;
+        };
+        if tf.scale != Vec3::splat(HAT_SCALE) {
+            tf.scale = Vec3::splat(HAT_SCALE);
+        }
+        if scale != Some(&want) {
+            commands.entity(root).try_insert(want);
+        }
     }
 }
 

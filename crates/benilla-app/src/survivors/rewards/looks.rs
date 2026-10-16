@@ -177,15 +177,15 @@ pub(in crate::survivors) static EARNED_LOOKS: &[Look] = &[
     // `Creature\Parrot\Parrot.mdx`, display scale 0.25.
     look("senegal", "Senegal", 6190, 0.45, Unlock::Faire),
     look("cockatiel", "Cockatiel", 6191, 0.45, Unlock::Faire),
-    // `Creature\Owl\Owl.mdx`.
+    // `Creature\Owl\Owl.mdx`, display scale 0.25.
     look(
         "great_horned_owl",
         "Great Horned Owl",
         4615,
-        1.8,
+        0.45,
         Unlock::Faire,
     ),
-    look("hawk_owl", "Hawk Owl", 6300, 1.8, Unlock::Faire),
+    look("hawk_owl", "Hawk Owl", 6300, 0.45, Unlock::Faire),
     // `Creature\Frog\Frog.mdx`, `FrogGreen`.
     look("tree_frog", "Tree Frog", 6297, 1.8, Unlock::Faire),
     // `Creature\snake\snake.mdx`, red.
@@ -199,24 +199,24 @@ pub(in crate::survivors) static EARNED_LOOKS: &[Look] = &[
         Unlock::Faire,
     ),
     look("dark_whelpling", "Dark Whelpling", 6288, 0.9, Unlock::Faire),
-    // `Creature\PetBombling\PetBombling.mdx`, display scale 0.5.
-    look("pet_bombling", "Pet Bombling", 8909, 0.9, Unlock::Faire),
-    // `Creature\PetBombling\PetBombling.mdx`, smoky.
-    look("lil_smoky", "Lil' Smoky", 8910, 0.9, Unlock::Faire),
-    // `Creature\Spider\Spider.mdx`.
+    // `Creature\GnomeSpidertank\GnomeBomBot.mdx`, display scale 0.15.
+    look("pet_bombling", "Pet Bombling", 8909, 0.27, Unlock::Faire),
+    // `Creature\GnomeSpidertank\GnomeBot.mdx`, display scale 0.15.
+    look("lil_smoky", "Lil' Smoky", 8910, 0.27, Unlock::Faire),
+    // `Creature\Tarantula\Tarantula.mdx`, display scale 0.15.
     look(
         "smolderweb_hatchling",
         "Smolderweb Hatchling",
         9934,
-        1.8,
+        0.27,
         Unlock::Faire,
     ),
-    // `Creature\Ooze\Ooze.mdx`.
+    // `Creature\Slime\SlimeLesser.mdx`, display scale 0.25.
     look(
         "disgusting_oozeling",
         "Disgusting Oozeling",
         15436,
-        1.8,
+        0.45,
         Unlock::Faire,
     ),
 ];
@@ -483,5 +483,36 @@ mod tests {
 "
             )
         );
+    }
+
+    /// Every look stands companion-sized beside the hero: its scale is about 1.8 times its
+    /// display's own, as [`LOOKS`] says, and the model's Stand box, scaled, stays under a hero's
+    /// height. A look sized as if its display were 1.0 renders mount-sized.
+    #[test]
+    fn every_look_renders_companion_sized() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        // A human hero stands about two yards; a companion reaches no higher than that.
+        const MAX_HEIGHT: f32 = 2.5;
+        let mut wrong = Vec::new();
+        for look in all_looks() {
+            let display = catalog.display_scale(look.display).expect("display row");
+            let ratio = look.scale / display;
+            if !(1.5..=2.5).contains(&ratio) {
+                wrong.push(format!(
+                    "{}: scale {} is {ratio:.2}x its display's {display}",
+                    look.key, look.scale
+                ));
+            }
+            let model = catalog.model(look.display).expect("model row");
+            let bounds = benilla_formats::load_m2_bounds(&mut chain, &model.model_path)
+                .expect("model bounds");
+            let height = bounds.stand_box_z * look.scale;
+            if !(0.2..=MAX_HEIGHT).contains(&height) {
+                wrong.push(format!("{}: stands {height:.2} yd", look.key));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }

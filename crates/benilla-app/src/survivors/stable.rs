@@ -47,6 +47,17 @@ pub(in crate::survivors) fn mount_display(key: &str) -> Option<u32> {
     })
 }
 
+/// Where a mount's head wants its hat off the engine's common seat, in the riding model's own
+/// units (Bevy space, +Y up, -Z forward), tuned in game: the kodo's crown stands far above and
+/// ahead of its head bone, the ram's poll is already the crown.
+fn hat_nudge(key: Option<&str>) -> Vec3 {
+    match key {
+        Some("gray_kodo") => Vec3::new(0.0, 0.45, -0.3),
+        Some("brown_ram") => Vec3::new(0.0, -0.25, 0.0),
+        _ => Vec3::ZERO,
+    }
+}
+
 /// The hat's real `ItemDisplayInfo` model, resolved through its client icon.
 fn hat_display(key: &str, displays: &crate::entities::ItemDisplays) -> Option<u32> {
     prizes(Kind::MountHat)
@@ -146,7 +157,10 @@ fn apply_mount_field(
         if let Some(mount) = mount {
             let mut child = commands.entity(mount.0);
             if let Some(hat) = hat {
-                child.insert(crate::entities::mount::MountHat(hat));
+                child.insert(crate::entities::mount::MountHat {
+                    display: hat,
+                    nudge: hat_nudge(profile.stable.mount.as_deref()),
+                });
             } else {
                 child.remove::<crate::entities::mount::MountHat>();
             }
@@ -251,5 +265,74 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "no ItemDisplayInfo model: {missing:?}");
+    }
+
+    /// Every catalog mount wears a hat: each hat's human helm file is in the client, and each
+    /// riding model, none of which authors the helm point, resolves a head seat forward of its
+    /// saddle, where the hat hangs at a real size.
+    #[test]
+    fn every_catalog_mount_seats_a_hat() {
+        use crate::entities::mount::{mount_hat_seat, HAT_SCALE};
+        use benilla_assets::coords::wow_to_bevy;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let items = benilla_formats::load_item_display_catalog(&mut chain).expect("items");
+        let displays = crate::entities::ItemDisplays::icons_for_tests(items);
+        for hat in prizes(Kind::MountHat) {
+            let display = hat_display(&hat.key, &displays).expect("hat display");
+            let model = displays
+                .catalog
+                .get(display)
+                .and_then(|d| d.model[0].clone());
+            let file = format!(
+                "Item\\ObjectComponents\\Head\\{}",
+                crate::entities::helm_file(&model.expect("helm model"), 1, 0)
+            );
+            assert!(chain.contains(&file), "{}: no {file}", hat.name);
+        }
+        for prize in prizes(Kind::Mount) {
+            let display = mount_display(&prize.key).expect("catalog mount has a display");
+            let model = creatures.model(display).expect("creature model");
+            let path = benilla_assets::m2_url(&model.model_path).replace("mpq://", "");
+            let bytes = chain.read_file(&path).expect("riding model");
+            let skeleton = benilla_formats::parse_m2_skeleton(&bytes).expect("skeleton");
+            let attachments = benilla_formats::parse_m2_attachments(&bytes).expect("attachments");
+            let pivots: Vec<Vec3> = skeleton
+                .bones
+                .iter()
+                .map(|b| wow_to_bevy(b.pivot))
+                .collect();
+            let head = skeleton
+                .bones
+                .iter()
+                .position(|b| b.key_bone == 6)
+                .map(|b| b as u16);
+            let point = |id: u16| {
+                attachments.iter().find(|a| a.id == id).map(|a| {
+                    let pivot = pivots[a.bone as usize];
+                    (a.bone, wow_to_bevy(a.position) - pivot)
+                })
+            };
+            let (bone, offset) = mount_hat_seat(head, point)
+                .unwrap_or_else(|| panic!("{} ({path}) has no hat seat", prize.name));
+            let offset = offset + hat_nudge(Some(&prize.key));
+            let hat = Transform::from_translation(offset).with_scale(Vec3::splat(HAT_SCALE));
+            let at = pivots[bone as usize] + hat.translation;
+            let (saddle_bone, saddle) = point(0).expect("a saddle");
+            let saddle = pivots[saddle_bone as usize] + saddle;
+            assert!(
+                at.is_finite() && at != Vec3::ZERO && hat.scale.min_element() > 0.0,
+                "{}: hat at {at:?}",
+                prize.name
+            );
+            // Bevy's forward is -Z: the head leads the saddle.
+            assert!(
+                at.z < saddle.z,
+                "{} ({path}): hat {at:?} is not ahead of the saddle {saddle:?}",
+                prize.name
+            );
+        }
     }
 }

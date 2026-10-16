@@ -145,14 +145,19 @@ fn pick_path() -> Option<std::path::PathBuf> {
 }
 
 fn save_pick(sel: &Selection) {
-    let (Some(class), Some(&(_, race, sex))) = (sel.class, sel.look.and_then(|i| sel.looks.get(i)))
-    else {
+    let Some(text) = pick_text(sel) else {
         return;
     };
     if let Some(path) = pick_path() {
-        let _ =
-            crate::local_state::write_atomic(&path, &format!("{class} {race} {sex} {}", sel.map));
+        let _ = crate::local_state::write_atomic(&path, &text);
     }
+}
+
+/// The pick as the file holds it, `class race sex map`; `None` before a class and look.
+fn pick_text(sel: &Selection) -> Option<String> {
+    let class = sel.class?;
+    let &(_, race, sex) = sel.look.and_then(|i| sel.looks.get(i))?;
+    Some(format!("{class} {race} {sex} {}", sel.map))
 }
 
 /// Restore the saved pick once the creature data can resolve its looks; a stale or missing file
@@ -176,13 +181,19 @@ pub(super) fn restore_pick(
     zones::open_pick(&mut selection, &unlocks);
 }
 
-/// The saved `class race sex map`, as far as it still resolves.
+/// The saved `class race sex map`, as far as it still resolves. A file that is not four numbers
+/// (a hand edit, a byte-order mark) restores nothing rather than shifting the fields. A look the
+/// class no longer offers keeps the race in the other sex, as a class click does.
 fn apply_pick(text: &str, creatures: &crate::entities::Creatures, selection: &mut Selection) {
-    let v: Vec<usize> = text
+    let fields: Option<Vec<usize>> = text
+        .trim_start_matches('\u{feff}')
         .split_whitespace()
-        .filter_map(|t| t.parse().ok())
+        .map(|t| t.parse().ok())
         .collect();
-    let [class, race, sex, map] = v[..] else {
+    let Some(&[class, race, sex, map]) = fields.as_deref() else {
+        return;
+    };
+    let (Ok(race), Ok(sex)) = (u8::try_from(race), u8::try_from(sex)) else {
         return;
     };
     if map < data::MAPS.len() {
@@ -192,7 +203,12 @@ fn apply_pick(text: &str, creatures: &crate::entities::Creatures, selection: &mu
     }
     if class < data::CLASSES.len() {
         let all = all_looks(creatures);
-        if let Some(l) = find(&all[class], Some(race as u8), Some(sex as u8)) {
+        let looks = &all[class];
+        let look = find(looks, Some(race), Some(sex))
+            .or_else(|| find(looks, Some(race), None))
+            .or_else(|| find(looks, None, Some(sex)))
+            .or_else(|| find(looks, None, None));
+        if let Some(l) = look {
             set(selection, &all, class, l);
         }
     }
@@ -1163,6 +1179,113 @@ pub(super) fn refresh_race_card(
         };
         if text.0 != want {
             text.0 = want;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The body directory each race's looks must come from, by `ChrRaces` id - 1.
+    const RACE_DIRS: [&str; 8] = [
+        "human", "orc", "dwarf", "nightelf", "scourge", "tauren", "gnome", "troll",
+    ];
+
+    /// The client's creature displays, raw and as the game holds them; `None` without the data.
+    fn client_creatures() -> Option<(benilla_formats::CreatureCatalog, crate::entities::Creatures)>
+    {
+        let data = benilla_formats::wow_data()?;
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let raw = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let held = crate::entities::Creatures::from_catalog(
+            benilla_formats::load_creature_catalog(&mut chain).expect("creatures"),
+        );
+        Some((raw, held))
+    }
+
+    /// Every class × race × sex the menu offers saves and restores to the same look, and that
+    /// look's body is the race and sex it claims, so a restored Troll never wears a Tauren.
+    #[test]
+    fn every_offered_pick_round_trips_through_the_file() {
+        let Some((catalog, creatures)) = client_creatures() else {
+            eprintln!("skipping: no WoW data");
+            return;
+        };
+        let all = all_looks(&creatures);
+        let mut wrong = Vec::new();
+        for (class, looks) in all.iter().enumerate() {
+            assert!(
+                !looks.is_empty(),
+                "{} has no look",
+                data::CLASSES[class].name
+            );
+            for (look, &(display, race, sex)) in looks.iter().enumerate() {
+                let body = catalog
+                    .model(display)
+                    .map(|m| m.model_path.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let want = format!(
+                    "character\\{}\\{}\\",
+                    RACE_DIRS[race as usize - 1],
+                    if sex == 1 { "female" } else { "male" }
+                );
+                if !body.starts_with(&want) {
+                    wrong.push(format!("display {display} ({race}, {sex}) is {body}"));
+                }
+                for map in [0, data::MAPS.len() - 1] {
+                    let mut sel = Selection::default();
+                    set(&mut sel, &all, class, look);
+                    sel.map = map;
+                    let text = pick_text(&sel).expect("a full pick");
+                    let mut back = Selection::default();
+                    apply_pick(&text, &creatures, &mut back);
+                    let got = back.look.and_then(|l| back.looks.get(l)).copied();
+                    if back.class != Some(class)
+                        || got != Some((display, race, sex))
+                        || back.map != map
+                    {
+                        wrong.push(format!("{text:?} restored {:?} {got:?}", back.class));
+                    }
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A pick whose exact look is gone keeps its class, and its race where the class has it; a
+    /// file that is not four numbers restores nothing.
+    #[test]
+    fn a_stale_or_garbled_pick_keeps_what_it_can() {
+        let Some((_, creatures)) = client_creatures() else {
+            eprintln!("skipping: no WoW data");
+            return;
+        };
+        let all = all_looks(&creatures);
+        for (class, looks) in all.iter().enumerate() {
+            for race in 1..=8u8 {
+                for sex in 0..=1u8 {
+                    let mut back = Selection::default();
+                    apply_pick(&format!("{class} {race} {sex} 0"), &creatures, &mut back);
+                    assert_eq!(back.class, Some(class), "{class} {race} {sex}");
+                    let (_, got_race, _) = back.looks[back.look.expect("a look")];
+                    if looks.iter().any(|&(_, r, _)| r == race) {
+                        assert_eq!(got_race, race, "class {class} race {race} sex {sex}");
+                    }
+                }
+            }
+        }
+        let mut back = Selection::default();
+        apply_pick("\u{feff}0 8 0 1", &creatures, &mut back);
+        assert_eq!(
+            (back.class, back.map),
+            (Some(0), 1),
+            "a byte-order mark is not a field"
+        );
+        for junk in ["0 8 x 0 1", "0 8 0", "", "0 8 0 1 2", "0 999 0 1"] {
+            let mut back = Selection::default();
+            apply_pick(junk, &creatures, &mut back);
+            assert_eq!(back.class, None, "{junk:?}");
         }
     }
 }
