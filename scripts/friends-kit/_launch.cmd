@@ -1,9 +1,24 @@
-@echo off
-rem Shared by Play.bat, Host.bat and Join.bat. Finds the WoW 1.12.1 Data folder, keeps the
-rem profile beside this kit, then starts the game. Not meant to be run on its own.
-setlocal EnableExtensions DisableDelayedExpansion
+@if /i "%~1"=="--kit" goto :running_copy
+@for %%# in ("%TEMP%\azs-launch-%RANDOM%%RANDOM%.cmd") do @copy /y "%~f0" "%%~f#" >nul && @"%%~f#" --kit "%~dp0" %*
+@echo Could not make a temporary launcher. Please check that your TEMP folder is writable.
+@exit /b 1
 
-set "KIT=%~dp0"
+:running_copy
+@echo off
+rem Shared by Play.bat, Host.bat and Join.bat. This temporary copy owns the running command
+rem file while the kit copy may be updated. It receives the kit path explicitly.
+setlocal EnableExtensions DisableDelayedExpansion
+set "KIT=%~2"
+shift
+shift
+
+rem Best-effort housekeeping. Never remove this currently-running temporary copy.
+set "LAUNCH_COPY=%~f0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$self = [IO.Path]::GetFullPath($env:LAUNCH_COPY); Get-ChildItem -LiteralPath $env:TEMP -Filter 'azs-launch-*.cmd' -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $self -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue" >nul 2>nul
+
+if /i "%~1"=="play" shift
+if /i "%~1"=="host" shift
+if /i "%~1"=="join" shift
 set "EXE=%KIT%warcraft-survivors.exe"
 set "PATHFILE=%KIT%wow-data-path.txt"
 

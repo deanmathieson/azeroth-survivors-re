@@ -15,4 +15,4 @@ echo.
 echo Friends join you at your Tailscale IP, for example 100.x.y.z:%WOW_SURVIVORS_HOST%
 echo (open Tailscale from the tray and click your PC's IP to copy it).
 echo If Windows asks about the firewall, tick "Private networks" and Allow.
-call "%~dp0_launch.cmd"
+@"%~dp0_launch.cmd" host %*

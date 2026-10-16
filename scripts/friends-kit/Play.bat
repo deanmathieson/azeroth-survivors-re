@@ -3,4 +3,4 @@ rem Single player (you can still Host or Join from the Multiplayer button in the
 setlocal EnableExtensions
 set "WOW_SURVIVORS_HOST="
 set "WOW_SURVIVORS_JOIN="
-call "%~dp0_launch.cmd"
+@"%~dp0_launch.cmd" play %*

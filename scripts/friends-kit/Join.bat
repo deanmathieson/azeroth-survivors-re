@@ -25,4 +25,4 @@ set "WOW_SURVIVORS_JOIN=%WOW_SURVIVORS_JOIN:"=%"
 set "WOW_SURVIVORS_JOIN=%WOW_SURVIVORS_JOIN: =%"
 > "%HOSTFILE%" echo(%WOW_SURVIVORS_JOIN%
 
-call "%~dp0_launch.cmd"
+@"%~dp0_launch.cmd" join %*
