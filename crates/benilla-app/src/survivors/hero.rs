@@ -50,6 +50,8 @@ const ZOOM_TAU: f32 = 0.15;
 const RELOCK_TAU: f32 = 0.2;
 /// The lens's hard floor over the terrain beneath it (yards).
 const GROUND_CLEARANCE: f32 = 0.6;
+/// Radians the menu's turntable turns per pixel of a drag.
+const MENU_TURN: f32 = 0.01;
 /// How far over that floor the eased lift aims (yards), so a quick rise rarely meets the floor.
 const GROUND_CUSHION: f32 = 0.5;
 /// Lift ease (s) while the terrain pushes the lens up: quick.
@@ -469,7 +471,8 @@ pub(super) fn yaw_of(rotation: Quat) -> f32 {
     rotation.to_euler(EulerRot::YXZ).0
 }
 
-/// A slow orbit at the menu; in a run in the classic view, top-down. The view eases toward the
+/// A slow orbit at the menu, which a left-drag off the menu's frames turns by hand as the create
+/// screen's model does; in a run in the classic view, top-down. The view eases toward the
 /// hero and the zoom, and cuts straight to them when a run starts or ends, the hero is respawned,
 /// a loading screen covers a worldport, the view is swapped back to, or he is suddenly far away.
 /// WoW's view has its own camera ([`wowcam::wow_camera`]).
@@ -490,6 +493,11 @@ pub(super) fn place_camera(
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<LocalHero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
+    turn: (
+        Option<Res<ButtonInput<MouseButton>>>,
+        Option<Res<bevy::input::mouse::AccumulatedMouseMotion>>,
+        Query<&Interaction>,
+    ),
 ) {
     if view::wow_in_play(*phase.get(), view.mode, auto.is_some()) {
         wheel.clear();
@@ -512,7 +520,13 @@ pub(super) fn place_camera(
     }
     let menu = *phase.get() == Phase::Menu;
     if menu {
-        rig.orbit += dt * 0.2;
+        let (mouse, motion, ui) = turn;
+        let held = mouse.is_some_and(|m| m.pressed(MouseButton::Left))
+            && ui.iter().all(|i| *i == Interaction::None);
+        match motion.filter(|_| held) {
+            Some(motion) => rig.orbit -= motion.delta.x * MENU_TURN,
+            None => rig.orbit += dt * 0.2,
+        }
     }
     let cut = loading.is_some_and(|l| l.covering())
         || rig
@@ -655,6 +669,7 @@ pub(super) fn hero_vitals(
             &mut ObjectStore,
             &mut Marks,
             &mut HeroState,
+            Option<&super::talents::HeroSpec>,
         ),
         With<Hero>,
     >,
@@ -667,9 +682,9 @@ pub(super) fn hero_vitals(
         return;
     }
     // The whole party down: the deaths play out with the clock stopped, then the run is lost.
-    if party::all_down(heroes.iter().map(|(.., hero)| hero)) {
+    if party::all_down(heroes.iter().map(|(.., hero, _)| hero)) {
         let mut over = true;
-        for (.., mut hero) in &mut heroes {
+        for (.., mut hero, _) in &mut heroes {
             if let Some(t) = hero.dead_t.as_mut() {
                 *t += dt;
                 over &= *t > 3.0;
@@ -684,7 +699,7 @@ pub(super) fn hero_vitals(
     // A hero getting up or falling this frame holds victory off a frame, as it always has.
     let mut eventful = false;
     let mut standing = Vec::new();
-    for (entity, guid, htf, mut store, mut marks, mut hero) in &mut heroes {
+    for (entity, guid, htf, mut store, mut marks, mut hero, spec) in &mut heroes {
         // Fallen while others fight on: the death plays out.
         if let Some(t) = hero.dead_t.as_mut() {
             *t += dt;
@@ -726,11 +741,18 @@ pub(super) fn hero_vitals(
         if hero.passives.iter().any(|(p, _)| p.key == "renew") {
             shown.push(139);
         }
+<<<<<<< HEAD
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
+=======
+        // A spec's form: its stance, aura or shapeshift glow, held all run.
+        if let Some(spell) = spec.and_then(|s| s.form_aura()) {
+            shown.push(spell);
+        }
+>>>>>>> specs
         marks.set(&shown);
         marks.flush(entity, guid.0, &mut store, &mut fields);
 

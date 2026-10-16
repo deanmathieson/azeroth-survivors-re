@@ -14,9 +14,9 @@ use crate::glue::widgets::{glue_button, overlay, GlueBtnKind, GlueDisabled, Hili
 use crate::survivors::profile::Profile;
 use crate::survivors::talents::{
     check_learn, check_reset, check_unlearn, describe_rank, earned_points, is_headline,
-    locked_reasons, mechanic_description, saved, shade, unmet, why_text, xp_for_points, Allocation,
-    Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp, TalentFocus, TalentSave,
-    TalentShade, TalentSlot, Tree, Why, MAX_POINTS,
+    locked_reasons, mechanic_description, saved, shade, spec_lines, unmet, why_text, xp_for_points,
+    Allocation, Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp, TalentFocus,
+    TalentSave, TalentShade, TalentSlot, Tree, Why, MAX_POINTS,
 };
 
 /// `NORMAL_FONT_COLOR`, what a rank grants.
@@ -29,6 +29,8 @@ const TIP_RED: Color = Color::srgb(1.0, 0.1, 0.1);
 const PARCHMENT: Color = Color::srgb(0.9, 0.85, 0.7);
 /// A locked talent's frame and badge.
 const LOCKED: Color = Color::srgb(0.4, 0.4, 0.4);
+/// The 31-point capstone's spec frame, its "SPEC" banner and its spec lines: a deep gold.
+const SPEC_GOLD: Color = Color::srgb(1.0, 0.7, 0.05);
 /// A met and an unmet prerequisite's link.
 const LINK_ON: Color = Color::srgba(1.0, 0.82, 0.0, 0.9);
 const LINK_OFF: Color = Color::srgba(0.55, 0.55, 0.55, 0.7);
@@ -352,12 +354,18 @@ fn talent_button(g: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Ta
         },
         BackgroundColor(shade),
     ));
+    let spec = !spec_lines(t.id).is_empty();
     if view.chosen == Some(t.id) {
         button.insert(Outline::new(px(2.0), px(1.0), Color::WHITE));
+    } else if spec {
+        button.insert(Outline::new(px(3.0), px(1.0), SPEC_GOLD));
     } else if is_headline(t.id) {
         button.insert(Outline::new(px(2.0), px(1.0), TIP_GOLD));
     }
     button.with_children(|c| {
+        if spec {
+            spec_banner(c, ctx);
+        }
         c.spawn(icon(t.icon.as_deref(), Val::Percent(100.0)));
         if locked {
             c.spawn((
@@ -408,18 +416,55 @@ fn talent_button(g: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Ta
     });
 }
 
-/// A talent's hover text: its rank, what stands in its way, what it grants now and next, and
-/// what a click would do.
+/// The "SPEC" banner over a capstone's frame.
+fn spec_banner(c: &mut ChildSpawnerCommands, ctx: &TabCtx) {
+    let px = Val::Px;
+    c.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(-6.0),
+            right: px(-6.0),
+            top: px(-15.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+        Outline::new(px(1.0), px(0.0), SPEC_GOLD),
+    ))
+    .with_children(|b| {
+        b.spawn((
+            Text::new("SPEC"),
+            TextFont {
+                font: ctx.font.clone(),
+                font_size: 10.0,
+                ..default()
+            },
+            TextColor(SPEC_GOLD),
+            TextShadow {
+                offset: Vec2::splat(1.0),
+                color: Color::BLACK,
+            },
+        ));
+    });
+}
+
+/// A talent's hover text: its rank, what stands in its way, what it grants now and next, the
+/// spec a capstone makes, and what a click would do.
 fn talent_tip(view: &View, t: &Talent, rank: u8, unmet: &[String]) -> ArmoryTip {
     let mut lines = vec![(format!("Rank {rank}/{}", t.max_rank), Color::WHITE)];
     if rank == 0 {
         lines.extend(unmet.iter().map(|u| (u.clone(), TIP_RED)));
     }
     let mechanics = mechanic_description(t.id, rank.max(1));
+    let spec = spec_lines(t.id);
+    let is_spec = !spec.is_empty();
+    lines.extend(spec.into_iter().map(|line| (line, SPEC_GOLD)));
     if !mechanics.is_empty() {
         lines.extend(mechanics.into_iter().map(|line| (line, TIP_GOLD)));
     } else if t.effect().is_empty() {
-        lines.push(("No effect in this mode".into(), DIM));
+        if !is_spec {
+            lines.push(("No effect in this mode".into(), DIM));
+        }
     } else {
         lines.push((describe_rank(t, rank.max(1)), TIP_GOLD));
         if rank > 0 && rank < t.max_rank {
@@ -570,6 +615,13 @@ fn chosen(b: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Talent) {
     if rank < t.max_rank {
         text(b, ctx, "Next rank", 11.0, DIM);
         para(b, ctx, &effect(rank + 1), 12.0, TIP_GREEN);
+    }
+    let spec = spec_lines(t.id);
+    if !spec.is_empty() {
+        text(b, ctx, "SPEC", 11.0, SPEC_GOLD);
+        for line in spec {
+            para(b, ctx, &line, 12.0, SPEC_GOLD);
+        }
     }
 }
 

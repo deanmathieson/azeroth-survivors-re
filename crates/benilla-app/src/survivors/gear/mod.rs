@@ -35,8 +35,8 @@ pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
 use super::{enemies, hud, profile, treasure, Phase, Selection};
 pub(super) use looks::results_title;
-pub(super) use looks_ui::{hero_name, looks_panel, HeroNameText, HeroNames};
-pub(super) use outfit::Dresser;
+pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, HeroNames, LooksDice};
+pub(super) use outfit::{wear, Dresser};
 pub(super) use save::GearSave;
 pub(super) use store::class_gear;
 pub(super) use ui::{GearAction, GearView, ItemIcon};
@@ -51,6 +51,7 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<GearView>()
         .init_resource::<outfit::Wardrobe>()
         .init_resource::<looks_ui::NameEdit>()
+        .init_resource::<looks_ui::LooksDice>()
         .add_systems(Startup, shadow_for_auto)
         // The name box takes its keys before any other reader sees them.
         .add_systems(
@@ -62,7 +63,13 @@ pub(super) fn plugin(app: &mut App) {
             (
                 outfit::dress_bodies::<crate::entities::Creatures>,
                 looks_ui::add_menu_name,
-                (looks_ui::looks_clicks, looks_ui::refresh_looks).chain(),
+                (
+                    looks_ui::looks_clicks,
+                    looks_ui::remember_body,
+                    looks_ui::roll_dice,
+                    looks_ui::refresh_looks,
+                )
+                    .chain(),
             ),
         )
         .add_systems(

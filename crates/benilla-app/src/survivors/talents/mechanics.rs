@@ -12,6 +12,11 @@
 //!   their chance per rank ([`PerRank::Chance`]); one whose WoW proc listened to a school or a
 //!   spell listens to the class's abilities of it ([`Listen`]).
 //!
+//! - **Teachers.** A talent that is also a spell or passive the run offers is never a second,
+//!   separate effect under the same name ([`Teach`]): it teaches that spell, which only its
+//!   learners are offered and which they take at rank 2, or upgrades the passive to start at rank
+//!   2; a capstone whose name is its spec's summon is that summon ([`Teach::Spec`]).
+//!
 //! A talent here grants its mechanics instead of the stat bonus it had (`rules::bonuses` excludes
 //! its old `effects` row); plain stat talents keep theirs. Numbers are the mode's own, at run
 //! level 1: flat damage and healing grow with the run's level as every mechanic's does.
@@ -42,6 +47,20 @@ pub(super) enum Listen {
     To(&'static str, &'static [&'static str]),
 }
 
+/// What a talent that is also one of the run's spells or passives does instead of a mechanic of
+/// its own, so one name is one thing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) enum Teach {
+    /// The class spell of this key (in `data::ABILITIES`): offered only to heroes who learned the
+    /// talent, and taken at rank 2.
+    Spell(&'static str),
+    /// The passive of this key (in `data::PASSIVES`), offered to all: its learners take it at
+    /// rank 2.
+    Passive(&'static str),
+    /// The capstone's spec summon of the same name is its effect ([`super::spec`]).
+    Spec,
+}
+
 /// One talent's mechanics.
 pub(super) struct TalentMechanics {
     pub id: u32,
@@ -52,11 +71,33 @@ pub(super) struct TalentMechanics {
     pub per_rank: PerRank,
     pub listen: Listen,
     pub specs: &'static [M],
+    /// What it teaches in place of `specs`, which are then empty.
+    pub teaches: Option<Teach>,
 }
 
 /// `talent`'s mechanics, if the table has it.
 pub(super) fn entry(talent: u32) -> Option<&'static TalentMechanics> {
     MECHANICS.iter().find(|m| m.id == talent)
+}
+
+/// The talent that teaches spell or passive `key`, if one does.
+pub(super) fn teacher_of(key: &str) -> Option<&'static TalentMechanics> {
+    MECHANICS.iter().find(|m| match m.teaches {
+        Some(Teach::Spell(k) | Teach::Passive(k)) => k == key,
+        _ => false,
+    })
+}
+
+/// Every talent that teaches, for the audit.
+#[cfg(test)]
+pub(super) fn teachers() -> impl Iterator<Item = &'static TalentMechanics> {
+    MECHANICS.iter().filter(|m| m.teaches.is_some())
+}
+
+/// Every talent with mechanics, for the audit.
+#[cfg(test)]
+pub(super) fn all() -> &'static [TalentMechanics] {
+    MECHANICS
 }
 
 /// The three talent ids named by the tree's 10/20/30-point footer, if it is a class tree.
@@ -174,6 +215,22 @@ pub(super) fn describe(talent: u32, rank: u8) -> Vec<String> {
     let Some(entry) = entry(talent) else {
         return Vec::new();
     };
+    match entry.teaches {
+        Some(Teach::Spell(_)) => {
+            return vec![format!(
+                "Teaches {}: your runs offer it, and you take it at rank 2.",
+                entry.name
+            )];
+        }
+        Some(Teach::Passive(_)) => {
+            return vec![format!(
+                "Your runs' {} starts at rank 2 when you take it.",
+                entry.name
+            )];
+        }
+        Some(Teach::Spec) => return Vec::new(),
+        None => {}
+    }
     let label = match entry.listen {
         Listen::To(label, _) => Some(label),
         Listen::Own => None,
@@ -490,6 +547,7 @@ macro_rules! mechanic {
             per_rank: PerRank::Same,
             listen: Listen::Own,
             specs: &[M::new($trigger, $effect).visual($spell)],
+            teaches: None,
         }
     };
 }
@@ -504,6 +562,23 @@ macro_rules! proc_mechanic {
             per_rank: PerRank::Chance,
             listen: Listen::Own,
             specs: &[M::new($trigger, $effect).visual($spell)],
+            teaches: None,
+        }
+    };
+}
+
+/// A talent that is also a spell or passive of the run, or its spec's summon: it teaches that
+/// instead of a mechanic of its own ([`Teach`]).
+macro_rules! teaches {
+    ($id:literal, $name:literal, $teach:expr) => {
+        TalentMechanics {
+            id: $id,
+            name: $name,
+            headline: true,
+            per_rank: PerRank::Same,
+            listen: Listen::Own,
+            specs: &[],
+            teaches: Some($teach),
         }
     };
 }
@@ -576,22 +651,7 @@ static MECHANICS: &[TalentMechanics] = &[
             ]
         }
     ),
-    mechanic!(
-        32,
-        "Blast Wave",
-        11113,
-        Trigger::Periodic { every: 20.0 },
-        Mech::Nova {
-            school: School::Fire,
-            radius: 8.0,
-            damage: 28.0,
-            knockback: 5.0,
-            cc: Some(Cc {
-                kind: CcKind::Chill(0.5),
-                secs: 2.0
-            })
-        }
-    ),
+    teaches!(32, "Blast Wave", Teach::Spell("blast_wave")),
     mechanic!(
         36,
         "Combustion",
@@ -622,19 +682,7 @@ static MECHANICS: &[TalentMechanics] = &[
             duration: 20.0
         }
     ),
-    mechanic!(
-        133,
-        "Sweeping Strikes",
-        12292,
-        Trigger::OnHit {
-            of: Of::Any,
-            chance: 1.0
-        },
-        Mech::Chain {
-            jumps: 1,
-            falloff: 1.0
-        }
-    ),
+    teaches!(133, "Sweeping Strikes", Teach::Spell("sweeping_strikes")),
     mechanic!(
         153,
         "Last Stand",
@@ -652,19 +700,7 @@ static MECHANICS: &[TalentMechanics] = &[
         Trigger::Periodic { every: 60.0 },
         Mech::ResetCooldowns
     ),
-    mechanic!(
-        963,
-        "Shadowburn",
-        17877,
-        Trigger::OnHit {
-            of: Of::Any,
-            chance: 1.0
-        },
-        Mech::Execute {
-            threshold: 0.25,
-            mult: 3.0
-        }
-    ),
+    teaches!(963, "Shadowburn", Teach::Spell("shadowburn")),
     mechanic!(
         1561,
         "Spirit of Redemption",
@@ -764,16 +800,16 @@ static MECHANICS: &[TalentMechanics] = &[
     // The 27 trees' 10 / 20 / 30-point landmarks.  Keep this list in lock-step with
     // MILESTONES: the test below deliberately checks both the Talent and Spell DBC data.
     aura!(137, "Anger Management", 12296, StatKey::Regen, 1.0),
-    active!(135, "Mortal Strike", 12294, School::Physical),
+    teaches!(135, "Mortal Strike", Teach::Spell("mortal_strike")),
     active!(160, "Piercing Howl", 12323, School::Physical),
     aura!(165, "Death Wish", 12328, StatKey::Damage, 0.20),
-    active!(167, "Bloodthirst", 23881, School::Physical),
+    teaches!(167, "Bloodthirst", Teach::Spell("bloodthirst")),
     active!(152, "Concussion Blow", 12809, School::Physical),
-    active!(148, "Shield Slam", 23922, School::Physical),
-    active!(1435, "Consecration", 26573, School::Holy),
+    teaches!(148, "Shield Slam", Teach::Spell("shield_slam")),
+    teaches!(1435, "Consecration", Teach::Spell("consecration")),
     aura!(1433, "Divine Favor", 20216, StatKey::CritChance, 0.20),
-    active!(1502, "Holy Shock", 20473, School::Holy),
-    aura!(1442, "Blessing of Kings", 20217, StatKey::MaxHealth, 20.0),
+    teaches!(1502, "Holy Shock", Teach::Spell("holy_shock")),
+    teaches!(1442, "Blessing of Kings", Teach::Passive("kings")),
     aura!(1431, "Blessing of Sanctuary", 20911, StatKey::Armor, 0.15),
     active!(1430, "Holy Shield", 20925, School::Holy),
     active!(1481, "Seal of Command", 20375, School::Holy),
@@ -782,7 +818,7 @@ static MECHANICS: &[TalentMechanics] = &[
     aura!(1391, "Bestial Swiftness", 19596, StatKey::MoveSpeed, 0.15),
     active!(1387, "Intimidation", 19577, School::Physical),
     aura!(1386, "Bestial Wrath", 19574, StatKey::Damage, 0.25),
-    active!(1345, "Aimed Shot", 19434, School::Physical),
+    teaches!(1345, "Aimed Shot", Teach::Spell("aimed_shot")),
     active!(1353, "Scatter Shot", 19503, School::Physical),
     aura!(1361, "Trueshot Aura", 19506, StatKey::Damage, 0.15),
     aura!(1308, "Deterrence", 19263, StatKey::Armor, 0.20),
@@ -792,16 +828,16 @@ static MECHANICS: &[TalentMechanics] = &[
     aura!(280, "Cold Blood", 14177, StatKey::CritChance, 0.25),
     aura!(382, "Vigor", 14983, StatKey::Damage, 0.10),
     active!(301, "Riposte", 14251, School::Physical),
-    aura!(223, "Blade Flurry", 13877, StatKey::Targets, 1.0),
+    teaches!(223, "Blade Flurry", Teach::Spell("blade_flurry")),
     aura!(205, "Adrenaline Rush", 13750, StatKey::Cooldown, 0.20),
     active!(303, "Ghostly Strike", 14278, School::Physical),
     active!(381, "Premeditation", 14183, School::Physical),
     aura!(348, "Inner Focus", 14751, StatKey::CritChance, 0.15),
     aura!(351, "Divine Spirit", 14752, StatKey::Regen, 1.0),
     aura!(322, "Power Infusion", 10060, StatKey::Damage, 0.20),
-    active!(442, "Holy Nova", 15237, School::Holy),
-    active!(1637, "Lightwell", 724, School::Holy),
-    active!(501, "Mind Flay", 15407, School::Shadow),
+    teaches!(442, "Holy Nova", Teach::Spell("holy_nova")),
+    teaches!(1637, "Lightwell", Teach::Spec),
+    teaches!(501, "Mind Flay", Teach::Spell("mind_flay")),
     aura!(484, "Vampiric Embrace", 15286, StatKey::Lifesteal, 0.08),
     aura!(521, "Shadowform", 15473, StatKey::Damage, 0.15),
     aura!(574, "Elemental Focus", 16164, StatKey::CritChance, 0.12),
@@ -815,11 +851,11 @@ static MECHANICS: &[TalentMechanics] = &[
         0.12
     ),
     aura!(616, "Parry", 16268, StatKey::Armor, 0.10),
-    active!(901, "Stormstrike", 17364, School::Nature),
+    teaches!(901, "Stormstrike", Teach::Spell("stormstrike")),
     aura!(582, "Totemic Mastery", 16189, StatKey::Area, 0.15),
     aura!(591, "Nature's Swiftness", 16188, StatKey::Cooldown, 0.15),
     active!(590, "Mana Tide Totem", 16190, School::Nature),
-    active!(29, "Pyroblast", 11366, School::Fire),
+    teaches!(29, "Pyroblast", Teach::Spell("pyroblast")),
     mechanic!(
         69,
         "Cold Snap",
@@ -840,7 +876,7 @@ static MECHANICS: &[TalentMechanics] = &[
     active!(804, "Feral Charge", 16979, School::Physical),
     active!(1162, "Faerie Fire (Feral)", 16857, School::Nature),
     aura!(809, "Leader of the Pack", 17007, StatKey::CritChance, 0.12),
-    active!(827, "Insect Swarm", 5570, School::Nature),
+    teaches!(827, "Insect Swarm", Teach::Spell("insect_swarm")),
     aura!(831, "Nature's Swiftness", 17116, StatKey::Cooldown, 0.15),
 ];
 

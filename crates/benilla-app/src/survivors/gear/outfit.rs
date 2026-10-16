@@ -260,7 +260,11 @@ impl Dresser<'_> {
 /// Put display `id` on a standing hero: the descriptor's display field, which swaps a built body
 /// in place (`refresh_live_display`), and the entity's, which an unbuilt one is built from. True
 /// when it changed.
-pub(super) fn wear(id: u32, net: &mut Mut<NetEntity>, store: &mut Mut<ObjectStore>) -> bool {
+pub(in crate::survivors) fn wear(
+    id: u32,
+    net: &mut Mut<NetEntity>,
+    store: &mut Mut<ObjectStore>,
+) -> bool {
     if net.display_id == Some(id) {
         return false;
     }
