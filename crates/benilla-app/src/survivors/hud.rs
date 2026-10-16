@@ -263,6 +263,14 @@ pub(super) enum UiAction {
 #[derive(Resource, Default)]
 pub(super) struct Replay(pub(super) bool);
 
+/// The co-op game menu is an overlay: unlike the solo pause screen it never changes phase or
+/// stops the host's world. A second Leave action is the explicit confirmation.
+#[derive(Resource, Default)]
+pub(super) struct CoopMenu {
+    pub(super) open: bool,
+    pub(super) leaving: bool,
+}
+
 /// The colour a button returns to when not hovered.
 #[derive(Component)]
 pub(super) struct BaseColor(Color);
@@ -1397,6 +1405,8 @@ pub(super) fn buttons(
     mut exit: MessageWriter<AppExit>,
     phase: Res<State<Phase>>,
     mut replay: ResMut<Replay>,
+    coop: Option<Res<super::strip::CoopRun>>,
+    mut coop_menu: Option<ResMut<CoopMenu>>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
@@ -1409,6 +1419,14 @@ pub(super) fn buttons(
                     (UiAction::PlayAgain, Phase::GameOver) => {
                         replay.0 = true;
                         next.set(Phase::Menu);
+                    }
+                    (UiAction::MainMenu, Phase::Playing) if coop.is_some_and(|c| c.0) => {
+                        let menu = coop_menu.as_deref_mut().expect("co-op menu is initialized");
+                        if menu.leaving {
+                            next.set(Phase::Menu);
+                        } else {
+                            menu.leaving = true;
+                        }
                     }
                     (UiAction::MainMenu, Phase::Paused | Phase::GameOver) => next.set(Phase::Menu),
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
@@ -1431,6 +1449,8 @@ pub(super) fn keys(
     unlocks: Res<super::zones::Unlocks>,
     mut next: ResMut<NextState<Phase>>,
     mut replay: ResMut<Replay>,
+    coop: Option<Res<super::strip::CoopRun>>,
+    mut coop_menu: Option<ResMut<CoopMenu>>,
 ) {
     match phase.get() {
         Phase::Menu => {
@@ -1457,7 +1477,13 @@ pub(super) fn keys(
         }
         Phase::Playing => {
             if keys.just_pressed(KeyCode::Escape) {
-                next.set(Phase::Paused);
+                if coop.is_some_and(|c| c.0) {
+                    let menu = coop_menu.as_deref_mut().expect("co-op menu is initialized");
+                    menu.open = !menu.open;
+                    menu.leaving = false;
+                } else {
+                    next.set(Phase::Paused);
+                }
             } else if keys.just_pressed(super::charpanel::KEY) {
                 next.set(Phase::Character);
             }
@@ -2818,6 +2844,7 @@ pub(super) fn show_panels(
     )>,
     next: Res<NextState<Phase>>,
     strip: Option<Res<super::strip::HandStrip>>,
+    coop_menu: Option<Res<CoopMenu>>,
 ) {
     let p = *phase.get();
     // A run starting from the menu this frame: the screens hold until it is under way, so "Play
@@ -2858,7 +2885,10 @@ pub(super) fn show_panels(
         set(root, super::strip::hand_up(p, strip.as_deref()));
     }
     for root in &mut roots.p3() {
-        set(root, p == Phase::Paused);
+        set(
+            root,
+            p == Phase::Paused || coop_menu.as_ref().is_some_and(|menu| menu.open),
+        );
     }
     for root in &mut roots.p4() {
         set(root, p == Phase::GameOver);
@@ -3010,6 +3040,7 @@ mod tests {
             .init_resource::<Run>()
             .init_resource::<MetaBonuses>()
             .init_resource::<Replay>()
+            .init_resource::<CoopMenu>()
             .init_resource::<LastRunNews>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<abilities::PendingHits>()
@@ -3180,5 +3211,27 @@ mod tests {
         assert_eq!(phase(&app), Phase::Menu);
         assert_eq!(runs(&app), 2);
         assert_eq!(app.world().resource::<Run>().version, 0);
+    }
+
+    #[test]
+    fn escape_in_coop_opens_an_overlay_without_pausing_or_leaving() {
+        let mut app = results_app();
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Playing);
+        app.update();
+        app.world_mut()
+            .insert_resource(super::super::strip::CoopRun(true));
+        press(&mut app, KeyCode::Escape);
+        assert_eq!(phase(&app), Phase::Playing);
+        assert!(app.world().resource::<CoopMenu>().open);
+        assert!(!app.world().resource::<CoopMenu>().leaving);
+        // The first leave request is confirmation only.
+        click(&mut app, UiAction::MainMenu);
+        assert_eq!(phase(&app), Phase::Playing);
+        assert!(app.world().resource::<CoopMenu>().leaving);
+        click(&mut app, UiAction::MainMenu);
+        app.update();
+        assert_eq!(phase(&app), Phase::Menu);
     }
 }

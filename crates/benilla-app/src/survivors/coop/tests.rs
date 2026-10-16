@@ -364,6 +364,10 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         race: 1,
         sex: 1,
         trainer: 3000,
+        looks: NetLooks {
+            features: Some(super::super::gear::Features::from_array([2, 1, 3, 4, 5])),
+            gear: [11, 12, 13, 14, 15, 16, 17, 18, 19],
+        },
         bonuses: Bonuses::default(),
         talents: vec![(61, 5), (71, 1)],
         mount_display: 0,
@@ -411,6 +415,11 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
     assert!(matches!(mine.3, Look::Unit { display: 2000, .. }));
     let jaina = seen.iter().find(|h| h.0.player == 1).unwrap();
     assert_eq!((jaina.0.name.as_str(), jaina.0.trainer), ("Jaina", 3000));
+    assert_eq!(
+        host_app.world().get::<NetLooks>(theirs),
+        Some(&peer_info.looks),
+        "the host keeps the client's own appearance"
+    );
     assert!(host_app.world().get::<Replicated>(host_hero).is_some());
 
     // A spec guardian is an ordinary run unit: its Look and NetPos make it to every client,
@@ -582,6 +591,7 @@ fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
         race: 2,
         sex: 0,
         trainer: 4000,
+        looks: NetLooks::default(),
         bonuses: Bonuses::default(),
         talents: Vec::new(),
         mount_display: 0,
@@ -673,6 +683,7 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
         race: 1,
         sex: 1,
         trainer: 3000,
+        looks: NetLooks::default(),
         bonuses: Bonuses::default(),
         talents: vec![(36, 1)],
         mount_display: 2404,

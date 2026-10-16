@@ -24,8 +24,11 @@ use benilla_protocol::messages::ObjectFields;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use super::super::coop::wire::NetHero;
+use super::super::coop::wire::NetLooks;
 use super::super::data::CLASSES;
 use super::super::hero::Hero;
+use super::super::party::LocalHero;
 use super::super::Selection;
 use super::looks::{feature_ranges, worn_features, Features};
 use super::store::GearRead;
@@ -255,6 +258,37 @@ impl Dresser<'_> {
         )
         .unwrap_or(look.0)
     }
+
+    /// A replicated hero's own dress. It never consults this machine's profile.
+    pub(in crate::survivors) fn display_remote(
+        &mut self,
+        class: usize,
+        look: (u32, u8, u8),
+        looks: &NetLooks,
+    ) -> u32 {
+        let Some(creatures) = self.creatures.as_mut() else {
+            return look.0;
+        };
+        let cc = self.char_create.as_deref().map(|c| &c.0);
+        let trainer = creatures.npc_look(look.0);
+        let mut dress = plan(class, look, &GearSave::EMPTY, trainer.as_ref(), cc, None);
+        if let Some(features) = looks.features {
+            dress.features =
+                features.clamped(feature_ranges(cc, look.1, look.2).unwrap_or([u8::MAX; 5]));
+        }
+        for (slot, display) in Slot::ALL.into_iter().zip(looks.gear) {
+            if let (Some(column), false) = (column(slot), display == 0) {
+                dress.equipment[column] = display;
+            }
+        }
+        match self.wardrobe.cached(&dress) {
+            Some(id) => id,
+            None => self
+                .wardrobe
+                .register(&dress, &mut **creatures)
+                .unwrap_or(look.0),
+        }
+    }
 }
 
 /// Put display `id` on a standing hero: the descriptor's display field, which swaps a built body
@@ -286,14 +320,25 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
     char_create: Option<Res<CharCreate>>,
     catalog: Option<ResMut<C>>,
     mut wardrobe: ResMut<Wardrobe>,
-    mut heroes: Query<(&mut NetEntity, &mut ObjectStore), With<Hero>>,
+    mut heroes: Query<
+        (
+            &mut NetEntity,
+            &mut ObjectStore,
+            Option<&NetLooks>,
+            Option<&NetHero>,
+            Has<LocalHero>,
+        ),
+        With<Hero>,
+    >,
     arrived: Query<(), Added<Hero>>,
+    changed_remote: Query<(), Changed<NetLooks>>,
 ) {
     let Some(mut catalog) = catalog else { return };
     if !selection.is_changed()
         && !gear.is_changed()
         && !profile.as_ref().is_some_and(|p| p.is_changed())
         && arrived.is_empty()
+        && changed_remote.is_empty()
     {
         return;
     }
@@ -315,7 +360,37 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
     ) else {
         return;
     };
-    for (mut net, mut store) in &mut heroes {
+    for (mut net, mut store, remote, hero, local) in &mut heroes {
+        let id = if local {
+            id
+        } else if let (Some(remote), Some(hero)) = (remote, hero) {
+            let trainer = catalog.npc_look(hero.trainer);
+            let mut dress = plan(
+                usize::from(hero.class).min(CLASSES.len() - 1),
+                (hero.trainer, hero.race, hero.sex),
+                &GearSave::EMPTY,
+                trainer.as_ref(),
+                cc,
+                None,
+            );
+            if let Some(features) = remote.features {
+                dress.features = features
+                    .clamped(feature_ranges(cc, hero.race, hero.sex).unwrap_or([u8::MAX; 5]));
+            }
+            for (slot, display) in Slot::ALL.into_iter().zip(remote.gear) {
+                if let (Some(column), false) = (column(slot), display == 0) {
+                    dress.equipment[column] = display;
+                }
+            }
+            match wardrobe.cached(&dress) {
+                Some(id) => id,
+                None => wardrobe
+                    .register(&dress, &mut *catalog)
+                    .unwrap_or(dress.base),
+            }
+        } else {
+            continue;
+        };
         wear(id, &mut net, &mut store);
     }
 }
@@ -591,6 +666,7 @@ mod tests {
         let hero = world
             .spawn((
                 Hero::default(),
+                LocalHero,
                 NetEntity {
                     kind: benilla_protocol::EntityKind::Unit,
                     display_id: Some(3000),

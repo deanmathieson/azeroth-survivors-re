@@ -90,13 +90,13 @@ pub(in crate::survivors) fn class_gear(world: &World, class: usize) -> &GearSave
 
 /// Read access to every class's gear.
 #[derive(SystemParam)]
-pub(super) struct GearRead<'w> {
+pub(in crate::survivors) struct GearRead<'w> {
     profile: Option<Res<'w, Profile>>,
     shadow: Option<Res<'w, Shadow>>,
 }
 
 impl GearRead<'_> {
-    pub(super) fn get(&self, class: usize) -> &GearSave {
+    pub(in crate::survivors) fn get(&self, class: usize) -> &GearSave {
         gear_of(self.profile.as_deref(), self.shadow.as_deref(), class)
     }
 
