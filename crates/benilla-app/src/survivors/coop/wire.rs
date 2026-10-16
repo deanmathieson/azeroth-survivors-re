@@ -67,7 +67,7 @@ impl NetPos {
 /// Who a hero is: its player, name, and the class, race and sex its body is built from.
 /// `trainer` is the class trainer's display, real on every machine; a dressed display is a local
 /// one, so each machine dresses only its own hero.
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(in crate::survivors) struct NetHero {
     pub(in crate::survivors) player: u8,
     pub(in crate::survivors) name: String,
@@ -76,6 +76,10 @@ pub(in crate::survivors) struct NetHero {
     pub(in crate::survivors) race: u8,
     pub(in crate::survivors) sex: u8,
     pub(in crate::survivors) trainer: u32,
+    /// The selected riding creature, or zero when standing.
+    pub(in crate::survivors) mount_display: u32,
+    /// The mount hat model and its mount-specific seat nudge.
+    pub(in crate::survivors) mount_hat: Option<(u32, [f32; 3])>,
 }
 
 /// A hero's health bar and whether it is down.
@@ -284,6 +288,8 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) bonuses: Bonuses,
     /// Talent id and learned rank, from the picked class's saved allocation.
     pub(in crate::survivors) talents: Vec<(u32, u8)>,
+    pub(in crate::survivors) mount_display: u32,
+    pub(in crate::survivors) mount_hat: Option<(u32, [f32; 3])>,
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -531,6 +537,8 @@ mod tests {
             trainer: 4000,
             bonuses: bonuses.clone(),
             talents: vec![(36, 1)],
+            mount_display: 2404,
+            mount_hat: Some((1234, [0.0, 0.2, -0.1])),
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);

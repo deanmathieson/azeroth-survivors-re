@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use super::super::data::ClassDef;
 use super::super::hero::{self, Hero};
 use super::super::party::{self, is_healer};
+use super::super::partyui::MemberName;
 use super::super::units::{self, Fx, Marks, COLOR_HEAL};
 use super::super::{HeroState, LocalHero};
 use super::{coop, label, spell, SpellRef};
@@ -128,6 +129,7 @@ type Body = (
     &'static Transform,
     &'static mut ObjectStore,
     &'static mut Marks,
+    Option<&'static MemberName>,
     &'static mut HeroState,
 );
 
@@ -157,7 +159,8 @@ pub(super) fn soulstone(mut heroes: Query<Body, With<Hero>>, mut fx: Fx) {
             })
             .map(|p| p.0);
         let Some(target) = pick else { continue };
-        let names = [warlock, target].map(|e| heroes.get(e).map(|(.., h)| label(h)).unwrap());
+        let names =
+            [warlock, target].map(|e| heroes.get(e).map(|(.., name, h)| label(h, name)).unwrap());
         if let Ok((.., mut h)) = heroes.get_mut(target) {
             h.synergy.res.soulstone = true;
         }
@@ -246,10 +249,14 @@ pub(super) fn resurrect(
         }
     }
     for (caster, target, def) in landed {
-        let Some(name) = heroes.get(caster).ok().map(|(.., h)| label(h)) else {
+        let Some(name) = heroes
+            .get(caster)
+            .ok()
+            .map(|(.., member, h)| label(h, member))
+        else {
             continue;
         };
-        let Ok((e, guid, _, mut store, mut marks, mut h)) = heroes.get_mut(target) else {
+        let Ok((e, guid, _, mut store, mut marks, member, mut h)) = heroes.get_mut(target) else {
             continue;
         };
         if h.alive() {
@@ -259,7 +266,7 @@ pub(super) fn resurrect(
         fx.cast(caster, def.spell.id, &[target], None);
         fx.text(
             target,
-            format!("{name} casts {} on {}", def.spell.name, label(&h)),
+            format!("{name} casts {} on {}", def.spell.name, label(&h, member)),
             COLOR_HEAL,
         );
         // The results' Necromancer counts it.
@@ -293,7 +300,7 @@ pub(super) fn self_revive(
     let dt = time.delta_secs();
     let party = coop(heroes.iter().count());
     let pressed = keys.is_some_and(|k| k.just_pressed(SELF_RES_KEY));
-    for ((e, guid, _, mut store, mut marks, mut h), local) in &mut heroes {
+    for ((e, guid, _, mut store, mut marks, member, mut h), local) in &mut heroes {
         let res = &mut h.synergy.res;
         res.ankh_cd = (res.ankh_cd - dt).max(0.0);
         // A remote player's key counts once, now or never.
@@ -312,7 +319,11 @@ pub(super) fn self_revive(
         }
         raise(e, guid, &mut store, &mut marks, &mut h, &mut fields);
         fx.cast(e, spell.id, &[e], None);
-        fx.text(e, format!("{} uses {}", label(&h), spell.name), COLOR_HEAL);
+        fx.text(
+            e,
+            format!("{} uses {}", label(&h, member), spell.name),
+            COLOR_HEAL,
+        );
     }
 }
 
@@ -339,6 +350,9 @@ mod tests {
             &mut w,
             &[("Priest", 0.0), ("Warrior", 20.0), ("Mage", 25.0)],
         );
+        w.entity_mut(hs[0]).insert(MemberName("Anduin".to_string()));
+        w.entity_mut(hs[1])
+            .insert(MemberName("Valeera".to_string()));
         lie(&mut w, hs[1], 0.0);
         w.run_system_once(resurrect).unwrap();
         assert!(
@@ -359,7 +373,7 @@ mod tests {
             hero(&w, hs[1]).hp,
             hero(&w, hs[1]).stats().max_hp * party::REVIVED_HP
         );
-        assert!(texts(&w).contains(&"Player 1 casts Resurrection on Player 2".to_string()));
+        assert!(texts(&w).contains(&"Anduin casts Resurrection on Valeera".to_string()));
         let cd = hero(&w, hs[0]).synergy.res.cd;
         assert_eq!(cd, RES_COOLDOWN);
         assert_eq!(hero(&w, hs[0]).revives_given, 1, "credited to the caster");

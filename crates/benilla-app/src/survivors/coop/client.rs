@@ -106,6 +106,7 @@ fn watch_link(
     selection: Res<Selection>,
     meta: Res<MetaBonuses>,
     profile: Option<Res<Profile>>,
+    displays: Option<Res<crate::entities::ItemDisplays>>,
     name: Res<PlayerName>,
     mut hello: MessageWriter<Hello>,
     build: Option<Res<crate::BuildId>>,
@@ -121,6 +122,10 @@ fn watch_link(
             seen.2 = 1.0;
             let look = selection.look.and_then(|i| selection.looks.get(i));
             let (trainer, race, sex) = look.copied().unwrap_or((0, 0, 0));
+            let cosmetics = profile
+                .as_deref()
+                .map(|p| super::super::stable::selected_cosmetics(p, displays.as_deref()))
+                .unwrap_or((0, None));
             hello.write(Hello {
                 name: name.0.clone(),
                 class: selection.class.unwrap_or(0) as u8,
@@ -132,6 +137,8 @@ fn watch_link(
                     .class
                     .and_then(|class| profile.as_deref().and_then(|p| talents::saved(p, class)))
                     .map_or_else(Vec::new, |saved| saved.ranks.clone()),
+                mount_display: cosmetics.0,
+                mount_hat: cosmetics.1,
                 build: super::build_tag(build.as_deref()),
             });
         }

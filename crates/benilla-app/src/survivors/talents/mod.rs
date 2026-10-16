@@ -48,6 +48,12 @@ pub(in crate::survivors) fn mechanic_description(talent: u32, rank: u8) -> Vec<S
 pub(in crate::survivors) use mechanics::milestones;
 pub(in crate::survivors) use spec::HeroSpec;
 
+/// Marks a run hero whose saved talents have been installed.  Mechanics keep cooldown and proc
+/// clocks, so replacing them whenever another part of `HeroState` changes would reset those
+/// clocks.
+#[derive(Component, PartialEq, Eq)]
+struct TalentsGranted(Vec<(u32, u8)>);
+
 pub(in crate::survivors) fn is_headline(talent: u32) -> bool {
     mechanics::entry(talent).is_some_and(|entry| entry.headline)
 }
@@ -115,8 +121,13 @@ fn grant_talents(
     selection: Res<Selection>,
     phase: Res<State<super::Phase>>,
     mut heroes: Query<
-        (Entity, &mut HeroState, Option<&HeroSpec>),
-        (With<LocalHero>, Changed<HeroState>),
+        (
+            Entity,
+            &mut HeroState,
+            Option<&HeroSpec>,
+            Option<&TalentsGranted>,
+        ),
+        (With<LocalHero>,),
     >,
 ) {
     if *phase.get() != super::Phase::Playing {
@@ -126,7 +137,10 @@ fn grant_talents(
         return;
     };
     let ranks = saved(&profile, class).map_or(&[][..], |s| s.ranks.as_slice());
-    for (e, mut hero, had) in &mut heroes {
+    for (e, mut hero, had, granted) in &mut heroes {
+        if granted.is_some_and(|granted| granted.0 == ranks) {
+            continue;
+        }
         let spec = grant_learned(&mut hero, ranks);
         match (spec, had) {
             (Some(spec), Some(had)) if std::ptr::eq(spec, had.0) => {}
@@ -138,6 +152,7 @@ fn grant_talents(
             }
             (None, None) => {}
         }
+        commands.entity(e).insert(TalentsGranted(ranks.to_vec()));
     }
 }
 
@@ -626,6 +641,15 @@ mod tests {
         assert!(game_mechanics::has(&hero, MechanicId::Talent(75)));
         assert!(game_mechanics::has(&hero, MechanicId::Talent(30)));
         assert!(!game_mechanics::has(&hero, MechanicId::Talent(130)));
+    }
+
+    #[test]
+    fn remote_rank_payload_grants_headline_and_proc_mechanics() {
+        let mut hero = HeroState::default();
+        // These are the exact rank pairs a co-op peer sends to the host in Hello.
+        grant_learned(&mut hero, &[(86, 1), (34, 5)]);
+        assert!(game_mechanics::has(&hero, MechanicId::Talent(86)));
+        assert!(game_mechanics::has(&hero, MechanicId::Talent(34)));
     }
 
     /// The 31 points: the spec's start replaces the class's, and the spec rides on the hero.

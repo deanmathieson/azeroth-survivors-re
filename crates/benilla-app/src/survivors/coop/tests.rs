@@ -25,6 +25,7 @@ use super::host::{self, decide, owns, Owner, Peer};
 use super::wire::*;
 use super::{net, PlayerName, Session};
 use crate::creature_anim::MovementState;
+use crate::net::ObjectStore;
 
 fn hero_of(player: u8, class: usize) -> HeroState {
     let mut h = HeroState::new(player, &data::CLASSES[class], 1, Bonuses::default());
@@ -670,6 +671,8 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
         trainer: 3000,
         bonuses: Bonuses::default(),
         talents: vec![(36, 1)],
+        mount_display: 2404,
+        mount_hat: Some((1234, [0.0, 0.2, -0.1])),
         build: build.into(),
     };
     let (stale, fresh) = (world.spawn_empty().id(), world.spawn_empty().id());
@@ -733,6 +736,8 @@ fn a_client_fills_the_party_view_from_the_replicated_heroes() {
         race: 1,
         sex: 0,
         trainer: 0,
+        mount_display: 0,
+        mount_hat: None,
     };
     let vitals = |max_hp: f32| NetVitals {
         hp: max_hp,
@@ -782,4 +787,36 @@ fn a_client_fills_the_party_view_from_the_replicated_heroes() {
     assert!(view.members[1].is_local && !view.members[0].is_local);
     assert_eq!(view.elapsed, 90.0);
     assert_eq!(view.allies().len(), 1);
+}
+
+#[test]
+fn a_client_applies_a_remote_heros_mount_display() {
+    let mut world = World::new();
+    let remote = world
+        .spawn((
+            ObjectStore::default(),
+            NetHero {
+                player: 1,
+                name: "Thrall".into(),
+                class: 7,
+                race: 2,
+                sex: 0,
+                trainer: 0,
+                mount_display: 2404,
+                mount_hat: Some((1234, [0.0, 0.2, -0.1])),
+            },
+        ))
+        .id();
+    world
+        .run_system_once(super::super::stable::apply_remote_mount_field)
+        .unwrap();
+    assert_eq!(
+        world
+            .entity(remote)
+            .get::<ObjectStore>()
+            .unwrap()
+            .0
+            .unit_mount_display_id(),
+        2404
+    );
 }

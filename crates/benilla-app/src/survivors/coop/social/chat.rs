@@ -1,7 +1,7 @@
 //! Party chat, `/roll`, the voice emotes and the Faire's news.
 //!
-//! In a co-op run **Enter** opens a one-line input at the bottom left (nothing else in a run takes
-//! Enter; the menu's and the results' Enter are left alone). While it is open every key is the
+//! In a co-op lobby or run **Enter** opens a one-line input at the bottom left (the lobby takes
+//! it before Enter World or the ready check). While it is open every key is the
 //! input's: the hero stands, and Esc closes it without pausing. A line goes to the whole party in
 //! party colour; `/roll [max]` has the host roll 1 to max for everyone to see, and `/dance /wave
 //! /cheer /charge /flex /lol /bye /thank /roar` play the emote's real animation on the hero
@@ -238,8 +238,8 @@ pub(super) fn plugin(app: &mut App) {
         );
 }
 
-/// Enter opens the input in a co-op run; while it is open the typed keys are its, Enter says the
-/// line, Esc drops it, and no other system sees a key.
+/// Enter opens the input in a co-op lobby or run; while it is open the typed keys are its, Enter
+/// says the line, Esc drops it, and no other system sees a key.
 fn chat_keys(
     mut chat: ResMut<Chat>,
     mut typed: MessageReader<KeyboardInput>,
@@ -248,12 +248,13 @@ fn chat_keys(
     session: Res<Session>,
     mut say: MessageWriter<Say>,
 ) {
-    let in_run = matches!(
+    let linked = matches!(
         session.link,
         super::super::Link::Hosting { .. } | super::super::Link::Joined { .. }
-    ) && session.in_run
-        && *phase.get() == Phase::Playing;
-    if !in_run {
+    );
+    let active = linked
+        && ((session.in_run && *phase.get() == Phase::Playing) || *phase.get() == Phase::Menu);
+    if !active {
         if chat.input.is_some() {
             chat.input = None;
         }

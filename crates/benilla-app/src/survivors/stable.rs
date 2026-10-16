@@ -70,6 +70,29 @@ pub(super) fn plugin(app: &mut App) {
         Update,
         (clicks, apply_mount_bonus, apply_mount_field).chain(),
     );
+    #[cfg(feature = "coop")]
+    app.add_systems(Update, apply_remote_mount_field);
+}
+
+/// The wire-safe cosmetic choices for a hero.  Mount speed remains a local profile bonus.
+pub(in crate::survivors) fn selected_cosmetics(
+    profile: &Profile,
+    displays: Option<&crate::entities::ItemDisplays>,
+) -> (u32, Option<(u32, [f32; 3])>) {
+    let mount = profile
+        .stable
+        .mount
+        .as_deref()
+        .filter(|key| profile.quests.mounts.contains(*key));
+    let display = mount.and_then(mount_display).unwrap_or(0);
+    let hat = profile
+        .stable
+        .mount_hat
+        .as_deref()
+        .filter(|key| profile.quests.mount_hats.contains(*key))
+        .and_then(|key| displays.and_then(|displays| hat_display(key, displays)))
+        .map(|hat| (hat, hat_nudge(mount).to_array()));
+    (display, hat)
 }
 
 fn clicks(
@@ -133,33 +156,49 @@ fn apply_mount_field(
         With<LocalHero>,
     >,
 ) {
-    let display = profile
-        .stable
-        .mount
-        .as_deref()
-        .filter(|key| profile.quests.mounts.contains(*key))
-        .and_then(mount_display)
-        .unwrap_or(0);
-    let hat = profile
-        .stable
-        .mount_hat
-        .as_deref()
-        .filter(|key| profile.quests.mount_hats.contains(*key))
-        .and_then(|key| {
-            displays
-                .as_deref()
-                .and_then(|displays| hat_display(key, displays))
-        });
+    let (display, hat) = selected_cosmetics(&profile, displays.as_deref());
     for (mut store, mount) in &mut heroes {
         if store.0.unit_mount_display_id() != display {
             hero::set_mount(&mut store, display);
         }
         if let Some(mount) = mount {
             let mut child = commands.entity(mount.0);
-            if let Some(hat) = hat {
+            if let Some((display, nudge)) = hat {
                 child.insert(crate::entities::mount::MountHat {
-                    display: hat,
-                    nudge: hat_nudge(profile.stable.mount.as_deref()),
+                    display,
+                    nudge: Vec3::from_array(nudge),
+                });
+            } else {
+                child.remove::<crate::entities::mount::MountHat>();
+            }
+        }
+    }
+}
+
+/// Apply the host's cosmetic choice to each remote hero.  This deliberately never touches the
+/// local hero: its profile remains authoritative for its own speed bonus and preview.
+#[cfg(feature = "coop")]
+pub(in crate::survivors) fn apply_remote_mount_field(
+    mut commands: Commands,
+    mut heroes: Query<
+        (
+            &mut ObjectStore,
+            Option<&crate::entities::mount::MountChild>,
+            &super::coop::wire::NetHero,
+        ),
+        Without<LocalHero>,
+    >,
+) {
+    for (mut store, mount, net) in &mut heroes {
+        if store.0.unit_mount_display_id() != net.mount_display {
+            hero::set_mount(&mut store, net.mount_display);
+        }
+        if let Some(mount) = mount {
+            let mut child = commands.entity(mount.0);
+            if let Some((display, nudge)) = net.mount_hat {
+                child.insert(crate::entities::mount::MountHat {
+                    display,
+                    nudge: Vec3::from_array(nudge),
                 });
             } else {
                 child.remove::<crate::entities::mount::MountHat>();

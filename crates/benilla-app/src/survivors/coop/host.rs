@@ -15,6 +15,7 @@ use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
+use super::super::profile::Profile;
 use super::super::run_options::RunOptions;
 use super::super::synergy;
 use super::super::talents::{self, HeroSpec};
@@ -38,6 +39,8 @@ pub(super) struct Peer {
     pub(super) trainer: u32,
     pub(super) bonuses: super::super::bonus::Bonuses,
     pub(super) talents: Vec<(u32, u8)>,
+    pub(super) mount_display: u32,
+    pub(super) mount_hat: Option<(u32, [f32; 3])>,
     pub(super) hero: Option<Entity>,
 }
 
@@ -153,6 +156,8 @@ pub(super) fn greet(
     mut start: MessageWriter<ToClients<StartRun>>,
     build: Option<Res<crate::BuildId>>,
     name: Res<PlayerName>,
+    profile: Option<Res<Profile>>,
+    displays: Option<Res<crate::entities::ItemDisplays>>,
     mut refuse: MessageWriter<ToClients<Refused>>,
     mut cut: MessageWriter<DisconnectRequest>,
 ) {
@@ -207,6 +212,8 @@ pub(super) fn greet(
             trainer: h.trainer,
             bonuses: h.bonuses.clone(),
             talents: h.talents.clone(),
+            mount_display: h.mount_display,
+            mount_hat: h.mount_hat,
             // A repeated hello (sent until welcomed) keeps the hero it has.
             hero: peers.get(client).ok().and_then(|(_, p)| p.hero),
         });
@@ -521,6 +528,8 @@ pub(super) fn spawn_peer_hero(
             race: peer.race,
             sex: peer.sex,
             trainer: peer.trainer,
+            mount_display: peer.mount_display,
+            mount_hat: peer.mount_hat,
         },
         MemberName(peer.name.clone()),
     ));
@@ -602,6 +611,10 @@ pub(super) fn tag(
             if !described {
                 let look = selection.look.and_then(|i| selection.looks.get(i));
                 let (trainer, race, sex) = look.copied().unwrap_or((0, 0, 0));
+                let cosmetics = profile
+                    .as_deref()
+                    .map(|p| super::super::stable::selected_cosmetics(p, displays.as_deref()))
+                    .unwrap_or((0, None));
                 ec.try_insert(NetHero {
                     player: party::LOCAL_PLAYER,
                     name: name.0.clone(),
@@ -609,7 +622,10 @@ pub(super) fn tag(
                     race,
                     sex,
                     trainer,
+                    mount_display: cosmetics.0,
+                    mount_hat: cosmetics.1,
                 });
+                ec.try_insert(MemberName(name.0.clone()));
             }
         }
         if let Some(enemy) = enemy {

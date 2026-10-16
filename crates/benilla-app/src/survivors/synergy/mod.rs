@@ -28,6 +28,7 @@ mod threat;
 
 use bevy::prelude::*;
 
+use super::partyui::MemberName;
 use super::{abilities, enemies, hero, party, HeroState, Phase};
 
 pub(super) use buffs::{bonuses as buff_bonuses, reflect, PartyBuff};
@@ -56,8 +57,11 @@ pub(super) fn coop(heroes: usize) -> bool {
 }
 
 /// A hero as the party's combat text names it.
-pub(super) fn label(hero: &HeroState) -> String {
-    format!("Player {}", u32::from(hero.player) + 1)
+pub(super) fn label(hero: &HeroState, name: Option<&MemberName>) -> String {
+    name.map_or_else(
+        || format!("Player {}", u32::from(hero.player) + 1),
+        |name| name.0.clone(),
+    )
 }
 
 /// One hero's part in a party's play.
