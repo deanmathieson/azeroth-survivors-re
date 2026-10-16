@@ -666,26 +666,79 @@ pub(super) fn mark_dying(commands: &mut Commands, e: Entity) {
     commands.entity(e).insert(Dying(0.0));
 }
 
-/// Most gems on the ground at once; past it, a kill's worth joins an existing gem.
+/// Most experience-gem bodies on the ground at once. Past it, a dense horde's XP joins an
+/// existing gem instead of turning one frame of deaths into thousands of models or entities.
 const MAX_GEMS: usize = 350;
+
+fn merge_pickup(into: &mut Gem, from: GemKind) {
+    match (&mut into.kind, from) {
+        (GemKind::Xp(total), GemKind::Xp(value)) => *total = total.saturating_add(value),
+        _ => unreachable!("only experience gems merge: each coin keeps its own rounding"),
+    }
+}
+
+/// Spawn `kind`, or merge an overflowing XP gem into this frame's overflow body. The first
+/// overflow finds a body once; the rest avoid repeatedly scanning the capped query.
+fn add_pickup(
+    commands: &mut Commands,
+    gems: &mut Query<(Entity, &mut Gem)>,
+    overflow: &mut Option<Entity>,
+    count: &mut usize,
+    serial: u64,
+    pos: Vec3,
+    kind: GemKind,
+) {
+    if !matches!(kind, GemKind::Xp(_)) || *count < MAX_GEMS {
+        spawn_gem(commands, serial, pos, kind);
+        *count += 1;
+        return;
+    }
+    let target = (*overflow).or_else(|| {
+        gems.iter_mut()
+            .find_map(|(e, gem)| matches!(gem.kind, GemKind::Xp(_)).then_some(e))
+    });
+    if let Some(e) = target {
+        if let Ok((_, mut gem)) = gems.get_mut(e) {
+            merge_pickup(&mut gem, kind);
+            *overflow = Some(e);
+            return;
+        }
+    }
+    // The cap was reached by non-XP pickups, so no XP body can receive this first overflow.
+    // Keep one representative; later XP overflow joins it.
+    *overflow = Some(spawn_gem(commands, serial, pos, kind));
+    *count += 1;
+}
 
 pub(super) fn drop_loot(
     mut commands: Commands,
     mut drops: MessageReader<Loot>,
     mut rng: ResMut<Rng>,
     mut run: ResMut<Run>,
-    mut gems: Query<&mut Gem>,
+    mut gems: Query<(Entity, &mut Gem)>,
 ) {
     let mut count = gems.iter().count();
+    let mut overflow = None;
     for d in drops.read() {
         if d.boss || rng.f32() < 0.015 {
             let heal = GemKind::Heal(if d.boss { 1000.0 } else { 30.0 });
-            spawn_gem(&mut commands, run.guid(), d.pos + Vec3::X * 0.8, heal);
+            add_pickup(
+                &mut commands,
+                &mut gems,
+                &mut overflow,
+                &mut count,
+                run.guid(),
+                d.pos + Vec3::X * 0.8,
+                heal,
+            );
         }
         // Their worth is reckoned as they are picked up, by the picker's gold multiplier.
         if let Some(coins) = treasure::purse(d.boss, d.elite, run.elapsed, rng.f32()) {
-            spawn_gem(
+            add_pickup(
                 &mut commands,
+                &mut gems,
+                &mut overflow,
+                &mut count,
                 run.guid(),
                 d.pos - Vec3::X * 0.8,
                 GemKind::Gold(coins),
@@ -699,20 +752,19 @@ pub(super) fn drop_loot(
         if d.xp == 0 {
             continue;
         }
-        if count >= MAX_GEMS && !d.boss {
-            if let Some(mut g) = gems.iter_mut().find(|g| matches!(g.kind, GemKind::Xp(_))) {
-                if let GemKind::Xp(xp) = &mut g.kind {
-                    *xp += d.xp;
-                }
-                continue;
-            }
-        }
-        spawn_gem(&mut commands, run.guid(), d.pos, GemKind::Xp(d.xp));
-        count += 1;
+        add_pickup(
+            &mut commands,
+            &mut gems,
+            &mut overflow,
+            &mut count,
+            run.guid(),
+            d.pos,
+            GemKind::Xp(d.xp),
+        );
     }
 }
 
-pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) {
+pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: GemKind) -> Entity {
     let (display, scale) = look_for(kind);
     let e = units::spawn_object(commands, serial, display, scale, pos + Vec3::Y * 0.5);
     commands.entity(e).insert(Gem {
@@ -720,6 +772,7 @@ pub(super) fn spawn_gem(commands: &mut Commands, serial: u64, pos: Vec3, kind: G
         pulled: None,
         speed: 6.0,
     });
+    e
 }
 
 /// Gems in a magnet's reach fly to the nearest hero standing whose magnet reaches them; experience
@@ -1101,6 +1154,19 @@ mod tests {
         // Each picker is credited with what it picked up, for the results' Gold Goblin.
         let collected = |h: Entity| world.get::<HeroState>(h).unwrap().gold_collected;
         assert_eq!((collected(a), collected(b)), (10, 20));
+    }
+
+    #[test]
+    fn an_overflow_bucket_absorbs_two_thousand_pickups() {
+        let mut gem = Gem {
+            kind: GemKind::Xp(1),
+            pulled: None,
+            speed: 6.0,
+        };
+        for _ in 1..2_000 {
+            merge_pickup(&mut gem, GemKind::Xp(1));
+        }
+        assert!(matches!(gem.kind, GemKind::Xp(2_000)));
     }
 
     #[test]

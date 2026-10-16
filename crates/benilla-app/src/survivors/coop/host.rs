@@ -9,7 +9,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
 use super::super::data;
-use super::super::enemies::{self, Enemy};
+use super::super::enemies::{self, Enemy, Gem};
 use super::super::hand;
 use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
@@ -569,8 +569,10 @@ pub(super) fn roster_index(stage: usize, def: &data::EnemyDef) -> (bool, u16) {
     }
 }
 
-/// Every body of the run, once spawned, replicates: its place, and a hero's or an enemy's own
-/// parts. The host's own hero is described from the menu's pick.
+/// Every durable body of the run, once spawned, replicates: its place, and a hero's or an enemy's
+/// own parts. Pickups stay host-only: clients receive the shared XP/gold totals at the slow stats
+/// cadence, avoiding a reliable entity lifecycle for every gem vacuumed from a horde. The host's
+/// own hero is described from the menu's pick.
 #[allow(clippy::type_complexity)]
 pub(super) fn tag(
     mut commands: Commands,
@@ -591,6 +593,7 @@ pub(super) fn tag(
         (
             With<super::super::units::Look>,
             With<RunEntity>,
+            Without<Gem>,
             Without<Replicated>,
         ),
     >,
