@@ -729,6 +729,8 @@ pub(super) fn hero_vitals(
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
+        // Then its part in the party: its stance, a soulstone, the group buffs on it.
+        super::synergy::auras(&hero, &mut shown);
         marks.set(&shown);
         marks.flush(entity, guid.0, &mut store, &mut fields);
 

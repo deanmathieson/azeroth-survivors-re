@@ -10,6 +10,7 @@ use super::enemies::{self, Enemy, Loot};
 use super::hero::{self, Hero};
 use super::mechanics::{Proc, ProcKind, Procs};
 use super::party;
+use super::synergy;
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
 use super::{HeroState, Rng, Run, RunEntity, Stats};
 use crate::net::{FieldChanged, Guid, ObjectStore};
@@ -32,6 +33,9 @@ pub(super) struct Hit {
     pub source: Entity,
     /// What dealt it, for the mechanics it may set off.
     pub origin: Origin,
+    /// Its spell school, where known: the party's shared debuffs on the target that raise one
+    /// school's damage taken reach only blows of it ([`super::synergy`]).
+    pub school: Option<School>,
 }
 
 /// What dealt a blow. Only an ability's own blows set off its hero's mechanics
@@ -59,6 +63,7 @@ impl Hit {
             color: COLOR_MELEE,
             source,
             origin: Origin::Other,
+            school: None,
         }
     }
 }
@@ -84,12 +89,13 @@ pub(super) struct GroundArea {
     /// The hero who cast it, whose crits and credit its ticks are.
     owner: Entity,
     origin: Origin,
+    school: Option<School>,
 }
 
 impl GroundArea {
-    /// Ground a mechanic leaves burning: `dps` a second to whatever stands within `radius`, for
-    /// `secs`, the first tick at once.
-    pub(super) fn burning(owner: Entity, dps: f32, radius: f32, secs: f32) -> Self {
+    /// Ground a mechanic leaves burning: `dps` a second of `school` to whatever stands within
+    /// `radius`, for `secs`, the first tick at once.
+    pub(super) fn burning(owner: Entity, dps: f32, radius: f32, secs: f32, school: School) -> Self {
         Self {
             damage: dps,
             dot: 0.0,
@@ -103,6 +109,7 @@ impl GroundArea {
             impact: 0,
             owner,
             origin: Origin::Mechanic,
+            school: Some(school),
         }
     }
 }
@@ -119,6 +126,7 @@ pub(super) struct Totem {
     /// The hero who set it down, whose crits and credit its blows are.
     owner: Entity,
     ability: &'static AbilityDef,
+    school: School,
 }
 
 #[derive(Clone, Copy)]
@@ -145,6 +153,8 @@ struct Params {
     radius: f32,
     duration: f32,
     cooldown: f32,
+    /// The spell's own school.
+    school: School,
 }
 
 fn mark_secs(def: &AbilityDef, duration: f32) -> f32 {
@@ -185,6 +195,7 @@ fn hit_for(
         },
         source,
         origin: Origin::Ability(def),
+        school: Some(p.school),
     }
 }
 
@@ -386,7 +397,8 @@ fn cast_for(
         }
         let o = &hero.abilities[i];
         let look = look(def, o.level, &speed_of);
-        let mult = o.damage_mult() * stats.might * hero.school_mult(school_of(def.spell));
+        let school = school_of(def.spell);
+        let mult = o.damage_mult() * stats.might * hero.school_mult(school);
         let p = Params {
             dmg: def.damage * mult,
             dot: def.dot * mult,
@@ -394,6 +406,7 @@ fn cast_for(
             radius: o.radius(&stats),
             duration: o.duration(),
             cooldown: o.cooldown(&stats),
+            school,
         };
         let speed = speed_of(look);
         let fired = match def.kind {
@@ -499,6 +512,7 @@ fn cast_for(
                             impact: if def.overhead { def.spell } else { 0 },
                             owner: me,
                             origin: Origin::Ability(def),
+                            school: Some(p.school),
                         });
                         true
                     }
@@ -677,6 +691,7 @@ fn cast_for(
                         pulse: def.key == "magma_totem",
                         owner: me,
                         ability: def,
+                        school: p.school,
                     });
                     true
                 } else {
@@ -781,6 +796,7 @@ pub(super) fn tick_areas(
                     color: COLOR_SPELL,
                     source: area.owner,
                     origin: area.origin,
+                    school: area.school,
                 });
             }
         }
@@ -816,6 +832,7 @@ pub(super) fn tick_areas(
                 hits.write(Hit {
                     color: COLOR_SPELL,
                     origin: Origin::Ability(totem.ability),
+                    school: Some(totem.school),
                     ..Hit::direct(totem.owner, f.e, dmg, crit)
                 });
             }
@@ -842,6 +859,7 @@ pub(super) fn tick_areas(
                 Hit {
                     color: COLOR_SPELL,
                     origin: Origin::Ability(totem.ability),
+                    school: Some(totem.school),
                     ..Hit::direct(totem.owner, f.e, dmg, crit)
                 },
             );
@@ -859,11 +877,14 @@ fn credit(dealt: &mut Vec<(Entity, f32)>, hero: Entity, amount: f32) {
 
 /// Land every hit due: damage and its number, the over-time part, crowd control, the marks, and
 /// death with its loot. Each hero is credited with its own damage, and drains and leeches for it.
-/// An ability's own blows are recorded in [`Procs`] for its hero's mechanics.
+/// An ability's own blows are recorded in [`Procs`] for its hero's mechanics, and put its class's
+/// shared debuffs on the target; the debuffs already there raise what every hero's blows deal to
+/// it ([`synergy`]).
 pub(super) fn apply_hits(
     mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
     mut heroes: Query<&mut HeroState>,
     mut pending: ResMut<PendingHits>,
     mut incoming: MessageReader<Hit>,
@@ -944,6 +965,18 @@ pub(super) fn apply_hits(
             continue;
         }
         let mut dmg = h.damage;
+        let mut crit = h.crit;
+        if dmg > 0.0 && !en.debuffs.is_empty() {
+            // The party's shared debuffs: more of the blow's school taken, and a frost blow's crit.
+            dmg *= en.debuffs.taken(h.school);
+            let extra = en.debuffs.crit_taken(h.school);
+            if !crit && extra > 0.0 && rng.f32() < extra {
+                if let Ok(hero) = heroes.get(h.source) {
+                    dmg *= hero.stats().crit_damage;
+                    crit = true;
+                }
+            }
+        }
         if let Effect::Execute(threshold) = h.effect {
             if !en.boss && en.hp / en.max_hp <= threshold {
                 dmg = dmg.max(en.hp);
@@ -953,7 +986,7 @@ pub(super) fn apply_hits(
             en.hp -= dmg;
             run.damage_done += f64::from(dmg);
             credit(&mut leeched, h.source, dmg);
-            fx.number(e, dmg, h.crit, h.color);
+            fx.number(e, dmg, crit, h.color);
             if let Ok(mut hero) = heroes.get_mut(h.source) {
                 hero.damage_done += f64::from(dmg);
                 // A drain heals its dealer, as lifesteal does.
@@ -972,6 +1005,7 @@ pub(super) fn apply_hits(
                 left: h.dot_dur,
                 tick: 1.0,
                 source: h.source,
+                school: h.school,
             });
         }
         let boss = en.boss;
@@ -994,22 +1028,33 @@ pub(super) fn apply_hits(
             marks.add(h.mark, h.mark_dur);
         }
         if let Origin::Ability(def) = h.origin {
-            if heroes
-                .get(h.source)
-                .is_ok_and(|hero| hero.mechanics.listens())
-            {
-                procs.0.push(Proc {
-                    owner: h.source,
-                    ability: def,
-                    kind: ProcKind::Hit {
-                        crit: h.crit,
-                        killed: en.hp <= 0.0,
-                    },
-                    target: Some(e),
-                    pos: tf.translation,
-                    damage: dmg,
-                    effect: h.effect,
-                });
+            if let Ok(hero) = heroes.get(h.source) {
+                if hero.mechanics.listens() {
+                    procs.0.push(Proc {
+                        owner: h.source,
+                        ability: def,
+                        kind: ProcKind::Hit {
+                            crit,
+                            killed: en.hp <= 0.0,
+                        },
+                        target: Some(e),
+                        pos: tf.translation,
+                        damage: dmg,
+                        effect: h.effect,
+                    });
+                }
+                if en.hp > 0.0 {
+                    let en = &mut *en;
+                    synergy::afflict(
+                        hero.class,
+                        h.school,
+                        &mut en.debuffs,
+                        &mut marks,
+                        &mut rng,
+                        &mut fx,
+                        e,
+                    );
+                }
             }
         }
         if en.hp <= 0.0 {
@@ -1028,13 +1073,16 @@ pub(super) fn apply_hits(
         }
         let mut dealt = 0.0;
         by.clear();
+        let en = &mut *en;
         for d in &mut en.dots {
             d.left -= dt;
             d.tick -= dt;
             if d.tick <= 0.0 {
                 d.tick += 1.0;
-                dealt += d.dps;
-                credit(&mut by, d.source, d.dps);
+                // A tick of a school the target's debuffs raise is raised with it.
+                let dps = d.dps * en.debuffs.taken(d.school);
+                dealt += dps;
+                credit(&mut by, d.source, dps);
             }
         }
         en.dots.retain(|d| d.left > 0.0);
@@ -1049,7 +1097,7 @@ pub(super) fn apply_hits(
             }
             fx.number(e, dealt, false, COLOR_SPELL);
             if en.hp <= 0.0 {
-                kill(&mut commands, &mut run, e, tf.translation, &mut en);
+                kill(&mut commands, &mut run, e, tf.translation, en);
                 units::kill_unit(&mut store);
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);
@@ -1088,6 +1136,7 @@ mod tests {
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
         world.init_resource::<Run>();
+        world.insert_resource(Rng(1));
         world.init_resource::<PendingHits>();
         world.init_resource::<Procs>();
         world.init_resource::<Messages<Hit>>();
@@ -1121,6 +1170,7 @@ mod tests {
             dots: Vec::new(),
             dead: false,
             taunted: None,
+            debuffs: Default::default(),
         };
         let store = ObjectStore(Default::default());
         let body = (Guid(99), Transform::default(), store, Marks::debuffs());

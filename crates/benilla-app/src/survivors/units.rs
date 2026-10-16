@@ -425,6 +425,29 @@ impl Fx<'_> {
         });
     }
 
+    /// `SMSG_SPELL_START`: a cast with a cast time begins, its precast kit (and its sound) held on
+    /// the caster until [`Fx::cast`] lands it or [`Fx::fail`] breaks it off.
+    pub fn start(&mut self, caster: Entity, spell: u32) {
+        let seq = self.seq.next();
+        self.casts.write(CastEvent {
+            entity: caster,
+            spell_id: spell,
+            kind: CastEventKind::Start,
+            seq,
+        });
+    }
+
+    /// A cast [`Fx::start`] began, broken off: its precast kit reaped.
+    pub fn fail(&mut self, caster: Entity, spell: u32) {
+        let seq = self.seq.next();
+        self.casts.write(CastEvent {
+            entity: caster,
+            spell_id: spell,
+            kind: CastEventKind::Fail,
+            seq,
+        });
+    }
+
     /// Only the spell's impact kit, on `target`: no cast animation on anyone.
     pub fn impact(&mut self, target: Entity, spell: u32) {
         let seq = self.seq.next();
@@ -459,6 +482,16 @@ impl Fx<'_> {
             anchor,
             text: shown.to_string(),
             category: if crit { 2 } else { 0 },
+            color: Some(color),
+        });
+    }
+
+    /// A line of words over `anchor`, held a while as the experience text is, 0xAARRGGBB.
+    pub fn text(&mut self, anchor: Entity, text: String, color: u32) {
+        self.text.write(CombatTextSpawn {
+            anchor,
+            text,
+            category: 4,
             color: Some(color),
         });
     }

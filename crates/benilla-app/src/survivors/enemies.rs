@@ -10,12 +10,14 @@ use bevy::math::Dir3;
 use bevy::prelude::*;
 
 use super::abilities::Hit;
+use super::bonus::School;
 use super::data::{self, EnemyDef};
 use super::hero::{self, Hero, HERO_RADIUS};
 use super::party;
 use super::run_options::{self, RunOptions, XpCarry};
+use super::synergy;
 use super::treasure;
-use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT};
+use super::units::{self, flat, yaw_toward, Fx, Marks, UnitSpec, COLOR_HURT, COLOR_SPELL};
 use super::{HeroState, LocalHero, Phase, Rng, Run, Selection};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::net::{FieldChanged, Guid, ObjectStore};
@@ -45,9 +47,11 @@ pub(super) struct Enemy {
     pub weaken_t: f32,
     pub dots: Vec<Dot>,
     pub dead: bool,
-    /// The hero it must go for until the run second given, whatever else is near: a taunt's
-    /// seam ([`party::pick_target`]); nothing taunts yet.
+    /// The hero it must go for until the run second given, whatever else is near: a tank's taunt
+    /// ([`super::synergy`]), over [`party::pick_target`]'s pick.
     pub taunted: Option<(Entity, f32)>,
+    /// The party's shared debuffs on it, which raise what every hero's blows deal it.
+    pub debuffs: synergy::Debuffs,
 }
 
 pub(super) struct Dot {
@@ -56,6 +60,8 @@ pub(super) struct Dot {
     pub tick: f32,
     /// The hero whose spell it is, credited with its ticks.
     pub source: Entity,
+    /// The spell's school, where known, for the debuffs that raise it.
+    pub school: Option<School>,
 }
 
 /// A corpse playing its death before it fades.
@@ -221,6 +227,7 @@ pub(super) fn spawn_enemy(
             dots: Vec::new(),
             dead: false,
             taunted: None,
+            debuffs: Default::default(),
         },
         marks,
     ));
@@ -613,6 +620,14 @@ pub(super) fn move_enemies(
                 let thorns = struck.thorns * struck.stats().might;
                 hits.write(Hit::direct(target, ent, thorns, false));
             }
+            // A paladin's Retribution Aura answers the blow with holy damage, the paladin's own.
+            if let Some((paladin, reflect)) = synergy::reflect(&struck, run.level) {
+                hits.write(Hit {
+                    color: COLOR_SPELL,
+                    school: Some(School::Holy),
+                    ..Hit::direct(paladin, ent, reflect, false)
+                });
+            }
         }
     }
 }
@@ -878,6 +893,66 @@ mod tests {
             chase_target(Vec3::ZERO, false, taunt, 0.0, &down).map(|t| t.0),
             Some(id(2))
         );
+    }
+
+    #[test]
+    fn a_tank_s_taunt_forces_the_enemy_onto_it() {
+        use super::super::synergy::testing;
+        let mut w = testing::world(1.0);
+        w.resource_mut::<Run>().elapsed = 20.0;
+        // The mage stands on the enemy; the warrior, a tank, 11 yd off.
+        let hs = testing::heroes(&mut w, &[("Mage", 0.0), ("Warrior", 10.0)]);
+        let foe = Enemy {
+            def: &data::roster(0).enemies[0],
+            hp: 100.0,
+            max_hp: 100.0,
+            speed: 0.0,
+            damage: 0.0,
+            radius: 0.6,
+            xp: 1,
+            boss: false,
+            elite: false,
+            guardian: false,
+            dormant: false,
+            attack_cd: 0.0,
+            slow: 1.0,
+            slow_t: 0.0,
+            root_t: 0.0,
+            stun_t: 0.0,
+            fear_t: 0.0,
+            weaken: 1.0,
+            weaken_t: 0.0,
+            dots: Vec::new(),
+            dead: false,
+            taunted: None,
+            debuffs: Default::default(),
+        };
+        let foe = w.spawn((foe, Transform::from_xyz(-1.0, 0.0, 0.0))).id();
+        let party = [
+            Seen {
+                e: hs[0],
+                ..seen(0, 0.0)
+            },
+            Seen {
+                e: hs[1],
+                threat: 3.0,
+                ..seen(0, 10.0)
+            },
+        ];
+        let target = |w: &World, now: f32| {
+            let taunt = w.get::<Enemy>(foe).unwrap().taunted;
+            chase_target(Vec3::new(-1.0, 0.0, 0.0), false, taunt, now, &party).map(|t| t.0)
+        };
+        assert_eq!(
+            target(&w, 20.0),
+            Some(hs[0]),
+            "the nearer mage, threat or not"
+        );
+        w.run_system_once(synergy::taunts).unwrap();
+        let until = 20.0 + synergy::TAUNT_SECS;
+        assert_eq!(w.get::<Enemy>(foe).unwrap().taunted, Some((hs[1], until)));
+        assert_eq!(target(&w, 21.0), Some(hs[1]), "taunted onto the warrior");
+        assert_eq!(target(&w, until), Some(hs[0]), "and back once it ends");
     }
 
     #[test]

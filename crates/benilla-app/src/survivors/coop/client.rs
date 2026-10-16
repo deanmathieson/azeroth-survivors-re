@@ -381,6 +381,7 @@ fn materialize(
                 dots: Vec::new(),
                 dead: false,
                 taunted: None,
+                debuffs: Default::default(),
             });
         }
     }
