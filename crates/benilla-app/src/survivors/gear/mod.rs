@@ -20,6 +20,7 @@
 mod catalog;
 mod drops;
 mod looks;
+pub(super) mod looks_create;
 mod looks_ui;
 mod loot;
 mod outfit;
@@ -56,6 +57,7 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<outfit::Wardrobe>()
         .init_resource::<looks_ui::NameEdit>()
         .init_resource::<looks_ui::LooksDice>()
+        .init_resource::<looks_create::CreateSession>()
         .add_systems(Startup, shadow_for_auto)
         // The name box takes its keys before any other reader sees them.
         .add_systems(
@@ -66,8 +68,11 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (
                 outfit::dress_bodies::<crate::entities::Creatures>,
+                looks_create::build,
                 looks_ui::add_menu_name,
                 (
+                    looks_create::input,
+                    looks_create::rotate,
                     looks_ui::looks_clicks,
                     looks_ui::remember_body,
                     looks_ui::roll_dice,
