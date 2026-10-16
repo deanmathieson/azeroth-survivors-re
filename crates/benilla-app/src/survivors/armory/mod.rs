@@ -48,6 +48,8 @@ mod stable;
 mod talents;
 mod wardrobe;
 
+pub(super) use collection::item_tip;
+
 use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};

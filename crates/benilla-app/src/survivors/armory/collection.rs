@@ -437,14 +437,25 @@ pub(super) fn item_icon(p: &mut ChildSpawnerCommands, icon: &'static str, size: 
     ));
 }
 
-/// A piece's hover box: rarity and slot, what it grants, and whether the class has it.
-pub(super) fn item_tip(piece: &Item, gear: &GearSave) -> ArmoryTip {
+/// A piece's hover box: rarity and slot, what it grants, and whether the class has it. The worn
+/// line is the useful 1.12-style comparison when the same slot already has an item.
+pub(in crate::survivors) fn item_tip(piece: &Item, gear: &GearSave) -> ArmoryTip {
     let (status, color) = status(gear.has(piece.id), gear.wears(piece.id));
     let lines = std::iter::once((
         format!("{} {}", rarity_label(piece.rarity), piece.slot.label()),
         piece.rarity.color(),
     ))
-    .chain(piece.bonuses.iter().map(|b| (b.describe(), TIP_GREEN)))
+    .chain(
+        piece
+            .bonuses
+            .iter()
+            .map(|b| (format!("Equip: {}", b.describe()), TIP_GREEN)),
+    )
+    .chain(
+        gear.worn(piece.slot)
+            .filter(|worn| worn.id != piece.id)
+            .map(|worn| (format!("Currently equipped: {}", worn.name), DIM)),
+    )
     .chain(std::iter::once((status.to_string(), color)))
     .collect();
     ArmoryTip {
@@ -490,5 +501,17 @@ mod tests {
         gear.collect(p);
         assert_eq!(item_tip(p, &gear).lines.last().unwrap().0, "Equipped");
         assert_eq!(status(true, false).0, "Collected");
+    }
+
+    #[test]
+    fn item_tip_uses_the_hovered_item_and_its_slot_comparison() {
+        let worn = piece(0, Slot::Head, Rarity::Common).unwrap();
+        let hovered = piece(0, Slot::Head, Rarity::Epic).unwrap();
+        let mut gear = GearSave::default();
+        gear.collect(worn);
+        let tip = item_tip(hovered, &gear);
+        assert_eq!(tip.title, hovered.name);
+        assert!(tip.lines.iter().any(|(line, _)| line.contains(worn.name)));
+        assert!(tip.lines.iter().any(|(line, _)| line.starts_with("Equip:")));
     }
 }

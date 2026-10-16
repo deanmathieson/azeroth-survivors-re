@@ -11,7 +11,8 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::super::super::gear::{self, GroupDrops, ItemIcon, WonLoot};
+use super::super::super::armory::item_tip;
+use super::super::super::gear::{self, GearRead, GroupDrops, ItemIcon, WonLoot};
 use super::super::super::hud::HudFont;
 use super::super::super::{Phase, Rng, Selection};
 use super::super::host::Peer;
@@ -44,6 +45,13 @@ pub(super) const BUTTONS: [(&str, &str); 3] = [
     ),
 ];
 
+/// The roll bar is a child of this clipped card, never a sibling that can draw over its border.
+const FRAME_WIDTH: f32 = 330.0;
+
+fn timer_percent(left: f32, secs: f32) -> f32 {
+    100.0 * (left / secs.max(0.01)).clamp(0.0, 1.0)
+}
+
 /// A choice at a group roll.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::survivors) enum RollPick {
@@ -64,10 +72,81 @@ impl RollPick {
     }
 }
 
-/// Whether a hero of class `hero` may Need a piece of class `item` (both indices into
-/// [`super::super::super::data::CLASSES`]): only a piece it can wear.
-pub(super) fn may_need(item: usize, hero: usize) -> bool {
-    item == hero
+/// The heaviest armour a 1.12 class can train. Hunters and shamans reach mail at 40; group loot
+/// asks what a class can ultimately use, rather than its level at this instant.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Armor {
+    Cloth,
+    Leather,
+    Mail,
+    Plate,
+}
+
+fn max_armor(class: usize) -> Armor {
+    match class {
+        0 | 1 => Armor::Plate,
+        2 | 5 => Armor::Mail,
+        3 | 8 => Armor::Leather,
+        _ => Armor::Cloth,
+    }
+}
+
+/// A main-hand's 1.12 weapon family. The catalog's display icon is the durable source for this:
+/// it keeps the loot rule with the real item rather than the class whose collection introduced it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Weapon {
+    Axe,
+    Dagger,
+    Mace,
+    Polearm,
+    Staff,
+    Sword,
+    Wand,
+}
+
+fn weapon(item: &gear::Item) -> Weapon {
+    let icon = item.icon;
+    if icon.starts_with("INV_Axe") {
+        Weapon::Axe
+    } else if icon.starts_with("INV_Mace") || icon.starts_with("INV_Hammer") {
+        Weapon::Mace
+    } else if icon.starts_with("INV_Weapon_Halberd") {
+        Weapon::Polearm
+    } else if icon.starts_with("INV_Staff") {
+        Weapon::Staff
+    } else if icon.starts_with("INV_Sword") {
+        Weapon::Sword
+    } else if icon.starts_with("INV_Weapon_Short") {
+        Weapon::Dagger
+    } else {
+        // The priest talisman is a wand in this nine-slot catalog.
+        Weapon::Wand
+    }
+}
+
+fn can_use_weapon(class: usize, weapon: Weapon) -> bool {
+    match weapon {
+        Weapon::Axe => matches!(class, 0 | 2 | 5),
+        Weapon::Dagger => matches!(class, 0 | 2 | 3 | 4 | 5 | 6 | 7),
+        Weapon::Mace => matches!(class, 0 | 1 | 3 | 4 | 5 | 8),
+        Weapon::Polearm => matches!(class, 0 | 1 | 2),
+        Weapon::Staff => matches!(class, 2 | 4 | 5 | 6 | 7 | 8),
+        Weapon::Sword => matches!(class, 0 | 1 | 2 | 3),
+        Weapon::Wand => matches!(class, 4 | 6 | 7),
+    }
+}
+
+/// Whether `hero` may Need `item`: every class can use lighter armour, and weapons follow the
+/// 1.12 class weapon skills. Greed and Pass deliberately do not consult this rule.
+pub(super) fn may_need(item: u16, hero: usize) -> bool {
+    let Some(item) = gear::item(item) else {
+        return false;
+    };
+    if item.slot == gear::Slot::MainHand {
+        can_use_weapon(hero, weapon(item))
+    } else {
+        max_armor(hero) >= max_armor(item.class)
+    }
 }
 
 /// One player at a roll: its class, and its choice once made.
@@ -91,18 +170,16 @@ pub(super) struct Win {
 pub(super) struct GroupRoll {
     pub id: u32,
     pub item: u16,
-    item_class: usize,
     pub left: f32,
     seats: Vec<Seat>,
 }
 
 impl GroupRoll {
-    /// A roll on piece `item` (of class `item_class`) among `party`'s players and their classes.
-    pub(super) fn new(id: u32, item: u16, item_class: usize, party: &[(u8, usize)]) -> Self {
+    /// A roll on piece `item` among `party`'s players and their classes.
+    pub(super) fn new(id: u32, item: u16, party: &[(u8, usize)]) -> Self {
         Self {
             id,
             item,
-            item_class,
             left: ROLL_SECS,
             seats: party
                 .iter()
@@ -117,11 +194,10 @@ impl GroupRoll {
 
     /// `player` chooses, once: a Need from a class that cannot wear the piece is refused.
     pub(super) fn choose(&mut self, player: u8, pick: RollPick) -> bool {
-        let item = self.item_class;
         let Some(seat) = self.seats.iter_mut().find(|s| s.player == player) else {
             return false;
         };
-        if seat.pick.is_some() || (pick == RollPick::Need && !may_need(item, seat.class)) {
+        if seat.pick.is_some() || (pick == RollPick::Need && !may_need(self.item, seat.class)) {
             return false;
         }
         seat.pick = Some(pick);
@@ -239,8 +315,7 @@ fn host_rolls(
             .collect();
         let id = host.next;
         host.next = host.next.wrapping_add(1);
-        host.rolls
-            .push(GroupRoll::new(id, piece.id, piece.class, &party));
+        host.rolls.push(GroupRoll::new(id, piece.id, &party));
         out.write(to_all(Heard::RollStart {
             id,
             item: piece.id,
@@ -363,8 +438,7 @@ fn roll_clicks(
     if s.picked.is_some() {
         return;
     }
-    let item_class = gear::item(s.item).map_or(usize::MAX, |i| i.class);
-    if b.pick == RollPick::Need && !may_need(item_class, my_class(&selection)) {
+    if b.pick == RollPick::Need && !may_need(s.item, my_class(&selection)) {
         return;
     }
     s.picked = Some(b.pick);
@@ -385,6 +459,7 @@ fn roll_frames(
     time: Res<Time<Real>>,
     font: Option<Res<HudFont>>,
     selection: Res<Selection>,
+    gear: GearRead,
     mut shown: ResMut<ShownRolls>,
     mut frames: Query<&mut Node, With<RollFrame>>,
     mut fills: Query<(&TimerFill, &mut Node), Without<RollFrame>>,
@@ -408,14 +483,14 @@ fn roll_frames(
                     }
                 }
             }
-            None => s.frame = Some(spawn_frame(&mut commands, &font.0, s, mine, bottom)),
+            None => s.frame = Some(spawn_frame(&mut commands, &font.0, s, mine, &gear, bottom)),
         }
     }
     for (fill, mut node) in &mut fills {
         let Some(s) = shown.0.iter().find(|s| s.id == fill.0) else {
             continue;
         };
-        let w = Val::Percent(100.0 * (s.left / s.secs.max(0.01)).clamp(0.0, 1.0));
+        let w = Val::Percent(timer_percent(s.left, s.secs));
         if node.width != w {
             node.width = w;
         }
@@ -424,11 +499,7 @@ fn roll_frames(
         let Some(s) = shown.0.iter().find(|s| s.id == b.id) else {
             continue;
         };
-        let display = if s.picked.is_some() {
-            Display::None
-        } else {
-            Display::Flex
-        };
+        let display = Display::Flex;
         if node.display != display {
             node.display = display;
         }
@@ -440,6 +511,19 @@ fn roll_frames(
         };
         if art.path != path {
             art.path = path;
+        }
+        let tint = match *interaction {
+            _ if s.picked.is_some_and(|picked| picked != b.pick) => {
+                Color::srgba(0.35, 0.35, 0.35, 0.7)
+            }
+            Interaction::Hovered => Color::srgb(1.0, 0.9, 0.45),
+            _ if b.pick == RollPick::Need && !may_need(s.item, mine) => {
+                Color::srgba(0.35, 0.35, 0.35, 0.7)
+            }
+            _ => Color::WHITE,
+        };
+        if art.tint != tint {
+            art.tint = tint;
         }
     }
     for (c, mut t) in &mut choices {
@@ -453,26 +537,23 @@ fn roll_frames(
     }
 }
 
-/// A `GroupLootFrame`: the slot and icon, the name in its quality colour over the timer bar, and the
-/// three buttons (Need greyed out for a piece this class cannot wear).
+/// A `GroupLootFrame`: a vertical, fixed-width 1.12-style card. Its timer lives in its own clipped
+/// row, and its controls in their own row, so neither can escape the frame or hide the buttons.
 fn spawn_frame(
     commands: &mut Commands,
     font: &Handle<Font>,
     s: &Shown,
     mine: usize,
+    gear: &GearRead,
     bottom: Val,
 ) -> Entity {
     let piece = gear::item(s.item);
-    let (name, color, icon, class) = piece.map_or(
-        (
-            "Something shiny",
-            Color::WHITE,
-            "INV_Misc_QuestionMark",
-            usize::MAX,
-        ),
-        |p| (p.name, p.rarity.color(), p.icon, p.class),
+    let (name, color, icon) = piece.map_or(
+        ("Something shiny", Color::WHITE, "INV_Misc_QuestionMark"),
+        |p| (p.name, p.rarity.color(), p.icon),
     );
-    let need_ok = may_need(class, mine);
+    let need_ok = may_need(s.item, mine);
+    let tip = piece.map(|p| item_tip(p, gear.get(mine)));
     let px = Val::Px;
     commands
         .spawn((
@@ -482,11 +563,11 @@ fn spawn_frame(
                 left: Val::Percent(50.0),
                 bottom,
                 margin: UiRect::left(px(-160.0)),
-                width: px(320.0),
-                height: px(70.0),
+                width: px(FRAME_WIDTH),
+                height: px(126.0),
                 padding: UiRect::all(px(8.0)),
                 column_gap: px(8.0),
-                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
                 border: UiRect::all(px(2.0)),
                 ..default()
             },
@@ -495,75 +576,102 @@ fn spawn_frame(
             GlobalZIndex(310),
         ))
         .with_children(|f| {
-            f.spawn((
-                Node {
-                    width: px(44.0),
-                    height: px(44.0),
-                    border: UiRect::all(px(1.0)),
-                    ..default()
-                },
-                BorderColor::all(color),
-                ImageNode {
-                    color: Color::srgb(0.1, 0.1, 0.1),
-                    ..default()
-                },
-                ItemIcon {
-                    icon,
-                    tint: Color::WHITE,
-                },
-            ));
             f.spawn(Node {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.0),
+                width: Val::Percent(100.0),
+                column_gap: px(8.0),
                 ..default()
             })
-            .with_children(|c| {
-                c.spawn((label(font, name, 14.0, color), TextShadow::default()));
-                c.spawn((
+            .with_children(|top| {
+                let mut icon_node = top.spawn((
+                    Button,
                     Node {
-                        height: px(10.0),
-                        width: Val::Percent(100.0),
+                        width: px(44.0),
+                        height: px(44.0),
+                        border: UiRect::all(px(1.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-                ))
-                .with_children(|bar| {
-                    bar.spawn((
-                        TimerFill(s.id),
+                    BorderColor::all(color),
+                    ImageNode {
+                        color: Color::srgb(0.1, 0.1, 0.1),
+                        ..default()
+                    },
+                    ItemIcon {
+                        icon,
+                        tint: Color::WHITE,
+                    },
+                ));
+                if let Some(tip) = tip.clone() {
+                    icon_node.insert(tip);
+                }
+                top.spawn(Node {
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(4.0),
+                    ..default()
+                })
+                .with_children(|c| {
+                    let mut title = c.spawn((
+                        Button,
+                        label(font, name, 14.0, color),
+                        TextShadow::default(),
+                    ));
+                    if let Some(tip) = tip.clone() {
+                        title.insert(tip);
+                    }
+                    c.spawn((
                         Node {
-                            height: Val::Percent(100.0),
+                            height: px(10.0),
                             width: Val::Percent(100.0),
+                            overflow: Overflow::clip(),
                             ..default()
                         },
-                        Art::crop(TIMER_BAR, [0.0, 1.0, 0.0, 0.25])
-                            .tinted(Color::srgb(1.0, 0.82, 0.0)),
-                    ));
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            TimerFill(s.id),
+                            Node {
+                                height: Val::Percent(100.0),
+                                width: Val::Percent(100.0),
+                                ..default()
+                            },
+                            Art::crop(TIMER_BAR, [0.0, 1.0, 0.0, 0.25])
+                                .tinted(Color::srgb(1.0, 0.82, 0.0)),
+                        ));
+                    });
                 });
-                c.spawn((
+            });
+            f.spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                column_gap: px(18.0),
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|controls| {
+                for (pick, (up, _)) in RollPick::ALL.into_iter().zip(BUTTONS) {
+                    let tint = if pick == RollPick::Need && !need_ok {
+                        Color::srgba(0.35, 0.35, 0.35, 0.7)
+                    } else {
+                        Color::WHITE
+                    };
+                    controls.spawn((
+                        RollButton { id: s.id, pick },
+                        Button,
+                        Interaction::default(),
+                        Node {
+                            width: px(32.0),
+                            height: px(32.0),
+                            ..default()
+                        },
+                        Art::whole(up).tinted(tint),
+                    ));
+                }
+                controls.spawn((
                     ChoiceText(s.id),
                     label(font, "", 12.0, Color::srgb(0.8, 0.8, 0.8)),
                 ));
             });
-            for (pick, (up, _)) in RollPick::ALL.into_iter().zip(BUTTONS) {
-                let size = if pick == RollPick::Pass { 26.0 } else { 34.0 };
-                let tint = if pick == RollPick::Need && !need_ok {
-                    Color::srgba(0.35, 0.35, 0.35, 0.7)
-                } else {
-                    Color::WHITE
-                };
-                f.spawn((
-                    RollButton { id: s.id, pick },
-                    Button,
-                    Interaction::default(),
-                    Node {
-                        width: px(size),
-                        height: px(size),
-                        ..default()
-                    },
-                    Art::whole(up).tinted(tint),
-                ));
-            }
         })
         .id()
 }
@@ -594,35 +702,44 @@ mod tests {
 
     const MAGE: usize = 6;
     const PRIEST: usize = 4;
+    const WARRIOR: usize = 0;
+    const ROGUE: usize = 3;
 
     #[test]
-    fn only_a_class_that_wears_it_may_need() {
-        assert!(may_need(MAGE, MAGE));
-        assert!(!may_need(MAGE, PRIEST));
-        let mut r = GroupRoll::new(1, 10, MAGE, &[(0, MAGE), (1, PRIEST)]);
+    fn need_follows_armor_and_weapon_skills_not_the_drop_class() {
+        // Warrior plate (100) is usable by a paladin too, but not a rogue; mage cloth (700) is
+        // usable by every armour class. Hunters and shamans use their level-40 mail maximum.
+        assert!(may_need(100, 1));
+        assert!(!may_need(100, ROGUE));
+        assert!(may_need(700, WARRIOR));
+        assert!(may_need(300, 5));
+        // A warrior sword is valid for a rogue, while the hunter axe is not.
+        assert!(may_need(108, ROGUE));
+        assert!(!may_need(308, ROGUE));
+
+        let mut r = GroupRoll::new(1, 700, &[(0, MAGE), (1, PRIEST)]);
         assert!(
-            !r.choose(1, RollPick::Need),
-            "a priest cannot need a mage's robe"
+            r.choose(1, RollPick::Need),
+            "a priest can need a cloth robe"
         );
-        assert!(r.choose(1, RollPick::Greed), "but may greed it");
         assert!(!r.choose(1, RollPick::Pass), "one choice each");
         assert!(r.choose(0, RollPick::Need));
         assert!(!r.choose(7, RollPick::Greed), "not at the roll");
         assert!(r.decided());
-        // The priest's greed loses to the mage's need, whatever the dice say.
+        // Both are eligible Need rolls, so the higher die wins.
         assert_eq!(
-            r.settle(dice(&[3])),
+            r.settle(dice(&[3, 4])),
             Some(Win {
-                player: 0,
+                player: 1,
                 pick: RollPick::Need,
-                value: 3
+                value: 4
             })
         );
     }
 
     #[test]
     fn ties_roll_again_among_the_tied() {
-        let mut r = GroupRoll::new(1, 10, MAGE, &[(0, MAGE), (1, MAGE), (2, MAGE)]);
+        let mut r = GroupRoll::new(1, 700, &[(0, MAGE), (1, MAGE), (2, MAGE)]);
         for p in 0..3 {
             r.choose(p, RollPick::Need);
         }
@@ -636,7 +753,7 @@ mod tests {
             })
         );
         // A greed-only roll is settled the same way.
-        let mut g = GroupRoll::new(2, 10, MAGE, &[(0, PRIEST), (1, PRIEST)]);
+        let mut g = GroupRoll::new(2, 700, &[(0, PRIEST), (1, PRIEST)]);
         g.choose(0, RollPick::Greed);
         g.choose(1, RollPick::Greed);
         assert_eq!(g.settle(dice(&[99, 12])).map(|w| w.player), Some(0));
@@ -644,7 +761,7 @@ mod tests {
 
     #[test]
     fn the_timer_passes_for_whoever_has_not_chosen() {
-        let mut r = GroupRoll::new(1, 10, MAGE, &[(0, MAGE), (1, PRIEST)]);
+        let mut r = GroupRoll::new(1, 700, &[(0, MAGE), (1, PRIEST)]);
         r.choose(1, RollPick::Greed);
         r.tick(ROLL_SECS - 0.5);
         assert!(!r.decided(), "still open with a player to choose");
@@ -659,14 +776,24 @@ mod tests {
 
     #[test]
     fn everyone_passing_leaves_it_on_the_ground() {
-        let mut r = GroupRoll::new(1, 10, MAGE, &[(0, MAGE), (1, PRIEST)]);
+        let mut r = GroupRoll::new(1, 700, &[(0, MAGE), (1, PRIEST)]);
         r.choose(0, RollPick::Pass);
         r.choose(1, RollPick::Pass);
         assert!(r.decided());
         assert_eq!(r.settle(dice(&[1])), None);
         // Nobody choosing at all is everyone passing.
-        let mut idle = GroupRoll::new(2, 10, MAGE, &[(0, MAGE)]);
+        let mut idle = GroupRoll::new(2, 700, &[(0, MAGE)]);
         idle.tick(ROLL_SECS);
         assert_eq!(idle.settle(dice(&[1])), None);
+    }
+
+    #[test]
+    fn roll_frame_has_three_buttons_and_a_clamped_timer() {
+        assert_eq!(RollPick::ALL.len(), 3);
+        assert_eq!(BUTTONS.len(), 3);
+        assert_eq!(FRAME_WIDTH, 330.0);
+        assert_eq!(timer_percent(ROLL_SECS, ROLL_SECS), 100.0);
+        assert_eq!(timer_percent(-1.0, ROLL_SECS), 0.0);
+        assert_eq!(timer_percent(ROLL_SECS * 2.0, ROLL_SECS), 100.0);
     }
 }
