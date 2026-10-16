@@ -299,7 +299,8 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
             damage: 4.0,
             cooldown: 8.0,
             radius: 11.0,
-            effect: Effect::Weaken(0.5, 5.0)
+            effect: Effect::Weaken(0.5, 5.0),
+            mark: 1160
         }
     ),
     ability!(

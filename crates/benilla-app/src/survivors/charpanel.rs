@@ -11,14 +11,15 @@
 //! health percentages scale it, armor and cooldown reduction are capped, targets and extra lives
 //! round to whole numbers. So a source's share is not its bonus alone but how far adding it moved
 //! the total. [`breakdown`] stacks the sources in a fixed order, base and class, level-up cards,
-//! talents, gear, perks, racials, jewelry and run bonuses, and folds the stats again after each
-//! through that same [`HeroState::stats`]; a source's share is the step it made. The steps
+//! talents, gear, perks, racials, jewelry, party and run bonuses, and folds the stats again after
+//! each through that same [`HeroState::stats`]; a source's share is the step it made. The steps
 //! telescope, so the shares always sum to the total, which is the hero's own `stats()`. Where
 //! sources interact (a cap reached, a health percentage scaling flat health) the later source in
 //! the order takes the difference.
 //!
 //! Talents, gear, perks and racials are the meta bonuses as the run began ([`RunSources`]); jewelry
-//! is what the hero wears now. "Run bonuses" is everything else in the hero's numbers (the
+//! is what the hero wears now, and "Party" the group buffs its party holds on it now
+//! ([`super::synergy`]). "Run bonuses" is everything else in the hero's numbers (the
 //! `WOW_SURVIVORS_BONUSES` test aid, any in-run effect that adds to the hero's bonuses), found as
 //! the last step, from the stacked sources to the hero's actual stats.
 
@@ -112,11 +113,13 @@ pub(super) enum Source {
     Racial,
     Mount,
     Jewelry,
+    /// The group buffs the party's other heroes (and the hero's own) hold on it.
+    Party,
     Run,
 }
 
 impl Source {
-    pub(super) const ALL: [Source; 9] = [
+    pub(super) const ALL: [Source; 10] = [
         Source::Base,
         Source::Cards,
         Source::Talents,
@@ -125,6 +128,7 @@ impl Source {
         Source::Racial,
         Source::Mount,
         Source::Jewelry,
+        Source::Party,
         Source::Run,
     ];
 
@@ -138,6 +142,7 @@ impl Source {
             Source::Racial => "Racials",
             Source::Mount => "Mount",
             Source::Jewelry => "Jewelry",
+            Source::Party => "Party",
             Source::Run => "Run bonuses",
         }
     }
@@ -303,7 +308,7 @@ fn num(v: f32) -> String {
 pub(super) struct Row {
     pub line: Line,
     pub total: f32,
-    pub shares: [f32; 9],
+    pub shares: [f32; Source::ALL.len()],
 }
 
 /// `hero`'s stat sheet, every line split by source as the module doc counts it, the meta-progression
@@ -339,13 +344,16 @@ pub(super) fn breakdown(hero: &HeroState, parts: &MetaParts) -> Vec<Row> {
         layer.bonuses.merge(part);
         steps.push(numbers(&layer));
     }
+    // The party's group buffs on it.
+    layer.synergy.buffs = hero.synergy.buffs.clone();
+    steps.push(numbers(&layer));
     // The rest, up to the hero's own numbers.
     steps.push(numbers(hero));
     lines
         .iter()
         .enumerate()
         .map(|(i, &line)| {
-            let mut shares = [0.0; 9];
+            let mut shares = [0.0; Source::ALL.len()];
             shares[0] = steps[0][i];
             for (k, share) in shares.iter_mut().enumerate().skip(1) {
                 *share = steps[k][i] - steps[k - 1][i];

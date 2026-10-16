@@ -722,6 +722,8 @@ pub(super) fn hero_vitals(
         if hero.passives.iter().any(|(p, _)| p.key == "renew") {
             shown.push(139);
         }
+        // Then its part in the party: its stance, a soulstone, the group buffs on it.
+        super::synergy::auras(&hero, &mut shown);
         marks.set(&shown);
         marks.flush(entity, guid.0, &mut store, &mut fields);
 

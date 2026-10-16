@@ -505,7 +505,10 @@ fn land(
                         } else {
                             (0.0, false)
                         };
-                        hits.write(blow(owner, f.e, d, crit, effect));
+                        hits.write(Hit {
+                            school: Some(school),
+                            ..blow(owner, f.e, d, crit, effect)
+                        });
                     }
                     if knockback > 0.0 && !f.boss {
                         let away = flat(f.pos - site.pos).normalize_or_zero();
@@ -532,7 +535,7 @@ fn land(
                         .id(),
                 };
                 let mut ground = commands.entity(anchor);
-                ground.insert(GroundArea::burning(owner, dps, radius, duration));
+                ground.insert(GroundArea::burning(owner, dps, radius, duration, school));
                 if spec.at == Aim::Follow {
                     ground.insert(Follow(owner));
                 }
@@ -683,6 +686,7 @@ fn land(
                 hits.write(Hit {
                     dot: caster.damage(dps, level, school),
                     dot_dur: secs,
+                    school: Some(school),
                     ..blow(owner, foes[i].e, 0.0, false, data::Effect::None)
                 });
                 show.on(spec.visual, &[foes[i].e]);

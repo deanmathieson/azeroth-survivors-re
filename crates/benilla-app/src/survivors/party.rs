@@ -130,8 +130,8 @@ pub(super) struct HeroState {
     pub rerolls: u32,
     pub banishes: u32,
     pub banished: Vec<hand::Struck>,
-    /// How hard the horde wants this hero, against distance ([`pick_target`]): 1 for everyone
-    /// until tank stances raise it.
+    /// How hard the horde wants this hero, against distance ([`pick_target`]): 1, or more for a
+    /// tank in its stance or form in a party ([`super::synergy`]).
     pub threat: f32,
     /// Damage this hero's spells dealt; [`Run::damage_done`] is the party's total.
     pub damage_done: f64,
@@ -144,6 +144,9 @@ pub(super) struct HeroState {
     pub(super) jewelry: jewelry::Jewelry,
     /// What legendaries, talents and jewelry have granted this hero ([`super::mechanics`]).
     pub mechanics: super::mechanics::Mechanics,
+    /// Its part in a party's play ([`super::synergy`]): the group buffs on it, its resurrection,
+    /// soulstone and ankh, and its tank stance and taunt.
+    pub(super) synergy: super::synergy::HeroSynergy,
 }
 
 impl Default for HeroState {
@@ -179,6 +182,7 @@ impl Default for HeroState {
             damage_taken: 0.0,
             jewelry: jewelry::Jewelry::default(),
             mechanics: Default::default(),
+            synergy: Default::default(),
         }
     }
 }
@@ -392,8 +396,8 @@ pub(super) fn shield(target: &mut HeroState, amount: f32, secs: f32) {
 }
 
 /// The hero an enemy at `at` goes for, of `heroes` (each with its place and threat): the most
-/// threat over ground-plane distance. With every threat 1 that is the nearest; tank stances will
-/// raise a hero's, and a taunt forces the target outright (`Enemy::taunted`).
+/// threat over ground-plane distance. With every threat 1 that is the nearest; a tank's stance
+/// raises its own, and a taunt forces the target outright (`Enemy::taunted`).
 pub(super) fn pick_target(
     at: Vec3,
     heroes: impl IntoIterator<Item = (Entity, Vec3, f32)>,

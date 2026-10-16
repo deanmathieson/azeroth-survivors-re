@@ -36,6 +36,7 @@ mod rewards;
 mod run_options;
 mod sfx;
 mod stable;
+mod synergy;
 mod talents;
 mod toys;
 mod treasure;
@@ -87,6 +88,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
             .add_plugins(mechanics::plugin)
+            .add_plugins(synergy::plugin)
             .add_plugins(sfx::plugin)
             .add_plugins(bossbar::plugin)
             .init_state::<Phase>()
@@ -565,9 +567,20 @@ impl Default for Run {
 }
 
 impl HeroState {
+    /// The hero's bonuses with the party's group buffs on it ([`synergy`]) added in.
+    fn all_bonuses(&self) -> std::borrow::Cow<'_, Bonuses> {
+        if self.synergy.buffs.is_empty() {
+            return std::borrow::Cow::Borrowed(&self.bonuses);
+        }
+        let mut all = self.bonuses.clone();
+        all.merge(&synergy::buff_bonuses(&self.synergy.buffs));
+        std::borrow::Cow::Owned(all)
+    }
+
     /// The base, the class, the passives and the bonuses folded together (see [`Stats`]).
     pub fn stats(&self) -> Stats {
-        let b = &self.bonuses;
+        let all = self.all_bonuses();
+        let b = &*all;
         let mut s = Stats {
             might: 1.0 + b.get(StatKey::Damage),
             max_hp: BASE_HP + b.get(StatKey::MaxHealth),
@@ -627,7 +640,7 @@ impl HeroState {
 
     /// The multiplier on top of might for damage of `school`.
     fn school_mult(&self, school: School) -> f32 {
-        (1.0 + self.bonuses.school_damage(school)).max(0.0)
+        (1.0 + self.all_bonuses().school_damage(school)).max(0.0)
     }
 
     /// On lethal damage: spends an extra life if one is left, back up at [`REVIVE_HP`] of max
