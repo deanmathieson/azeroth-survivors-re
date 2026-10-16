@@ -36,6 +36,15 @@ pub(super) enum Rarity {
 }
 
 impl Rarity {
+    /// Ranks granted by a card of this quality.
+    pub(super) const fn ranks(self) -> u8 {
+        match self {
+            Self::Common | Self::Uncommon => 1,
+            Self::Rare => 2,
+            Self::Epic | Self::Legendary => 3,
+        }
+    }
+
     pub(super) fn color(self) -> Color {
         match self {
             Self::Common => COMMON,
@@ -106,9 +115,9 @@ fn spell_tier(def: &data::AbilityDef, hero: &HeroState) -> Rarity {
     }
 }
 
-/// What a choice is worth to `hero`, by what it brings: a top rank is Legendary, a rank that adds
-/// a target Epic, a new spell by its power among the class's ([`spell_tier`]), a plain rank
-/// Uncommon.
+/// What a choice is worth to `hero`, by what it brings: a rank that reaches the top is
+/// Legendary, a rank that adds a target Epic, a new spell by its power among the class's
+/// ([`spell_tier`]), a plain rank Uncommon.
 pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
     match choice {
         Choice::NewAbility(def) => spell_tier(def, hero),
@@ -120,12 +129,15 @@ pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
                     o.def.kind,
                     Kind::Bolt | Kind::Strike | Kind::Melee | Kind::Dot | Kind::Chain | Kind::Orbit
                 );
-            if next == data::MAX_ABILITY_LEVEL {
-                Rarity::Legendary
-            } else if targets {
+            let rarity = if targets {
                 Rarity::Epic
             } else {
                 Rarity::Uncommon
+            };
+            if o.level.saturating_add(rarity.ranks()) >= data::MAX_ABILITY_LEVEL {
+                Rarity::Legendary
+            } else {
+                rarity
             }
         }
         Choice::NewPassive(_) => Rarity::Uncommon,

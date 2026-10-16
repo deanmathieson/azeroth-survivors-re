@@ -1292,7 +1292,8 @@ pub(super) fn roll_offer(
     }
 }
 
-/// `choice` joins `hero`'s build; a top rank transforms its ability for the rest of the run.
+/// `choice` joins `hero`'s build; its rarity grants its ranks and a top rank transforms its
+/// ability for the rest of the run.
 pub(super) fn take(hero: &mut HeroState, choice: Choice) {
     match choice {
         Choice::NewAbility(def) => {
@@ -1305,14 +1306,24 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
             });
         }
         Choice::Upgrade(k) => {
-            hero.abilities[k].level += 1;
+            let ranks = super::cards::rarity(choice, hero).ranks();
+            hero.abilities[k].level = hero.abilities[k]
+                .level
+                .saturating_add(ranks)
+                .min(data::MAX_ABILITY_LEVEL);
             super::mechanics::sync_legendaries(hero);
         }
         Choice::NewPassive(p) => {
             let rank = super::talents::first_rank(hero, p.key);
             hero.passives.push((p, rank));
         }
-        Choice::UpPassive(k) => hero.passives[k].1 += 1,
+        Choice::UpPassive(k) => {
+            let ranks = super::cards::rarity(choice, hero).ranks();
+            hero.passives[k].1 = hero.passives[k]
+                .1
+                .saturating_add(ranks)
+                .min(data::MAX_PASSIVE_LEVEL);
+        }
         Choice::Overcharge(kind) => hero.overcharges[kind.index()] += 1,
         Choice::Jewel(piece) => super::jewelry::put_on(hero, piece),
         // The healthstone heals no downed hero, as no heal does.
@@ -1539,7 +1550,10 @@ pub(super) fn describe_card(
         }
         Choice::Upgrade(k) => {
             let o = &hero.abilities[k];
-            let next = o.level + 1;
+            let next = o
+                .level
+                .saturating_add(super::cards::rarity(choice, hero).ranks())
+                .min(data::MAX_ABILITY_LEVEL);
             let stats = hero.stats();
             let (a, b) = (
                 cast_at(o.def, o.level, &stats),
@@ -1592,6 +1606,9 @@ pub(super) fn describe_card(
         },
         Choice::UpPassive(k) => {
             let (p, level) = hero.passives[k];
+            let next = level
+                .saturating_add(super::cards::rarity(choice, hero).ranks())
+                .min(data::MAX_PASSIVE_LEVEL);
             let fmt = |v: f32| match p.stat {
                 Stat::Regen | Stat::Armor => num(v),
                 _ => pct(v),
@@ -1599,13 +1616,13 @@ pub(super) fn describe_card(
             CardText {
                 spell: p.spell,
                 name: p.name.into(),
-                tag: format!("Rank {level} » {}", level + 1),
+                tag: format!("Rank {level} » {next}"),
                 tag_color: Color::WHITE,
                 desc: format!(
                     "{}\n{} » {}",
                     stat_label(p.stat),
                     fmt(p.per_level * f32::from(level)),
-                    fmt(p.per_level * f32::from(level + 1)),
+                    fmt(p.per_level * f32::from(next)),
                 ),
                 ranks: Some((level, data::MAX_PASSIVE_LEVEL)),
                 legendary: None,
@@ -2868,6 +2885,17 @@ pub(super) fn show_panels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rare_cards_show_and_grant_their_extra_ranks() {
+        let mut hero = HeroState::default();
+        hero.passives.push((&data::PASSIVES[0], 3));
+        let choice = Choice::UpPassive(0);
+        assert_eq!(super::super::cards::rarity(choice, &hero).ranks(), 2);
+        assert_eq!(describe_card(choice, &hero, None).tag, "Rank 3 » 5");
+        take(&mut hero, choice);
+        assert_eq!(hero.passives[0].1, data::MAX_PASSIVE_LEVEL);
+    }
 
     #[test]
     fn closing_a_jewelry_hand_spends_its_jewelry_pick() {

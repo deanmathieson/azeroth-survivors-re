@@ -207,17 +207,17 @@ impl RunOptions {
     }
 }
 
-/// The experience the density split still owes, in `1/(4·density)` parts of a point: whole
+/// The experience the density split still owes, in `1/(100·density)` parts of a point: whole
 /// integers, so the total over many spawns is exact, never a float's drift.
 #[derive(Default, Debug)]
 pub(super) struct XpCarry(u32);
 
 impl XpCarry {
-    /// One spawn's share of `xp` at `density`, `xp / density` on average. The density sits on a
-    /// quarter step, so `4·density` parts make a point.
+    /// One spawn's share of `xp` at `density`, `xp / density` on average. The party multiplier
+    /// has one decimal place, so one hundredth parts make a point.
     pub(super) fn share(&mut self, xp: u32, density: f32) -> u32 {
-        let parts = (density * 4.0).round().max(4.0) as u32;
-        let owed = self.0 + xp.saturating_mul(4);
+        let parts = (density * 100.0).round().max(100.0) as u32;
+        let owed = self.0 + xp.saturating_mul(100);
         self.0 = owed % parts;
         owed / parts
     }
@@ -231,9 +231,15 @@ pub(super) struct Scaled {
     pub xp: u32,
 }
 
-/// The one place the options touch an enemy. A boss keeps its whole experience: density adds no
-/// bosses.
-pub(super) fn scaled(def: &EnemyDef, opts: &RunOptions, boss: bool, carry: &mut XpCarry) -> Scaled {
+/// The one place the options touch an enemy. A boss keeps its whole experience: neither slider
+/// density nor party size adds bosses.
+pub(super) fn scaled(
+    def: &EnemyDef,
+    opts: &RunOptions,
+    boss: bool,
+    party_density: f32,
+    carry: &mut XpCarry,
+) -> Scaled {
     Scaled {
         hp: def.hp * opts.health,
         damage: def.damage * opts.damage,
@@ -241,7 +247,7 @@ pub(super) fn scaled(def: &EnemyDef, opts: &RunOptions, boss: bool, carry: &mut 
         xp: if boss {
             def.xp
         } else {
-            carry.share(def.xp, opts.density)
+            carry.share(def.xp, opts.density * party_density)
         },
     }
 }
@@ -948,6 +954,10 @@ mod tests {
         let mut carry = XpCarry::default();
         let total: u32 = (0..10).map(|_| carry.share(1, 2.5)).sum();
         assert_eq!(total, 4);
+        // A five-player horde has 3.4 times as many enemies and keeps the solo XP pace.
+        let mut carry = XpCarry::default();
+        let total: u32 = (0..34).map(|_| carry.share(5, 3.4)).sum();
+        assert_eq!(total, 50);
     }
 
     #[test]
@@ -965,11 +975,11 @@ mod tests {
         };
         let o = opts(3.0, 2.0, 1.5, 1.2);
         let mut carry = XpCarry::default();
-        let s = scaled(&def, &o, false, &mut carry);
+        let s = scaled(&def, &o, false, 1.0, &mut carry);
         assert!(close(s.hp, 200.0) && close(s.damage, 15.0) && close(s.speed, 6.0));
         assert_eq!(s.xp, 1);
         assert_eq!(
-            scaled(&def, &o, true, &mut carry).xp,
+            scaled(&def, &o, true, 1.0, &mut carry).xp,
             3,
             "a boss keeps it all"
         );

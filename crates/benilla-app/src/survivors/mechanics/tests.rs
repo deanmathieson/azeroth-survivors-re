@@ -427,11 +427,12 @@ fn grant_replaces_by_id_and_revoke_takes_back_only_its_own() {
 #[test]
 fn the_top_rank_grants_its_legendary_once_for_the_run() {
     let mut hero = hero_with("frostbolt", data::MAX_ABILITY_LEVEL - 2);
-    hero.abilities[0].level += 1;
-    assert_eq!(sync_legendaries(&mut hero), 0, "not yet the top rank");
     hud::take(&mut hero, Choice::Upgrade(0));
     let id = MechanicId::Legendary("frostbolt");
-    assert!(has(&hero, id), "taking the top rank transforms it at once");
+    assert!(
+        has(&hero, id),
+        "a multi-rank card transforms at the top rank"
+    );
     let legend = data::legendary("frostbolt").unwrap();
     assert_eq!(hero.mechanics.specs().count(), legend.mechanics.len());
     assert!(hero

@@ -170,9 +170,15 @@ pub(super) fn spawn_enemy(
     xp_carry: &mut XpCarry,
 ) {
     // The Run Options first, then the run clock's growth and the party's size, then an elite's own
-    // multipliers. Only the horde splits its experience under density: density adds no bosses,
-    // elites or guardians.
-    let tuned = run_options::scaled(def, opts, rank != Rank::Horde, xp_carry);
+    // multipliers. Only the horde splits its experience under density: neither density nor party
+    // size adds bosses, elites or guardians.
+    let tuned = run_options::scaled(
+        def,
+        opts,
+        rank != Rank::Horde,
+        party::scale(run.party),
+        xp_carry,
+    );
     let body = ranked_body(
         treasure::Body {
             hp: tuned.hp * data::hp_scale(run.elapsed) * party::scale(run.party),

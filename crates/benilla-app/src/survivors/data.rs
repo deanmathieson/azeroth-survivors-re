@@ -2806,13 +2806,19 @@ pub(crate) fn damage_scale(elapsed: f32) -> f32 {
 }
 
 /// The experience to go from `level` to the next: cheap early, then a steady climb that leaves a
-/// normal-density run enough picks to finish every slot and keep growing.
+/// normal-density run time to play between hands while rarity carries a build to its top ranks.
 pub(crate) fn xp_to_next(level: u32) -> f32 {
     let l = level as f32;
-    if level < 20 {
-        5.0 + (l - 1.0) * 10.0
+    if level < 11 {
+        10.0 + (l - 1.0) * 17.0
+    } else if level < 25 {
+        147.0 - (l - 10.0)
+    } else if level < 40 {
+        let middle = l - 25.0;
+        133.0 + middle * 32.0 - middle * middle * 0.84
     } else {
-        195.0 + (l - 20.0) * 3.0
+        let late = l - 40.0;
+        425.0 + late * 9.0 + late * late * 6.6
     }
 }
 
@@ -2821,11 +2827,13 @@ pub(crate) fn xp_to_next(level: u32) -> f32 {
 /// value come from the default roster, so the pacing test follows the live spawn table rather than
 /// a hand-made curve.
 #[cfg(test)]
-fn normal_run_xp(seconds: f32) -> f32 {
+fn normal_run_xp(seconds: f32, party_size: u8) -> f32 {
     const TARGET_REFRESHES_PER_MINUTE: f32 = 5.0;
     const ELITES_PER_MINUTE: f32 = 60.0 / 75.0;
     let roster = roster(0);
-    let horde_kills_per_minute = target_alive(0.0) as f32 * TARGET_REFRESHES_PER_MINUTE;
+    let horde_kills_per_minute =
+        super::party::crowd(target_alive(0.0), party_size) as f32 * TARGET_REFRESHES_PER_MINUTE;
+    let horde_xp_scale = 1.0 / super::party::scale(party_size);
     let whole_minutes = (seconds / 60.0).floor() as u32;
     let partial = (seconds / 60.0).fract();
     let minute_xp = |minute: u32| {
@@ -2836,7 +2844,7 @@ fn normal_run_xp(seconds: f32) -> f32 {
             .map(|&i| roster.enemies[i].xp as f32)
             .sum::<f32>()
             / pool.len() as f32;
-        (horde_kills_per_minute + ELITES_PER_MINUTE) * horde_xp * XP_RATE
+        (horde_kills_per_minute * horde_xp_scale + ELITES_PER_MINUTE) * horde_xp * XP_RATE
     };
     let horde = (0..whole_minutes).map(minute_xp).sum::<f32>() + minute_xp(whole_minutes) * partial;
     let bosses = roster
@@ -2861,13 +2869,26 @@ fn level_at_xp(mut xp: f32) -> u32 {
 
 #[cfg(test)]
 #[test]
-fn normal_density_reaches_a_full_build_without_rushing_the_opening() {
-    for minute in [3.0, 5.0, 10.0, 15.0] {
-        let level = level_at_xp(normal_run_xp(minute * 60.0));
-        eprintln!("normal density: level {level} at {minute}:00");
+fn normal_density_keeps_a_build_moving_without_constant_hands() {
+    for party_size in [1, 5] {
+        for minute in [2.5, 6.0, 10.0, 15.0] {
+            let xp = normal_run_xp(minute * 60.0, party_size);
+            let level = level_at_xp(xp);
+            eprintln!("normal density, {party_size}-player: level {level} at {minute}:00");
+        }
     }
-    assert!(level_at_xp(normal_run_xp(180.0)) < 20);
-    assert!((80..=90).contains(&level_at_xp(normal_run_xp(VICTORY_SECS))));
+    for (seconds, expected) in [(150.0, 10), (360.0, 25), (600.0, 40), (VICTORY_SECS, 54)] {
+        let level = level_at_xp(normal_run_xp(seconds, 1));
+        assert!(
+            (expected - 2..=expected + 2).contains(&(level as i32)),
+            "normal density: wanted about {expected} at {seconds}s, got {level}"
+        );
+        let party_level = level_at_xp(normal_run_xp(seconds, 5));
+        assert!(
+            (level as i32 - 1..=level as i32 + 1).contains(&(party_level as i32)),
+            "five players should stay near solo pace at {seconds}s: solo {level}, party {party_level}"
+        );
+    }
 }
 
 /// A creature on a battleground's roster: who it is, its pace and its size. Its health, damage
