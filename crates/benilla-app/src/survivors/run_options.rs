@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::data::EnemyDef;
 use super::hud::{HudFont, MenuRoot};
-use super::menu::{MenuBuilt, MenuButtons};
+use super::menu::{MenuBuilt, MenuPrimary};
 use super::{Phase, Run};
 use crate::glue::art::{GlueArt, GOLD, INFO_TEXT};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -422,7 +422,7 @@ fn stamp_run(opts: Res<RunOptions>, mut run: ResMut<Run>) {
 fn build_ui(
     mut commands: Commands,
     roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<OptionsBuilt>)>,
-    buttons: Query<Entity, With<MenuButtons>>,
+    buttons: Query<Entity, With<MenuPrimary>>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
