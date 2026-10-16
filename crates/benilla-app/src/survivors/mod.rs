@@ -56,6 +56,8 @@ use bonus::{Bonuses, School, StatKey, ARMOR_CAP};
 use data::{AbilityDef, ClassDef, Stat};
 use party::{HeroState, LocalHero};
 
+pub(crate) use hud::SweepUiMaterial;
+
 /// Set by [`crate::run_survivors`] before the app builds. wasm32 has no process environment, so
 /// the flag lives here; `WOW_SURVIVORS` (`?survivors=1` / `__wenilla_env.survivors` on the web)
 /// still turns it on from outside.

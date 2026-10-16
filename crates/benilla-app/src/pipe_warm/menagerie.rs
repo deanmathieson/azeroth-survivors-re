@@ -8,6 +8,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::Buffer;
+use bevy::ui_render::ui_material::MaterialNode;
 
 use benilla_assets::materials::{LiquidMaterial, WowModelMaterial};
 use benilla_world::clouds::CloudMaterial;
@@ -43,6 +44,8 @@ pub(super) struct WarmLanes<'w> {
     pub(super) images: ResMut<'w, Assets<Image>>,
     /// For the minimap interior composite's tile material, through its production builder.
     ui_quads: ResMut<'w, Assets<crate::ui_pass::UiQuadMaterial>>,
+    /// For the survivors HUD's radial cooldown overlay.
+    sweeps: ResMut<'w, Assets<crate::survivors::SweepUiMaterial>>,
 }
 
 /// A portrait booth camera and its layer. Booths run `Msaa::Off`, so each model pipeline has a
@@ -556,6 +559,20 @@ pub(super) fn spawn_menagerie(
         // Visible, unlike the paced model rigs: one pipeline, drawn at a negligible scale.
         Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::splat(0.001)),
         crate::ui_pass::ui_render_layers(),
+        WarmRig,
+    ));
+    count += 1;
+
+    // The survivors HUD's cooldown sweep is a UI material, so it needs a real UI node rather
+    // than a 2-D mesh rig. Its one-pixel node queues the same pipeline under the loading cover.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(1.0),
+            height: Val::Px(1.0),
+            ..default()
+        },
+        MaterialNode(lanes.sweeps.add(crate::survivors::SweepUiMaterial::warm())),
         WarmRig,
     ));
     count += 1;

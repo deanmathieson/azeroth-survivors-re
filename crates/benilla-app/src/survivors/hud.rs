@@ -90,7 +90,7 @@ pub(super) struct LevelUpHint;
 /// A radial cooldown sweep over one ability icon: `sweep` is the remaining fraction
 /// (1.0 = just cast, 0.0 = ready), drawn by `ui_sweep.wgsl`.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub(super) struct SweepUiMaterial {
+pub(crate) struct SweepUiMaterial {
     #[uniform(0)]
     pub(super) sweep: f32,
 }
@@ -98,6 +98,13 @@ pub(super) struct SweepUiMaterial {
 impl UiMaterial for SweepUiMaterial {
     fn fragment_shader() -> ShaderRef {
         "embedded://benilla_app/shaders/ui_sweep.wgsl".into()
+    }
+}
+
+impl SweepUiMaterial {
+    /// A representative sweep for the pipeline warm pass.
+    pub(crate) fn warm() -> Self {
+        Self { sweep: 0.0 }
     }
 }
 
