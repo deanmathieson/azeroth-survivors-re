@@ -31,6 +31,7 @@ mod meta;
 mod minimap;
 mod mobility;
 mod party;
+mod partyui;
 mod profile;
 mod quests;
 mod racials;
@@ -95,6 +96,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(sfx::plugin)
             .add_plugins(bossbar::plugin)
             .add_plugins(strip::plugin)
+            .add_plugins(partyui::plugin)
             .init_state::<Phase>()
             .init_resource::<party::NetRole>()
             .init_resource::<Rng>()
@@ -228,11 +230,7 @@ impl Plugin for SurvivorsPlugin {
                     cards::choose_card,
                     cards::animate_cards,
                     hud::refresh_hud,
-                    (
-                        hud::refresh_results,
-                        hud::refresh_party_results,
-                        party::level_up_sub,
-                    ),
+                    (hud::refresh_results, party::level_up_sub),
                     hud::refresh_notes,
                     hud::fill_icons,
                     hud::update_cooldown_sweeps,

@@ -259,6 +259,10 @@ pub(super) fn resurrect(
             format!("{name} casts {} on {}", def.spell.name, label(&h)),
             COLOR_HEAL,
         );
+        // The results' Necromancer counts it.
+        if let Ok((.., mut c)) = heroes.get_mut(caster) {
+            c.revives_given += 1;
+        }
     }
 }
 
@@ -353,6 +357,7 @@ mod tests {
         assert!(texts(&w).contains(&"Player 1 casts Resurrection on Player 2".to_string()));
         let cd = hero(&w, hs[0]).synergy.res.cd;
         assert_eq!(cd, RES_COOLDOWN);
+        assert_eq!(hero(&w, hs[0]).revives_given, 1, "credited to the caster");
         // Another falls: the cooldown holds it off until it is through.
         lie(&mut w, hs[2], 10.0);
         for _ in 0..80 {
