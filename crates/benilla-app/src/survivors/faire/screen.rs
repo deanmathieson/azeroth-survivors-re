@@ -28,7 +28,7 @@ use bevy::ui_render::ui_material::MaterialNode;
 use super::super::armory::{panel, para, text, TabCtx};
 use super::super::gear::ItemIcon;
 use super::super::hud::{self, HudFont};
-use super::super::menu::{self, MenuButtons};
+use super::super::menu::{self, MenuSlot};
 use super::super::profile::Profile;
 use super::super::run_options::GREEN;
 use super::super::{Phase, Selection};
@@ -203,11 +203,14 @@ pub(super) fn plugin(app: &mut App) {
 #[allow(clippy::type_complexity)]
 fn build_entry(
     mut commands: Commands,
-    buttons: Query<Entity, (With<MenuButtons>, Without<EntryBuilt>)>,
+    buttons: Query<(Entity, &MenuSlot), Without<EntryBuilt>>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
-    let Ok(buttons) = buttons.single() else {
+    let Some(buttons) = buttons
+        .iter()
+        .find_map(|(entity, slot)| (*slot == MenuSlot::Faire).then_some(entity))
+    else {
         return;
     };
     let f = &font.0;

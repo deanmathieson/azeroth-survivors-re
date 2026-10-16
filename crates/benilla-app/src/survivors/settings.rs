@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 
 use super::hud::{HudFont, MenuRoot, UiAction};
-use super::menu::{MenuBuilt, MenuButtons};
+use super::menu::{MenuBuilt, MenuSlot};
 use crate::cvars::Cvars;
 use crate::glue::art::{GlueArt, GOLD, INFO_TEXT};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -132,11 +132,16 @@ pub(super) fn plugin(app: &mut App) {
 fn build(
     mut commands: Commands,
     roots: Query<Entity, MenuBuildRoot>,
-    buttons: Query<Entity, With<MenuButtons>>,
+    buttons: Query<(Entity, &MenuSlot)>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
-    let (Ok(root), Ok(buttons)) = (roots.single(), buttons.single()) else {
+    let (Ok(root), Some(buttons)) = (
+        roots.single(),
+        buttons
+            .iter()
+            .find_map(|(entity, slot)| (*slot == MenuSlot::Options).then_some(entity)),
+    ) else {
         return;
     };
     commands

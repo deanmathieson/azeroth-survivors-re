@@ -359,28 +359,19 @@ fn customize_input(
     }
 }
 
-/// The menu's Armory button, under the race and class tower, centred on it as Randomize is.
+/// The menu's Armory button occupies its fixed character-select action-stack slot.
 pub(super) fn entry_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
-    ui.spawn(Node {
-        position_type: PositionType::Absolute,
-        // The tower: 206 wide at (28, 74), 590 tall; Randomize is 146 wide at its x 30.
-        left: Val::Px(28.0 + 30.0),
-        top: Val::Px(74.0 + 590.0 + 14.0),
-        ..default()
-    })
-    .with_children(|b| {
-        glue_button(
-            b,
-            art,
-            f,
-            ArmoryAction::Open,
-            "Armory",
-            146.0,
-            30.0,
-            GlueBtnKind::Small,
-            1.0,
-        );
-    });
+    glue_button(
+        ui,
+        art,
+        f,
+        ArmoryAction::Open,
+        "Armory",
+        150.0,
+        38.0,
+        GlueBtnKind::Small,
+        1.0,
+    );
 }
 
 /// The Armory's clicks, and Esc to close it; Esc does nothing else while it is open.

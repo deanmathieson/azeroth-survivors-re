@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
 
 use super::hud::{looks_for, rgb, start_run, HudFont, MenuRoot};
+use super::profile::Profile;
 use super::run_options::GREEN;
 use super::zones::{self, Unlocks};
 use super::{data, racials, HeroState, LocalHero, MetaBonuses, Phase, Rng, Run, Selection};
@@ -64,6 +65,17 @@ const RACE_CARD_W: f32 = 210.0;
 const FINAL_BOSS: Color = Color::srgb(1.0, 0.5, 0.25);
 const FOES: Color = Color::srgb(0.8, 0.8, 0.8);
 
+/// The fixed, top-to-bottom order of the character-select utility stack.
+#[cfg(test)]
+const SECONDARY_BUTTONS: [&str; 6] = [
+    "Customize",
+    "Armory",
+    "Darkmoon Faire",
+    "Multiplayer",
+    "Options",
+    "Quit",
+];
+
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum MenuAction {
     Race(u8),
@@ -73,16 +85,35 @@ pub(super) enum MenuAction {
     Randomize,
     Customize,
     Enter,
+    Quit,
 }
 
 /// On [`MenuRoot`] once the glue art is in and the screen is built.
 #[derive(Component)]
 pub(super) struct MenuBuilt;
 
-/// The bottom menu actions share this flex row, so each entry keeps its button and captions in
-/// one block without independently claiming the same screen coordinates.
+/// The character-select actions live in one fixed right-hand stack. Feature modules receive a
+/// slot, rather than appending themselves in plugin order.
 #[derive(Component)]
 pub(super) struct MenuButtons;
+
+#[derive(Component)]
+pub(super) struct MenuPrimary;
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MenuSlot {
+    Customize,
+    Armory,
+    Faire,
+    Multiplayer,
+    Options,
+}
+
+/// The menu's slim profile readout.
+#[derive(Component)]
+struct MenuResources;
+#[derive(Component)]
+struct MenuResourceText;
 
 /// A race button's face, re-cropped to the picked gender.
 #[derive(Component)]
@@ -138,7 +169,12 @@ pub(super) enum RaceCardText {
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (refresh_zone_rows, refresh_zone_card, refresh_race_card)
+        (
+            refresh_zone_rows,
+            refresh_zone_card,
+            refresh_race_card,
+            refresh_resources,
+        )
             .after(menu_clicks)
             .before(crate::glue::GlueVisuals),
     );
@@ -256,8 +292,10 @@ pub(super) fn build_menu(
     art.ensure_loaded(&mut assets, &mut images, &mut add_mats);
     let f = &font.0;
     commands.entity(root).insert(MenuBuilt).with_children(|ui| {
+        // The outer screen is a column: a slim account bar, then the familiar select screen.
+        // The screen's art still owns its detailed tower and zone-row placement.
+        resource_bar(ui, f);
         tower(ui, &art, f);
-        super::armory::entry_button(ui, &art, f);
         // `CharacterCreateWoWLogo`, 256×128 at TOPLEFT (3,-7), after the tower so it draws over
         // the border art, as the create screen orders it.
         if let Some(logo) = &art.logo {
@@ -294,46 +332,163 @@ pub(super) fn build_menu(
                 1.0,
             );
         });
-        // `CharSelectEnterWorldButton`, 200×60 at BOTTOM (0,30). The surrounding row also holds
-        // the Survivors entries, whose captions make their blocks taller than this button.
-        ui.spawn((
-            MenuButtons,
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(30.0),
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::FlexEnd,
-                column_gap: Val::Px(16.0),
-                ..default()
-            },
-        ))
-        .with_children(|c| {
-            glue_button(
-                c,
-                &art,
-                f,
-                MenuAction::Customize,
-                "Customize",
-                150.0,
-                38.0,
-                GlueBtnKind::Small,
-                1.0,
-            );
-            glue_button(
-                c,
-                &art,
-                f,
-                MenuAction::Enter,
-                "Enter World",
-                200.0,
-                60.0,
-                GlueBtnKind::Normal,
-                1.0,
-            );
-        });
+        // The character-select footer has a centred primary pair and one right-hand action stack.
+        ui.spawn((Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(30.0),
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::FlexEnd,
+            justify_content: JustifyContent::SpaceBetween,
+            padding: UiRect::horizontal(Val::Px(28.0)),
+            ..default()
+        },))
+            .with_children(|c| {
+                // Balances the action stack and keeps Enter World visually centred.
+                c.spawn(Node {
+                    width: Val::Px(150.0),
+                    ..default()
+                });
+                c.spawn((
+                    MenuPrimary,
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|primary| {
+                    glue_button(
+                        primary,
+                        &art,
+                        f,
+                        MenuAction::Enter,
+                        "Enter World",
+                        230.0,
+                        60.0,
+                        GlueBtnKind::Normal,
+                        1.0,
+                    );
+                });
+                c.spawn((
+                    MenuButtons,
+                    Node {
+                        width: Val::Px(150.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|stack| {
+                    stack
+                        .spawn((
+                            MenuSlot::Customize,
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|slot| {
+                            glue_button(
+                                slot,
+                                &art,
+                                f,
+                                MenuAction::Customize,
+                                "Customize",
+                                150.0,
+                                38.0,
+                                GlueBtnKind::Small,
+                                1.0,
+                            )
+                        });
+                    stack
+                        .spawn((
+                            MenuSlot::Armory,
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|slot| super::armory::entry_button(slot, &art, f));
+                    for slot in [MenuSlot::Faire, MenuSlot::Multiplayer, MenuSlot::Options] {
+                        stack.spawn((
+                            slot,
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                        ));
+                    }
+                    glue_button(
+                        stack,
+                        &art,
+                        f,
+                        MenuAction::Quit,
+                        "Quit",
+                        150.0,
+                        38.0,
+                        GlueBtnKind::Small,
+                        1.0,
+                    );
+                });
+            });
     });
+}
+
+fn resource_bar(ui: &mut ChildSpawnerCommands, f: &Handle<Font>) {
+    ui.spawn((
+        MenuResources,
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    ))
+    .with_children(|bar| {
+        let text = outlined_text(
+            bar,
+            Node::default(),
+            (),
+            (),
+            GlueText {
+                text: "",
+                size: 14.0,
+                color: GOLD,
+                wrap: false,
+            },
+            f,
+            1.0,
+        );
+        bar.commands().entity(text).insert(MenuResourceText);
+    });
+}
+
+fn refresh_resources(
+    profile: Option<Res<Profile>>,
+    selection: Res<Selection>,
+    mut labels: Query<&mut Text, With<MenuResourceText>>,
+) {
+    let Some(profile) = profile else { return };
+    let points = selection
+        .class
+        .and_then(|class| super::talents::saved(&profile, class))
+        .map_or(0, |save| {
+            super::talents::earned_points(save, 0).saturating_sub(save.spent())
+        });
+    let text = format!(
+        "Talent Points: {points}    Tickets: {}    Gold: {}",
+        profile.faire.tickets, profile.account.gold_earned
+    );
+    for mut label in &mut labels {
+        label.0 = text.clone();
+    }
 }
 
 /// `CharacterCreateConfigurationFrame`, 206×600 at TOPLEFT (28,-74): the race columns under the
@@ -851,18 +1006,23 @@ pub(super) fn menu_clicks(
     profile: Option<Res<super::profile::Profile>>,
     mut dice: Option<ResMut<super::gear::LooksDice>>,
     mut create: ResMut<super::gear::looks_create::CreateSession>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
     }
-    let Some(creatures) = creatures.as_deref() else {
-        return;
-    };
     let Some(action) = actions
         .iter()
         .find(|(e, _)| clicks.hit(*e))
         .map(|(_, a)| *a)
     else {
+        return;
+    };
+    if action == MenuAction::Quit {
+        exit.write(AppExit::Success);
+        return;
+    }
+    let Some(creatures) = creatures.as_deref() else {
         return;
     };
     let all = all_looks(creatures);
@@ -892,6 +1052,7 @@ pub(super) fn menu_clicks(
                 next.set(Phase::Playing);
             }
         }
+        MenuAction::Quit => return,
         MenuAction::Randomize => {
             let picks: Vec<(usize, usize)> = all
                 .iter()
@@ -993,7 +1154,10 @@ pub(super) fn refresh_menu_ui(
             MenuAction::Sex(s) => cur.is_some_and(|c| c.1 == s),
             MenuAction::Class(i) => selection.class == Some(i),
             MenuAction::Map(i) => selection.map == i,
-            MenuAction::Randomize | MenuAction::Customize | MenuAction::Enter => false,
+            MenuAction::Randomize
+            | MenuAction::Customize
+            | MenuAction::Enter
+            | MenuAction::Quit => false,
         };
         if let Some(mut lock) = lock {
             if lock.0 != selected {
@@ -1227,6 +1391,22 @@ pub(super) fn refresh_race_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn character_select_actions_have_one_fixed_stack_order() {
+        assert_eq!(
+            SECONDARY_BUTTONS,
+            [
+                "Customize",
+                "Armory",
+                "Darkmoon Faire",
+                "Multiplayer",
+                "Options",
+                "Quit",
+            ]
+        );
+        assert_eq!(SECONDARY_BUTTONS.len(), 6);
+    }
 
     /// The body directory each race's looks must come from, by `ChrRaces` id - 1.
     const RACE_DIRS: [&str; 8] = [

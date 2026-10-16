@@ -13,7 +13,7 @@ use bevy::ui::FocusPolicy;
 use bevy_replicon::prelude::RepliconChannels;
 
 use super::super::hud::{start_run, HudFont, MenuRoot};
-use super::super::menu::{MenuBuilt, MenuButtons};
+use super::super::menu::{MenuBuilt, MenuSlot};
 use super::super::run_options::GREEN;
 use super::super::zones::Unlocks;
 use super::super::{data, HeroState, LocalHero, MetaBonuses, Phase, Run, Selection};
@@ -114,11 +114,17 @@ pub(super) fn plugin(app: &mut App) {
 fn build_ui(
     mut commands: Commands,
     roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<NetBuilt>)>,
-    buttons: Query<Entity, With<MenuButtons>>,
+    buttons: Query<(Entity, &MenuSlot)>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
-    let (Ok(root), Ok(buttons)) = (roots.single(), buttons.single()) else {
+    let (Ok(root), Some(buttons)) = (
+        roots.single(),
+        buttons.iter().find_map(|(entity, slot)| {
+            // Multiplayer owns only its fixed slot in the menu stack.
+            (*slot == MenuSlot::Multiplayer).then_some(entity)
+        }),
+    ) else {
         return;
     };
     let f = &font.0;
