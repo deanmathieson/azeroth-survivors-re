@@ -31,6 +31,11 @@ pub struct RigRider {
     pub slot: u16,
 }
 
+/// A uniform scale on a [`RigRider`]'s placement, about its attachment point: a cosmetic prop
+/// sized to a body it was not authored for (a mount's hat). Absent, the rider draws at 1.
+#[derive(Component, Clone, Copy, PartialEq)]
+pub struct RiderScale(pub f32);
+
 /// Writes every rider's frame, with the palette's writers ([`crate::rig_palette::plugin`]): after
 /// propagation and the billboard joint pass, before the publish. A missing host, pose or bone
 /// leaves the rows at their last frame; [`RigPalettes::write_rider`] is idempotent, so a standing
@@ -38,7 +43,7 @@ pub struct RigRider {
 /// re-arms on `[CGUnit+0xd24]`'s instance (BowPull 160 at `$BWP`, BowRelease 161 or Stand 0 at
 /// `$BWR`), writes row `b` as `F × own.model[b] × ibp[b]`, every frame.
 pub(crate) fn write_rig_riders(
-    riders: Query<(Entity, &RigRider)>,
+    riders: Query<(Entity, &RigRider, Option<&RiderScale>)>,
     poses: Query<&RigPose>,
     skins: Query<&RigSkin>,
     frames: Query<&GlobalTransform>,
@@ -47,7 +52,7 @@ pub(crate) fn write_rig_riders(
     mut scratch: Local<Vec<GlobalTransform>>,
     mut palettes: ResMut<RigPalettes>,
 ) {
-    for (entity, rider) in &riders {
+    for (entity, rider, scale) in &riders {
         let Ok(pose) = poses.get(rider.host) else {
             continue;
         };
@@ -62,7 +67,15 @@ pub(crate) fn write_rig_riders(
         let origin = rebase_origin(root_g.translation());
         let mut basis = root_g.affine();
         basis.translation -= bevy::math::Vec3A::from(origin);
-        let frame = basis * *bone * bevy::math::Affine3A::from_translation(rider.local);
+        let place = match scale {
+            Some(&RiderScale(s)) => bevy::math::Affine3A::from_scale_rotation_translation(
+                Vec3::splat(s),
+                Quat::IDENTITY,
+                rider.local,
+            ),
+            None => bevy::math::Affine3A::from_translation(rider.local),
+        };
+        let frame = basis * *bone * place;
         // A prop with its own pose: its bone frames compose onto the placement and are written as
         // a body's rows.
         let posed = poses

@@ -50,6 +50,10 @@ pub(crate) mod attach_id {
     pub(crate) const HAND_ARROW: u16 = 0x23;
     /// The worn quiver's attachment (`0x479c50`), the stowed mainhand two-hander's point.
     pub(crate) const QUIVER: u16 = 26;
+    /// A mount hat's seat: no riding model authors the helm point (11), so
+    /// [`crate::entities::mount`] adds this one to the mount's [`super::BoneAttach`], on the head.
+    /// Outside the M2 id range, so no authored attachment shadows it.
+    pub(crate) const MOUNT_HAT: u16 = 0xF00B;
 }
 
 /// The `ItemDisplayInfo.dbc` catalog and the item model cache; absent if the DBC fails to load.
@@ -115,6 +119,9 @@ pub(crate) struct HeldItems {
 
 pub(super) const ATTACH_SLOTS: usize = 8;
 
+/// The helm's attach slot, in [`ATTACH_SLOT_NAMES`] order; a mount hat rides it too.
+pub(in crate::entities) const HAT_SLOT: usize = 3;
+
 /// What the disarm reflex left attached: the reference builds attachments from events, and this is
 /// the one such state kept across frames. `0x5ff580` runs on any unit whose disarm bit changes
 /// (`0x5ff619`); as it rises, a drawn weapon leaves the hidden hand (`0x5ff676`,
@@ -179,15 +186,15 @@ impl ItemDisplays {
 }
 
 impl HeldItems {
-    /// A cosmetic model on a creature's head attachment. Mount hats deliberately use the
-    /// ordinary equipment spawn path, so a model or attachment that is not ready stays absent.
+    /// A cosmetic model on a mount's head, at [`attach_id::MOUNT_HAT`]. Mount hats deliberately use
+    /// the ordinary equipment spawn path, so a model or seat that is not ready stays absent.
     pub(crate) fn mount_hat(display: Option<u32>) -> Self {
         let mut slots = [None; ATTACH_SLOTS];
         if let Some(display) = display {
-            slots[3] = Some(HeldSlot {
+            slots[HAT_SLOT] = Some(HeldSlot {
                 display,
                 kind: ItemModelKind::Helm { race: 1, sex: 0 },
-                attach: attach_id::HELM,
+                attach: attach_id::MOUNT_HAT,
                 visual: NO_GLOW,
             });
         }
@@ -255,6 +262,17 @@ pub(crate) const ATTACH_SLOT_NAMES: [&str; ATTACH_SLOTS] = [
 /// (`0x47a200`) and the ranged and ammo builder pass the display's visual.
 const NO_GLOW: i32 = 0;
 
+/// A helm's model file for a race and sex: helms are one file per wearer, `<stem>_<Race><M|F>.m2`
+/// under `Item\ObjectComponents\Head`.
+pub(crate) fn helm_file(model: &str, race: u8, sex: u8) -> String {
+    // Race 1-8 is Hu Or Dw Ni Sc Ta Gn Tr, sex M or F.
+    const RACE_PREFIX: [&str; 8] = ["Hu", "Or", "Dw", "Ni", "Sc", "Ta", "Gn", "Tr"];
+    let prefix = RACE_PREFIX[(race.clamp(1, 8) - 1) as usize];
+    let letter = if sex == 1 { 'F' } else { 'M' };
+    let stem = model.strip_suffix(".m2").unwrap_or(model);
+    format!("{stem}_{prefix}{letter}.m2")
+}
+
 /// Ensure `display` has a [`DisplayModel`] for `kind`; its texture is the BLP the display row
 /// names, never derived from the model name.
 pub(in crate::entities) fn ensure_item_model(
@@ -290,12 +308,7 @@ pub(in crate::entities) fn ensure_item_model(
         Some(d) if d.model[col].is_some() => {
             let mut model = d.model[col].clone().unwrap();
             if let ItemModelKind::Helm { race, sex } = kind {
-                // Race 1-8 is Hu Or Dw Ni Sc Ta Gn Tr, sex M or F.
-                const RACE_PREFIX: [&str; 8] = ["Hu", "Or", "Dw", "Ni", "Sc", "Ta", "Gn", "Tr"];
-                let prefix = RACE_PREFIX[(race.clamp(1, 8) - 1) as usize];
-                let letter = if sex == 1 { 'F' } else { 'M' };
-                let stem = model.strip_suffix(".m2").unwrap_or(&model).to_string();
-                model = format!("{stem}_{prefix}{letter}.m2");
+                model = helm_file(&model, race, sex);
             }
             let disp_id = display;
             debug!(

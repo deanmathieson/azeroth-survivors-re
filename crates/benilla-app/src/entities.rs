@@ -47,7 +47,7 @@ use item_glow::{attach_item_glows, ItemGlows};
 
 /// Mounts: a second creature visual the rider's model is re-parented onto, never rebuilt.
 pub(crate) mod mount;
-use mount::{reseat_mounts, resolve_mount_hats};
+use mount::{reseat_mounts, resolve_mount_hats, size_mount_hats};
 
 /// The corpse object, drawn as the dressed body or, once it turns to bones, a skeleton prop.
 pub(crate) mod corpse;
@@ -94,6 +94,10 @@ pub(crate) use equipment::{attach_id, DressKey, HeldAttached, ATTACH_SLOT_NAMES}
 // Only the tests that build a `DressKey` name this type.
 #[cfg(test)]
 pub(crate) use equipment::ItemModelKind;
+
+// The mount hats' data test names a helm's file as the attach path loads it.
+#[cfg(test)]
+pub(crate) use equipment::helm_file;
 
 /// The overhead attachment (`PlayerName`, id 18), where the name, combat text and quest marker sit.
 pub(crate) const ATTACH_OVERHEAD: u16 = 18;
@@ -237,6 +241,15 @@ pub(crate) struct Creatures {
 }
 
 impl Creatures {
+    /// A catalog with no model built yet, for tests that read the client's displays.
+    #[cfg(test)]
+    pub(crate) fn from_catalog(catalog: CreatureCatalog) -> Self {
+        Creatures {
+            catalog,
+            models: HashMap::new(),
+        }
+    }
+
     /// A display's foley material (`Material.dbc` id), the creature half of the footfall rustle.
     pub(crate) fn foley_material(&self, display_id: u32) -> Option<u32> {
         self.catalog.foley_material(display_id)
@@ -694,6 +707,13 @@ impl Plugin for EntitiesPlugin {
                 .chain()
                 .in_set(EntityVisualsSet)
                 .after(WorldStage::Net),
+        )
+        // A mount hat's size, on the root `attach_held_items` spawned for it.
+        .add_systems(
+            Update,
+            size_mount_hats
+                .after(attach_held_items)
+                .in_set(EntityVisualsSet),
         )
         // In the visuals set, after the cast router's beam plays and the net stage's hop arrays.
         .add_systems(
