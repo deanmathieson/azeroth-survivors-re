@@ -173,6 +173,9 @@ pub(super) struct HeroState {
     /// healthstone are no one's), and the damage that got through to its health.
     pub healing_done: f64,
     pub damage_taken: f64,
+    /// Gold this hero brought into the party's purse: the coins it picked up and the hands it
+    /// skipped (the co-op side bets' "Most gold").
+    pub gold: u32,
     /// The rings, trinkets and necklace this hero found this run, and its jewelry choices left
     /// ([`jewelry`]); what they grant is already in `bonuses`.
     pub(super) jewelry: jewelry::Jewelry,
@@ -212,6 +215,7 @@ impl Default for HeroState {
             damage_done: 0.0,
             healing_done: 0.0,
             damage_taken: 0.0,
+            gold: 0,
             jewelry: jewelry::Jewelry::default(),
             mechanics: Default::default(),
         }
@@ -315,6 +319,7 @@ pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run) -> Option<u32> {
     }
     let gold = hand::skip_gold(run, hero);
     run.gold += gold;
+    hero.gold += gold;
     // The hand on offer is a jewelry choice while one is banked ([`next_hand`]).
     if hero.jewelry.picks > 0 {
         hero.jewelry.picks -= 1;

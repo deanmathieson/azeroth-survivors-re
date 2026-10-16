@@ -12,6 +12,8 @@
 //! - Level-ups: the host rolls each player's hand and sends it to that player; the pick, rerolls,
 //!   banishes and skips come back as client messages and the host applies them.
 //! - The menu's Multiplayer panel hosts, joins and shows the lobby ([`ui`]).
+//! - The social layer: Need/Greed/Pass, chat and `/roll`, emotes, pings and raid marks, the ready
+//!   check, spectating, side bets, the Faire's news and the fashion vote ([`social`]).
 //!
 //! Test aids: `WOW_SURVIVORS_HOST=<port>` hosts and `WOW_SURVIVORS_JOIN=<address>` joins once the
 //! menu is up; `WOW_SURVIVORS_NAME=<name>` names this player in the lobby.
@@ -19,6 +21,7 @@
 mod client;
 mod host;
 mod net;
+mod social;
 #[cfg(test)]
 mod tests;
 mod ui;
@@ -35,7 +38,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 2;
+pub(super) const PROTOCOL: u32 = 3;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -142,6 +145,7 @@ pub(super) fn plugin(app: &mut App) {
     host::plugin(app);
     client::plugin(app);
     ui::plugin(app);
+    social::plugin(app);
 }
 
 /// The replication rules and messages, registered in one order on both ends (replicon checks the
@@ -167,6 +171,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_server_message::<RunPhase>(Channel::Ordered)
         .add_server_message::<Hand>(Channel::Ordered)
         .add_mapped_server_message::<NetFx>(Channel::Unreliable);
+    social::protocol(app);
 }
 
 /// The run's [`NetRole`] follows the link, and a client gets the hand outbox its cards post to.

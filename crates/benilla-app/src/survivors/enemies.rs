@@ -771,7 +771,13 @@ pub(super) fn collect_gems(
                         party::heal(&mut hero, hp);
                     }
                 }
-                GemKind::Gold(coins) => run.gold += coins.pays(picker.4),
+                GemKind::Gold(coins) => {
+                    let gold = coins.pays(picker.4);
+                    run.gold += gold;
+                    if let Ok((.., mut hero, _)) = heroes.get_mut(picker.0) {
+                        hero.gold += gold;
+                    }
+                }
             }
             commands.entity(e).despawn();
             continue;

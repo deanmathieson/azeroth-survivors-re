@@ -103,6 +103,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<MetaBonuses>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
+            .init_resource::<hero::Spectate>()
             .init_resource::<view::View>()
             .init_resource::<wowcam::WowFrame>()
             .init_resource::<abilities::PendingHits>()

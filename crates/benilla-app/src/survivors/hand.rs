@@ -119,6 +119,7 @@ pub(super) fn skip(
 ) -> u32 {
     let gold = skip_gold(run, hero);
     run.gold += gold;
+    hero.gold += gold;
     run.banner = Some((format!("Skipped: +{gold} gold"), 2.5));
     hud::close_hand(hero, offer, rng, next);
     gold

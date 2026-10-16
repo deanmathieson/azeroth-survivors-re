@@ -366,6 +366,18 @@ pub(super) fn wow_camera(
         ),
         With<LocalHero>,
     >,
+    watched: (
+        Res<super::hero::Spectate>,
+        Query<
+            (
+                Entity,
+                &Transform,
+                Option<&CameraPivot>,
+                Option<&crate::net::NetEntity>,
+            ),
+            (With<Hero>, Without<WorldCamera>),
+        >,
+    ),
     mut cams: Query<(&mut Transform, &mut FlyCam), (With<WorldCamera>, Without<LocalHero>)>,
     mut models: Query<&mut Visibility, With<LocalHero>>,
 ) {
@@ -378,8 +390,14 @@ pub(super) fn wow_camera(
         show(&mut frame, &mut models, false);
         return;
     };
+    // A downed player spectating sits behind the ally it watches, facing as that hero faces.
+    let spectated = watched.0 .0.and_then(|w| watched.1.get(w).ok());
+    let (e, tf, face, pivot, net) = match spectated {
+        Some((w, wtf, wpivot, wnet)) => (w, wtf, super::hero::yaw_of(wtf.rotation), wpivot, wnet),
+        None => (e, tf, hm.face, pivot, net),
+    };
     if frame.seated != Some(e) {
-        cam.park(hm.face, START_PITCH);
+        cam.park(face, START_PITCH);
         frame.seated = Some(e);
     }
     let dt = time.delta_secs();
@@ -396,7 +414,7 @@ pub(super) fn wow_camera(
     );
     let subject = Subject {
         feet: tf.translation,
-        face: hm.face,
+        face,
         pivot: camera::head_height(pivot, net.map_or(1.0, |n| n.scale)),
     };
     seat(
@@ -411,7 +429,8 @@ pub(super) fn wow_camera(
         *cfg.2,
         cfg.3.nearclip,
     );
-    let hide = rig.self_fade() < HIDE_BELOW;
+    // The near fade hides the hero the camera sits behind: never the local one while it watches.
+    let hide = rig.self_fade() < HIDE_BELOW && spectated.is_none();
     show(&mut frame, &mut models, hide);
 }
 
