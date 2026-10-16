@@ -322,7 +322,13 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Update, wardrobe::input.after(armory_input))
         .add_systems(
             Update,
-            (armory_input, sync_armory, paint_tabs, armory_tooltip)
+            (
+                armory_input,
+                customize_input,
+                sync_armory,
+                paint_tabs,
+                armory_tooltip,
+            )
                 .chain()
                 // After the menu's own input has had its (gated) turn, and before the pick screen is
                 // shown or hidden, so open and close land in one frame.
@@ -333,6 +339,23 @@ pub(super) fn plugin(app: &mut App) {
     if let Some(aid) = DevAid::from_env() {
         app.insert_resource(aid)
             .add_systems(Update, dev_aid.before(armory_input));
+    }
+}
+
+/// The create screen's prominent Customize button enters the same Character appearance editor as
+/// the Armory tab, so both surfaces operate on one saved body and feature set.
+fn customize_input(
+    clicks: Res<GlueClicks>,
+    phase: Res<State<Phase>>,
+    actions: Query<(Entity, &menu::MenuAction)>,
+    mut state: ResMut<ArmoryState>,
+) {
+    if *phase.get() == Phase::Menu
+        && actions
+            .iter()
+            .any(|(entity, action)| *action == menu::MenuAction::Customize && clicks.hit(entity))
+    {
+        state.open(ArmoryTab::Character);
     }
 }
 

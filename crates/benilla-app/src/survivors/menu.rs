@@ -71,6 +71,7 @@ pub(super) enum MenuAction {
     Class(usize),
     Map(usize),
     Randomize,
+    Customize,
     Enter,
 }
 
@@ -309,6 +310,17 @@ pub(super) fn build_menu(
             },
         ))
         .with_children(|c| {
+            glue_button(
+                c,
+                &art,
+                f,
+                MenuAction::Customize,
+                "Customize",
+                150.0,
+                38.0,
+                GlueBtnKind::Small,
+                1.0,
+            );
             glue_button(
                 c,
                 &art,
@@ -894,6 +906,11 @@ pub(super) fn menu_clicks(
                 }
             }
         }
+        MenuAction::Customize => {
+            // The Character tab is the dedicated appearance editor.  It shares the hero's
+            // persisted body and feature catalogue with this create screen.
+            return;
+        }
         // The class comes back as its hero was last picked, else keeps the race and gender
         // where it can.
         MenuAction::Class(c) => {
@@ -976,7 +993,7 @@ pub(super) fn refresh_menu_ui(
             MenuAction::Sex(s) => cur.is_some_and(|c| c.1 == s),
             MenuAction::Class(i) => selection.class == Some(i),
             MenuAction::Map(i) => selection.map == i,
-            MenuAction::Randomize | MenuAction::Enter => false,
+            MenuAction::Randomize | MenuAction::Customize | MenuAction::Enter => false,
         };
         if let Some(mut lock) = lock {
             if lock.0 != selected {

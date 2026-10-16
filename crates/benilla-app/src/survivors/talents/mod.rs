@@ -27,12 +27,12 @@ use bevy::prelude::*;
 
 use super::bonus::{Bonus, Bonuses};
 use super::mechanics::{self as game_mechanics, MechanicId};
-use crate::combat_text::CombatTextSpawn;
-use crate::sound::SoundCue;
 use super::meta::MetaParts;
 use super::party::{HeroState, LocalHero};
 use super::profile::{slug, Profile};
 use super::{data, hud, Selection};
+use crate::combat_text::CombatTextSpawn;
+use crate::sound::SoundCue;
 
 pub(super) use progress::{add_xp, earned_points, xp_for_points, TalentDevXp};
 use rules::{bonuses, can_learn, can_unlearn};
@@ -185,7 +185,11 @@ fn newly_granted_milestone(before: &[(u32, u8)], now: &[(u32, u8)]) -> Option<u3
     now.iter()
         .filter(|(id, rank)| *rank > 0 && !before.iter().any(|(old, _)| old == id))
         .map(|(id, _)| *id)
-        .find(|id| mechanics::MILESTONES.iter().any(|(_, ids)| ids.contains(id)))
+        .find(|id| {
+            mechanics::MILESTONES
+                .iter()
+                .any(|(_, ids)| ids.contains(id))
+        })
 }
 
 /// Put every learned active talent on a freshly created hero, what the learned talents teach,
