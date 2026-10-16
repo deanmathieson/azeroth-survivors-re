@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 6;
+pub(super) const PROTOCOL: u32 = 7;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -171,6 +171,7 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetStats>()
         .replicate::<NetBuffs>()
         .add_client_message::<Hello>(Channel::Ordered)
+        .add_client_message::<Cosmetics>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
         .add_client_message::<HandAction>(Channel::Ordered)
         .add_client_message::<FocusInput>(Channel::Ordered)

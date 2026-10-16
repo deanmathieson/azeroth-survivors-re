@@ -81,7 +81,7 @@ pub(in crate::survivors) struct NetHero {
     /// The selected riding creature, or zero when standing.
     pub(in crate::survivors) mount_display: u32,
     /// The mount hat model and its mount-specific seat nudge.
-    pub(in crate::survivors) mount_hat: Option<(u32, [f32; 3])>,
+    pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
 }
 
 /// The character-create choices and equipped display ids belonging to a hero.  This is separate
@@ -302,7 +302,7 @@ pub(in crate::survivors) struct Hello {
     /// Talent id and learned rank, from the picked class's saved allocation.
     pub(in crate::survivors) talents: Vec<(u32, u8)>,
     pub(in crate::survivors) mount_display: u32,
-    pub(in crate::survivors) mount_hat: Option<(u32, [f32; 3])>,
+    pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -315,6 +315,14 @@ pub(in crate::survivors) struct MoveInput {
     pub(in crate::survivors) yaw: f32,
     pub(in crate::survivors) pace: f32,
     pub(in crate::survivors) flags: u32,
+}
+
+/// A joined client's changed stable selection.  It is reliable so the lobby and a waiting run
+/// show the owner's current cosmetics without making a new connection.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub(in crate::survivors) struct Cosmetics {
+    pub(in crate::survivors) mount_display: u32,
+    pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
 }
 
 /// The client's hand strip opened (true) or shut: its hero is Focused while open.
@@ -555,10 +563,21 @@ mod tests {
             bonuses: bonuses.clone(),
             talents: vec![(36, 1)],
             mount_display: 2404,
-            mount_hat: Some((1234, [0.0, 0.2, -0.1])),
+            mount_hat: Some(super::super::super::stable::CosmeticHat {
+                display: 1234,
+                mount_nudge: [0.0, 0.2, -0.1],
+                offset: [0.0; 3],
+                pitch: 0.0,
+                scale: 1.0,
+            }),
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);
+        let cosmetics = Cosmetics {
+            mount_display: 10718,
+            mount_hat: hello.mount_hat,
+        };
+        assert_eq!(round(&cosmetics), cosmetics);
         let refused = Refused {
             reason: super::super::mismatch("Thrall"),
         };

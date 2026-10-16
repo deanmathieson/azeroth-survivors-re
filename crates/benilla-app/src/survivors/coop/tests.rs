@@ -17,6 +17,7 @@ use super::super::hero::Hero;
 use super::super::hud::Choice;
 use super::super::party::{self, HandDecision, LOCAL_PLAYER};
 use super::super::partyui::PartyView;
+use super::super::stable::CosmeticHat;
 use super::super::talents::HeroSpec;
 use super::super::units::{self, Look, UnitSpec};
 use super::super::{data, HeroState, LocalHero, Phase, Rng, Run, Selection};
@@ -310,7 +311,7 @@ fn drain<M: Message>(app: &mut App) -> Vec<M> {
 }
 
 #[test]
-fn a_host_and_a_client_play_over_udp_on_the_loopback() {
+fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopback() {
     let mut host_app = app();
     let mut client_app = app();
     host_app.init_state::<Phase>();
@@ -370,8 +371,15 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         },
         bonuses: Bonuses::default(),
         talents: vec![(61, 5), (71, 1)],
-        mount_display: 0,
-        mount_hat: None,
+        // Deathcharger's display and the Tiny Party Hat's resolved model travel together.
+        mount_display: 10718,
+        mount_hat: Some(CosmeticHat {
+            display: 1234,
+            mount_nudge: [0.0, 0.0, 0.0],
+            offset: [0.0, -0.08, 0.0],
+            pitch: 0.0,
+            scale: 1.0,
+        }),
         hero: None,
     };
     let (host_hero, theirs) = {
@@ -419,6 +427,19 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         host_app.world().get::<NetLooks>(theirs),
         Some(&peer_info.looks),
         "the host keeps the client's own appearance"
+    );
+    assert_eq!(jaina.0.mount_display, 10718);
+    assert_eq!(
+        jaina.0.mount_hat.map(|hat| hat.offset),
+        Some([0.0, -0.08, 0.0])
+    );
+    assert_eq!(
+        host_app
+            .world()
+            .get::<NetHero>(theirs)
+            .unwrap()
+            .mount_display,
+        10718
     );
     assert!(host_app.world().get::<Replicated>(host_hero).is_some());
 
@@ -687,7 +708,13 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
         bonuses: Bonuses::default(),
         talents: vec![(36, 1)],
         mount_display: 2404,
-        mount_hat: Some((1234, [0.0, 0.2, -0.1])),
+        mount_hat: Some(CosmeticHat {
+            display: 1234,
+            mount_nudge: [0.0, 0.2, -0.1],
+            offset: [0.0; 3],
+            pitch: 0.0,
+            scale: 1.0,
+        }),
         build: build.into(),
     };
     let (stale, fresh) = (world.spawn_empty().id(), world.spawn_empty().id());
@@ -818,7 +845,13 @@ fn a_client_applies_a_remote_heros_mount_display() {
                 sex: 0,
                 trainer: 0,
                 mount_display: 2404,
-                mount_hat: Some((1234, [0.0, 0.2, -0.1])),
+                mount_hat: Some(CosmeticHat {
+                    display: 1234,
+                    mount_nudge: [0.0, 0.2, -0.1],
+                    offset: [0.0; 3],
+                    pitch: 0.0,
+                    scale: 1.0,
+                }),
             },
         ))
         .id();
@@ -834,4 +867,66 @@ fn a_client_applies_a_remote_heros_mount_display() {
             .unit_mount_display_id(),
         2404
     );
+}
+
+#[test]
+fn host_applies_a_clients_cosmetics_to_its_hero_only() {
+    let mut world = World::new();
+    world.init_resource::<Messages<FromClient<Cosmetics>>>();
+    let owner = world.spawn_empty().id();
+    let mine = world
+        .spawn(NetHero {
+            player: 0,
+            name: "Host".into(),
+            class: 0,
+            race: 1,
+            sex: 0,
+            trainer: 0,
+            mount_display: 2404,
+            mount_hat: None,
+        })
+        .id();
+    let theirs = world
+        .spawn(NetHero {
+            player: 1,
+            name: "Jaina".into(),
+            class: 0,
+            race: 1,
+            sex: 0,
+            trainer: 0,
+            mount_display: 0,
+            mount_hat: None,
+        })
+        .id();
+    world.entity_mut(owner).insert(Peer {
+        player: 1,
+        name: "Jaina".into(),
+        class: 0,
+        race: 1,
+        sex: 0,
+        trainer: 0,
+        bonuses: Bonuses::default(),
+        talents: Vec::new(),
+        mount_display: 0,
+        mount_hat: None,
+        hero: Some(theirs),
+    });
+    let hat = CosmeticHat {
+        display: 1234,
+        mount_nudge: [0.0, 0.2, -0.1],
+        offset: [0.0; 3],
+        pitch: 0.0,
+        scale: 1.0,
+    };
+    world.write_message(FromClient {
+        client_id: ClientId::Client(owner),
+        message: Cosmetics {
+            mount_display: 10718,
+            mount_hat: Some(hat),
+        },
+    });
+    world.run_system_once(host::update_cosmetics).unwrap();
+    assert_eq!(world.get::<NetHero>(mine).unwrap().mount_display, 2404);
+    assert_eq!(world.get::<NetHero>(theirs).unwrap().mount_display, 10718);
+    assert_eq!(world.get::<NetHero>(theirs).unwrap().mount_hat, Some(hat));
 }

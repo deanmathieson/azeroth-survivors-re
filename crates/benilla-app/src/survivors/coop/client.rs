@@ -85,7 +85,13 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(OnEnter(Phase::Menu), quit_run.run_if(joined))
         .add_systems(
             PostUpdate,
-            (send_move, send_hand, send_focus, send_self_res)
+            (
+                send_cosmetics,
+                send_move,
+                send_hand,
+                send_focus,
+                send_self_res,
+            )
                 .before(ClientSystems::Send)
                 .run_if(joined),
         );
@@ -113,6 +119,28 @@ fn redress(
         );
         wear(display, &mut net, &mut store);
     }
+}
+
+/// While joined, publish a changed Stable choice once.  `Hello` only exists to establish a
+/// session; a lobby player can change cosmetics long after it has stopped being retried.
+fn send_cosmetics(
+    profile: Option<Res<Profile>>,
+    displays: Option<Res<crate::entities::ItemDisplays>>,
+    mut sent: Local<Option<(u32, Option<super::super::stable::CosmeticHat>)>>,
+    mut out: MessageWriter<Cosmetics>,
+) {
+    let cosmetics = profile
+        .as_deref()
+        .map(|profile| super::super::stable::selected_cosmetics(profile, displays.as_deref()))
+        .unwrap_or((0, None));
+    if sent.as_ref() == Some(&cosmetics) {
+        return;
+    }
+    *sent = Some(cosmetics);
+    out.write(Cosmetics {
+        mount_display: cosmetics.0,
+        mount_hat: cosmetics.1,
+    });
 }
 
 fn joined_or_joining(session: Res<Session>) -> bool {
