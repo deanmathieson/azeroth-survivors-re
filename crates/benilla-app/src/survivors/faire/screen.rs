@@ -305,6 +305,7 @@ pub(super) fn faire_input(
     mut dev: ResMut<DevTickets>,
     mut reveal: ResMut<RevealState>,
     mut sounds: MessageWriter<GlueSound>,
+    mut pulled: MessageWriter<super::FairePulled>,
 ) {
     // Leaving the menu (the auto-runner starting a run) closes it; the reveal closes itself.
     if *phase.get() != Phase::Menu {
@@ -388,6 +389,13 @@ pub(super) fn faire_input(
                         BannerKind::Featured => banner.name,
                         BannerKind::Standard => STANDARD_NAME,
                     };
+                    // A co-op lobby hears of it ([`super::FairePulled`]).
+                    pulled.write(super::FairePulled(
+                        pulls
+                            .iter()
+                            .map(|p| (p.prize().name.clone(), p.prize().rarity))
+                            .collect(),
+                    ));
                     reveal.start(pulls, title);
                     sounds.write(GlueSound(SOUND_PULL));
                 }

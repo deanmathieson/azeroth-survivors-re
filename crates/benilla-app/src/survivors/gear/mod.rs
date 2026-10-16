@@ -35,8 +35,15 @@ pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
 use super::{enemies, hud, profile, treasure, Phase, Selection};
 pub(super) use looks::results_title;
+<<<<<<< HEAD
 pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, HeroNames, LooksDice};
 pub(super) use outfit::{wear, Dresser};
+=======
+pub(super) use looks_ui::{hero_name, looks_panel, HeroNameText, HeroNames};
+#[cfg_attr(not(feature = "coop"), allow(unused_imports))]
+pub(super) use loot::{GroupDrops, WonLoot};
+pub(super) use outfit::Dresser;
+>>>>>>> social
 pub(super) use save::GearSave;
 pub(super) use store::class_gear;
 pub(super) use ui::{GearAction, GearView, ItemIcon};
@@ -48,6 +55,8 @@ pub(super) use view::{
 /// This workstream's systems, registered by [`super::SurvivorsPlugin`].
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<loot::LootToasts>()
+        .init_resource::<loot::GroupDrops>()
+        .init_resource::<loot::WonLoot>()
         .init_resource::<GearView>()
         .init_resource::<outfit::Wardrobe>()
         .init_resource::<looks_ui::NameEdit>()
@@ -85,6 +94,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (
                 loot::show_toasts.after(hud::refresh_hud),
+                loot::grant_won.before(loot::show_toasts),
                 ui::gear_clicks,
                 ui::fill_item_icons,
             ),

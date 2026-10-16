@@ -30,6 +30,47 @@ impl SoundCue {
     }
 }
 
+/// Play the `SoundEntries` kit with id `kit` once, 2D with no `at`, else positioned there: the
+/// survivors' voice emotes, whose kit comes from `EmotesTextSound` by race and sex.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct KitCue {
+    pub(crate) kit: u32,
+    pub(crate) at: Option<Vec3>,
+}
+
+fn play_kit_cues(
+    mut cues: MessageReader<KitCue>,
+    kits: Option<ResMut<SoundKits>>,
+    assets: Option<Res<WorldAssets>>,
+    mut out: NonSendMut<SoundOutput>,
+    config: Res<SoundConfig>,
+    listener: Res<AudioListener>,
+) {
+    if cues.is_empty() {
+        return;
+    }
+    let (Some(mut kits), Some(assets)) = (kits, assets) else {
+        cues.clear();
+        return;
+    };
+    for cue in cues.read() {
+        if let Err(e) = play_kit_ext(
+            &mut kits,
+            &assets,
+            &mut out,
+            &config,
+            listener.pos,
+            KitRef::Id(cue.kit),
+            cue.at,
+            SoundCategory::Sfx,
+            PlayExtras::default(),
+        ) {
+            debug!("sound kit cue {}: {e:#}", cue.kit);
+        }
+    }
+}
+
 fn play_cues(
     mut cues: MessageReader<SoundCue>,
     kits: Option<ResMut<SoundKits>>,
@@ -68,5 +109,9 @@ fn play_cues(
 /// Registration hook for [`super::SoundPlugin`].
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<SoundCue>()
-        .add_systems(Update, play_cues.in_set(WorldStage::Present));
+        .add_message::<KitCue>()
+        .add_systems(
+            Update,
+            (play_cues, play_kit_cues).in_set(WorldStage::Present),
+        );
 }

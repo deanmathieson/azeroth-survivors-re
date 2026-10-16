@@ -29,6 +29,8 @@ use super::hud::{NoteKind, ResultsNotes, MAX_NOTES};
 use super::profile::{self, LastRunNews, Profile, RunEnded};
 use super::Phase;
 
+#[cfg_attr(not(feature = "coop"), allow(unused_imports))]
+pub(super) use catalog::Rarity as PrizeRarity;
 pub(super) use catalog::{catalog, Kind, Prize};
 pub(super) use save::FaireSave;
 pub(super) use screen::{closed, FaireUi};
@@ -37,6 +39,7 @@ pub(super) use screen::{closed, FaireUi};
 pub(super) fn plugin(app: &mut App) {
     app.insert_resource(DevTickets::from_env())
         .init_resource::<FaireLedger>()
+        .add_message::<FairePulled>()
         .add_systems(
             OnEnter(Phase::GameOver),
             note_ledger.after(profile::record_finished),
@@ -44,6 +47,12 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(PostUpdate, pay_tickets.before(profile::save_if_dirty))
         .add_plugins((screen::plugin, reveal::plugin));
 }
+
+/// A pull at the Prize Booth: each prize's name and rarity, for the co-op lobby's chat (the pull
+/// itself stays this account's).
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Message, Clone, Debug, PartialEq)]
+pub(super) struct FairePulled(pub Vec<(String, catalog::Rarity)>);
 
 /// `WOW_SURVIVORS_TICKETS=<n>`, a test aid for screenshots: n more tickets to pull with, held in
 /// memory and spent before the saved ones, never saved.

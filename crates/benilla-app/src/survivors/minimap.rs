@@ -61,6 +61,9 @@ const BOSS_CHEST_COLOR: [f32; 3] = [255.0, 245.0, 170.0];
 /// The local hero is the arrow.
 const ALLY_DOT: f32 = 1.3;
 const ALLY_COLOR: [f32; 3] = [70.0, 150.0, 255.0];
+/// A raid mark is this many dots across, and a ping's ring at its widest.
+const RAID_MARK: f32 = 2.2;
+const PING_RING: f32 = 3.0;
 /// `ObjectIcons.blp` cell 3, the gold quest dot: a quest giver, this many dots across on a dark
 /// disc, pinned to the rim while out of view.
 const QUEST_DOT_CELL: [f32; 4] = [0.75, 1.0, 0.0, 0.25];
@@ -132,7 +135,34 @@ struct Art {
     mask: Option<Rgba>,
     arrow: Option<Rgba>,
     icons: Option<Rgba>,
+    raid: Option<Rgba>,
 }
+
+/// The raid target icons' sheet, `UnitPopup.lua`'s `RAID_TARGET_n` art.
+pub(super) const RAID_ICONS: &str = "Interface\\TargetingFrame\\UI-RaidTargetingIcons";
+
+/// `RAID_TARGET_<icon>`'s cell of [`RAID_ICONS`] (left, right, top, bottom), as `UnitPopup.lua`
+/// crops it: 1 star, 2 circle, 3 diamond, 4 triangle, 5 moon, 6 square, 7 cross, 8 skull.
+pub(super) fn raid_icon_coords(icon: u8) -> [f32; 4] {
+    let i = f32::from(icon.clamp(1, 8) - 1);
+    let (col, row) = (i % 4.0, (i / 4.0).floor());
+    [col * 0.25, col * 0.25 + 0.25, row * 0.25, row * 0.25 + 0.25]
+}
+
+/// A mark the co-op party put on the map: a raid target icon (1 to 8, [`raid_icon_coords`]) or a
+/// ping (0), its ring rippling out with `age` seconds.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MapMark {
+    pub at: Vec3,
+    pub icon: u8,
+    pub age: f32,
+}
+
+/// The marks the co-op pings put on the minimap this frame.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Resource, Default, Debug)]
+pub(super) struct MapMarks(pub Vec<MapMark>);
 
 #[derive(Resource)]
 pub(super) struct MiniMap {
@@ -391,6 +421,7 @@ pub(super) fn compose(
     enemies: Query<(&Transform, &Enemy)>,
     caches: Query<(&Transform, &Cache)>,
     pins: Query<(&Transform, &MapPin)>,
+    marks: Option<Res<MapMarks>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     if *phase.get() == super::Phase::Menu || !map.shown {
@@ -423,6 +454,7 @@ pub(super) fn compose(
             mask: Rgba::decode(&mut assets, "Textures\\MinimapMask"),
             arrow: Rgba::decode(&mut assets, crate::minimap::blips::PLAYER_ARROW_TEXTURE),
             icons: Rgba::decode(&mut assets, "Interface\\Minimap\\ObjectIcons"),
+            raid: Rgba::decode(&mut assets, RAID_ICONS),
         });
     }
     let art = map.art.as_ref().expect("art loaded above");
@@ -658,6 +690,36 @@ pub(super) fn compose(
             };
             (a > 0.0).then_some([rgb[0], rgb[1], rgb[2], 255.0 * a])
         });
+    }
+
+    // The party's pings and raid marks on top of everything, pinned to the rim while out of view.
+    for mark in marks.iter().flat_map(|m| m.0.iter()) {
+        let mut off = Vec2::new(mark.at.x - p.x, mark.at.z - p.z);
+        if off.length() > radius {
+            off = off.normalize() * radius * 0.88;
+        }
+        let at = center + off / yd_per_px;
+        match (&art.raid, mark.icon) {
+            (Some(raid), 1..=8) => {
+                let size = DOT_PX * scale * RAID_MARK;
+                let [l, r, t, b] = raid_icon_coords(mark.icon);
+                blit(buf, at, size, |q| {
+                    let f = q / size + 0.5;
+                    let x = (l + (r - l) * f.x) * raid.w as f32;
+                    let y = (t + (b - t) * f.y) * raid.h as f32;
+                    Some(raid.sample(x, y))
+                });
+            }
+            _ => {
+                // A ping: a gold ring rippling out from the spot, twice a second.
+                let max = DOT_PX * scale * PING_RING;
+                let r = (mark.age * 2.0).fract() * max / 2.0;
+                blit(buf, at, max + 2.0, |q| {
+                    let a = (1.5 - (q.length() - r).abs()).clamp(0.0, 1.0);
+                    (a > 0.0).then_some([255.0, 220.0, 60.0, 255.0 * a])
+                });
+            }
+        }
     }
 
     if let Some(image) = images.get_mut(&map.image) {

@@ -1,6 +1,8 @@
 //! The menu's Multiplayer panel: Host on a port (with this machine's LAN address and how friends
-//! reach it), Join an address, the lobby of everyone connected, and the host's Start. Built into
-//! the menu the way Run Options is ([`super::super::run_options`]).
+//! reach it), Join an address, the lobby of everyone connected (class icon, level, title, mount and
+//! hat, and the ready check's marks), the side bets ([`super::social`]), and the host's Ready Check
+//! (with Start Anyway while it runs). Built into the menu the way Run Options is
+//! ([`super::super::run_options`]).
 
 use std::net::IpAddr;
 
@@ -15,6 +17,7 @@ use super::super::menu::MenuBuilt;
 use super::super::run_options::GREEN;
 use super::super::zones::Unlocks;
 use super::super::{data, HeroState, LocalHero, MetaBonuses, Phase, Run, Selection};
+use super::social::{self, LobbyIcon, LobbyMark, SocialSlot};
 use super::{client, host, net, Link, PlayerName, Session};
 use crate::glue::art::{GlueArt, GOLD, INFO_TEXT};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -69,7 +72,10 @@ enum NetAction {
     Host,
     Join,
     Leave,
+    /// The host's Ready Check.
     Start,
+    /// Start the run whoever is ready, while a check runs.
+    Force,
     Done,
 }
 
@@ -342,8 +348,43 @@ fn modal(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             line(p, f, StatusText, 14.0, Color::WHITE);
             text(p, "Party", 16.0, GOLD);
             for i in 0..usize::from(super::super::party::MAX_PARTY) {
-                line(p, f, LobbyLine(i), 14.0, Color::WHITE);
+                p.spawn(Node {
+                    width: px(PANEL_W - 64.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(5.0),
+                    ..default()
+                })
+                .with_children(|r| {
+                    let icon = |size: f32| Node {
+                        width: px(size),
+                        height: px(size),
+                        display: Display::None,
+                        ..default()
+                    };
+                    r.spawn((
+                        LobbyIcon(i),
+                        icon(20.0),
+                        social::Art::whole(social::CLASS_ICONS),
+                    ));
+                    r.spawn((
+                        LobbyMark(i),
+                        icon(16.0),
+                        social::Art::whole(social::CLASS_ICONS),
+                    ));
+                    line(r, f, LobbyLine(i), 13.0, Color::WHITE);
+                });
             }
+            p.spawn((
+                SocialSlot,
+                Node {
+                    width: px(PANEL_W - 64.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(3.0),
+                    margin: UiRect::top(px(6.0)),
+                    ..default()
+                },
+            ));
             p.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: px(13.0),
@@ -352,7 +393,8 @@ fn modal(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             })
             .with_children(|r| {
                 for (action, caption) in [
-                    (NetAction::Start, "Start Run"),
+                    (NetAction::Start, "Ready Check"),
+                    (NetAction::Force, "Start Anyway"),
                     (NetAction::Leave, "Leave"),
                     (NetAction::Done, "Done"),
                 ] {
@@ -362,8 +404,8 @@ fn modal(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                         f,
                         action,
                         caption,
-                        160.0,
-                        40.0,
+                        124.0,
+                        38.0,
                         GlueBtnKind::Dialog,
                         1.0,
                     );
@@ -455,8 +497,9 @@ fn end_session(world: &mut World) {
     }
 }
 
-/// The host's Start: the run begins as Enter World begins it, and the clients follow.
-fn start_now(
+/// The run begins as Enter World begins it, and the clients follow: the host's Ready Check once
+/// everyone is ready, or its Start Anyway.
+pub(super) fn start_now(
     mut run: ResMut<Run>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
     mut selection: ResMut<Selection>,
@@ -564,13 +607,11 @@ fn panel_input(
         NetAction::Host => submit_host(&mut commands, &panel),
         NetAction::Join => submit_join(&mut commands, &panel),
         NetAction::Leave => commands.queue(end_session),
-        NetAction::Start => {
+        // The Ready Check: the run starts once everyone is ready ([`social::begin_check`]).
+        NetAction::Start => commands.queue(social::begin_check),
+        NetAction::Force => {
             panel.open = false;
-            commands.queue(|world: &mut World| {
-                if let Err(e) = world.run_system_cached(start_now) {
-                    warn!("survivors: co-op: cannot start the run: {e}");
-                }
-            });
+            commands.queue(social::force_start);
         }
     }
 }
@@ -616,15 +657,20 @@ fn clipboard() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
-/// The lobby's line for `m`: its number, name, class and race.
-fn member_line(m: &super::wire::Member, me: u8) -> String {
+/// The lobby's line for `m`: its number, name, class and race, and what its card adds (level,
+/// title, mount and hat).
+fn member_line(m: &super::wire::Member, me: u8, extra: &str) -> String {
     let class = data::CLASSES
         .get(usize::from(m.class))
         .map_or("?", |c| c.name);
     let race = crate::char_select::race_name(m.race);
-    let host = if m.player == 0 { "  (host)" } else { "" };
-    let you = if m.player == me { "  (you)" } else { "" };
-    format!("{}. {}  -  {race} {class}{host}{you}", m.player + 1, m.name)
+    let host = if m.player == 0 { " (host)" } else { "" };
+    let you = if m.player == me { " (you)" } else { "" };
+    format!(
+        "{}. {}{host}{you}  -  {race} {class}{extra}",
+        m.player + 1,
+        m.name
+    )
 }
 
 /// What the host tells its friends: where to reach it, on the LAN and over the internet.
@@ -645,7 +691,8 @@ fn refresh_ui(
     session: Res<Session>,
     name: Res<PlayerName>,
     mut modal: Query<(&mut Visibility, &mut Node), With<NetModal>>,
-    mut buttons: Query<(&NetAction, &mut GlueDisabled)>,
+    mut buttons: Query<(&NetAction, &mut GlueDisabled, &mut Node), Without<NetModal>>,
+    social_state: (Res<social::ReadyShown>, Res<social::BookShown>),
     mut boxes: Query<(&FieldBox, &mut BorderColor)>,
     mut texts: ParamSet<(
         Query<(&FieldText, &mut Text)>,
@@ -669,15 +716,27 @@ fn refresh_ui(
     }
     let off = session.link == Link::Off;
     let hosting = matches!(session.link, Link::Hosting { .. });
-    for (action, mut disabled) in &mut buttons {
+    let (ready, book) = social_state;
+    let checking = ready.view.open;
+    for (action, mut disabled, mut node) in &mut buttons {
         let want = match action {
             NetAction::Host | NetAction::Join => !off,
             NetAction::Leave => off,
-            NetAction::Start => !hosting || session.in_run,
+            NetAction::Start => !hosting || session.in_run || checking,
+            NetAction::Force => !hosting || session.in_run || !checking,
             NetAction::Open | NetAction::Done => false,
         };
         if disabled.0 != want {
             disabled.0 = want;
+        }
+        // Start Anyway shows only while the host's check runs.
+        let display = if *action == NetAction::Force && !(hosting && checking) {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if node.display != display {
+            node.display = display;
         }
     }
     for (b, mut edge) in &mut boxes {
@@ -732,7 +791,10 @@ fn refresh_ui(
             i => session
                 .lobby
                 .get(i)
-                .map(|m| member_line(m, session.me))
+                .map(|m| {
+                    let extra = social::member_extra(book.card(m.player));
+                    member_line(m, session.me, &extra)
+                })
                 .unwrap_or_default(),
         };
         if t.0 != want {

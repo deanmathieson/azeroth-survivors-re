@@ -11,11 +11,12 @@ use bevy::prelude::*;
 
 use super::super::data::CLASSES;
 use super::super::hud::{BannerText, NoteKind, ResultsNotes, GOLD_TONE};
+use super::super::party::{NetRole, Remote};
 use super::super::treasure::BossRolls;
 use super::super::{treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
 use super::save::Collected;
 use super::store::{GearRead, GearStore};
-use super::{drops_for, piece, BossDrop, Slot};
+use super::{drops_for, item, piece, BossDrop, Slot};
 use crate::combat_text::CombatTextSpawn;
 use crate::net::ObjectStore;
 
@@ -62,6 +63,33 @@ fn hero_class(selection: &Selection, hero: &HeroState) -> usize {
     })
 }
 
+/// One boss piece a co-op host put up for the party's roll: Need, Greed or Pass (the co-op
+/// social layer runs the roll and tells the winner's machine to keep it, [`WonLoot`]).
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct GroupDrop {
+    /// The piece, by [`super::Item::id`]: one class's, picked among the party's.
+    pub item: u16,
+    /// The chest it came out of.
+    pub chest: Entity,
+}
+
+/// Boss pieces waiting for a group roll; filled only on a co-op host with other players in the run.
+#[derive(Resource, Default, Debug)]
+pub(in crate::survivors) struct GroupDrops(pub Vec<GroupDrop>);
+
+/// Pieces this player won at a group roll, waiting to go into this machine's own profile.
+#[derive(Resource, Default, Debug)]
+pub(in crate::survivors) struct WonLoot(pub Vec<u16>);
+
+/// A hero's class, as an index into [`CLASSES`].
+fn class_of(hero: &HeroState) -> usize {
+    CLASSES
+        .iter()
+        .position(|c| c.id == hero.class.id)
+        .unwrap_or(0)
+}
+
 /// Loot lines waiting for the banner, and the one on it.
 #[derive(Resource, Default)]
 pub(super) struct LootToasts {
@@ -81,8 +109,10 @@ fn argb(color: Color) -> u32 {
 /// results; each duplicate pays gold into the party's purse. A chest opened in the run rolls for
 /// the heroes standing, and one the run's end opened for every hero.
 ///
-/// The co-op seam: every such hero rolls its own class's pieces, but only the local player's hero
-/// keeps a collection (the profile is this machine's), so today it alone rolls.
+/// In co-op, a host with other players in the run puts every piece that falls up for the party's
+/// roll instead ([`GroupDrops`]): each is one class's, picked at random among the heroes', and the
+/// winner's own machine keeps it. Solo, only the local player's hero rolls and keeps.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn roll_loot(
     mut rolls: ResMut<BossRolls>,
     mut run: ResMut<Run>,
@@ -93,10 +123,18 @@ pub(super) fn roll_loot(
     mut notes: ResMut<ResultsNotes>,
     mut toasts: ResMut<LootToasts>,
     mut shown: MessageWriter<CombatTextSpawn>,
+    party: (
+        Option<Res<NetRole>>,
+        Query<&HeroState>,
+        Query<(), With<Remote>>,
+        Option<ResMut<GroupDrops>>,
+    ),
 ) {
     if rolls.0.is_empty() {
         return;
     }
+    let (role, heroes, remotes, mut group) = party;
+    let co_op = role.is_some_and(|r| *r == NetRole::Host) && !remotes.is_empty();
     for open in std::mem::take(&mut rolls.0) {
         let Some(drop) = drops_for(open.map, open.boss) else {
             continue;
@@ -104,6 +142,20 @@ pub(super) fn roll_loot(
         let Ok(me) = local.single() else {
             continue;
         };
+        if let (true, Some(group)) = (co_op, group.as_deref_mut()) {
+            let classes: Vec<usize> = heroes.iter().map(class_of).collect();
+            for slot in roll(drop, run.reward_mult, me.stats().luck, &mut rng) {
+                let pick = rng.index(classes.len().max(1));
+                let class = classes.get(pick).copied().unwrap_or(0);
+                if let Some(p) = piece(class, slot, drop.rarity) {
+                    group.0.push(GroupDrop {
+                        item: p.id,
+                        chest: open.chest,
+                    });
+                }
+            }
+            continue;
+        }
         if open.living_only && !me.alive() {
             continue;
         }
@@ -147,6 +199,45 @@ pub(super) fn roll_loot(
                         .push_back((format!("{} again: +{gold} gold", p.name), GOLD_TONE));
                 }
             }
+        }
+    }
+}
+
+/// Pieces this player won at a co-op roll go into its own profile, under the piece's class (a Greed
+/// win of another class's piece fills that class's collection): noted for the results and
+/// announced; one already collected is only announced.
+pub(super) fn grant_won(
+    mut won: ResMut<WonLoot>,
+    mut store: GearStore,
+    mut notes: ResMut<ResultsNotes>,
+    mut toasts: ResMut<LootToasts>,
+) {
+    for id in std::mem::take(&mut won.0) {
+        let Some(p) = item(id) else { continue };
+        let got = if store.get(p.class).has(p.id) {
+            Collected::Duplicate
+        } else {
+            store
+                .edit(p.class, |g| g.collect(p))
+                .unwrap_or(Collected::Duplicate)
+        };
+        match got {
+            Collected::New { equipped } => {
+                let line = format!("Won: {}", p.name);
+                notes.push(
+                    if equipped {
+                        format!("Loot: {} (equipped)", p.name)
+                    } else {
+                        format!("Loot: {}", p.name)
+                    },
+                    NoteKind::Loot,
+                );
+                toasts.queue.push_back((line, p.rarity.color()));
+            }
+            Collected::Duplicate => toasts.queue.push_back((
+                format!("{} again: already in your collection", p.name),
+                GOLD_TONE,
+            )),
         }
     }
 }

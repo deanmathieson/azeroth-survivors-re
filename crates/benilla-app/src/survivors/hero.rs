@@ -180,6 +180,11 @@ pub(super) fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState
     }
 }
 
+/// A downed co-op player watching an ally: both cameras follow this hero instead of the local one
+/// while it is set (the co-op spectate). `None` follows the local hero, as ever.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Spectate(pub(super) Option<Entity>);
+
 /// The ground under the mouse cursor, `None` with the cursor off the window. The classic view's
 /// hero faces it, and the aimed mobility spells go toward it ([`super::mobility::aiming`]).
 #[derive(Resource, Default)]
@@ -492,6 +497,10 @@ pub(super) fn place_camera(
     loading: Option<Res<crate::loading_screen::LoadingScreen>>,
     world: WorldPoint,
     hero: Query<(Entity, &Transform), (With<LocalHero>, Without<WorldCamera>)>,
+    watched: (
+        Res<Spectate>,
+        Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
+    ),
     mut cams: Query<&mut Transform, With<WorldCamera>>,
     turn: (
         Option<Res<ButtonInput<MouseButton>>>,
@@ -507,10 +516,13 @@ pub(super) fn place_camera(
         return;
     }
     let dt = time.delta_secs();
-    // With no hero yet, the focus `drive_hero` grounded.
-    let (hero_id, focus) = hero
-        .single()
-        .map_or((None, player.pos), |(e, t)| (Some(e), t.translation));
+    // With no hero yet, the focus `drive_hero` grounded; spectating, the ally watched.
+    let (hero_id, focus) = match watched.0 .0.and_then(|e| Some((e, watched.1.get(e).ok()?))) {
+        Some((e, t)) => (Some(e), t.translation),
+        None => hero
+            .single()
+            .map_or((None, player.pos), |(e, t)| (Some(e), t.translation)),
+    };
     for w in wheel.read() {
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,

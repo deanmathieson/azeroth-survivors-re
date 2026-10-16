@@ -787,10 +787,17 @@ pub(super) fn collect_gems(
                     }
                 }
                 GemKind::Gold(coins) => {
+<<<<<<< HEAD
                     let paid = coins.pays(picker.4);
                     run.gold += paid;
                     if let Ok((.., mut hero, _)) = heroes.get_mut(picker.0) {
                         hero.gold_collected += paid;
+=======
+                    let gold = coins.pays(picker.4);
+                    run.gold += gold;
+                    if let Ok((.., mut hero, _)) = heroes.get_mut(picker.0) {
+                        hero.gold += gold;
+>>>>>>> social
                     }
                 }
             }
