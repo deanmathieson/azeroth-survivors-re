@@ -87,6 +87,30 @@ The first raid is Molten Core. Its design lives in docs/RAIDS.md. Order of work:
 4. **Tier 1 sets** with real 2/4/8-piece set bonuses through Need/Greed, and raid achievements and titles.
 5. **Transmog collection,** so raid looks can be shown off.
 
+## Campfire intermissions (the user loves this; after launch night)
+
+A hybrid of continuous survival and waves, built for co-op.
+
+**When it happens.** Every boss kill, roughly every 2:15, turns the 8 s Breather into a 45-60 s **camp**:
+- the horde backs off;
+- a campfire spawns (the real campfire model and crackle);
+- everyone gathers, and WoW's Well Rested "Zzz" shows.
+
+**What you do at camp:**
+- Spend banked picks with full-size cards.
+- Visit a goblin vendor selling rerolls, Healthstones and temporary buffs for gold.
+- Settle side bets for the next stretch.
+- Play mini games, each a few seconds, rewarding small buffs or tickets:
+  - **Fishing:** a bobber; click when it dips; the catch is buff food.
+  - **Cooking:** Spiced Wolf Meat gives the party Well Fed.
+  - **Darkmoon Whack-a-Gnoll.**
+  - **Duels:** quick, with no consequences ("X has defeated Y in a duel").
+  - **/roll-offs** for a bonus chest.
+
+**Leaving camp.** A ready check or a 60 s timer, then the war horn and the next stretch. Solo: a shorter camp, or Enter skips it.
+
+**Inspiration.** Raid pull-and-rest rhythm: Need/Greed, the fashion vote and Faire pulls all live naturally at the fire.
+
 ## Backlog (after co-op)
 
 - Role cards in co-op (heals that also hit the lowest ally, +threat, taunt on mobility).
