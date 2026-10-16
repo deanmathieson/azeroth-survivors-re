@@ -78,6 +78,11 @@ pub(super) enum MenuAction {
 #[derive(Component)]
 pub(super) struct MenuBuilt;
 
+/// The bottom menu actions share this flex row, so each entry keeps its button and captions in
+/// one block without independently claiming the same screen coordinates.
+#[derive(Component)]
+pub(super) struct MenuButtons;
+
 /// A race button's face, re-cropped to the picked gender.
 #[derive(Component)]
 pub(super) struct RaceFace(u8);
@@ -288,14 +293,21 @@ pub(super) fn build_menu(
                 1.0,
             );
         });
-        // `CharSelectEnterWorldButton`, 200×60 at BOTTOM (0,30).
-        ui.spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(30.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
+        // `CharSelectEnterWorldButton`, 200×60 at BOTTOM (0,30). The surrounding row also holds
+        // the Survivors entries, whose captions make their blocks taller than this button.
+        ui.spawn((
+            MenuButtons,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(30.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::FlexEnd,
+                column_gap: Val::Px(16.0),
+                ..default()
+            },
+        ))
         .with_children(|c| {
             glue_button(
                 c,

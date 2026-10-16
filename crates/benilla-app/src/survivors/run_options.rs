@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::data::EnemyDef;
 use super::hud::{HudFont, MenuRoot};
-use super::menu::MenuBuilt;
+use super::menu::{MenuBuilt, MenuButtons};
 use super::{Phase, Run};
 use crate::glue::art::{GlueArt, GOLD, INFO_TEXT};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -422,28 +422,27 @@ fn stamp_run(opts: Res<RunOptions>, mut run: ResMut<Run>) {
 fn build_ui(
     mut commands: Commands,
     roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<OptionsBuilt>)>,
+    buttons: Query<Entity, With<MenuButtons>>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
-    let Ok(root) = roots.single() else { return };
+    let (Ok(root), Ok(buttons)) = (roots.single(), buttons.single()) else {
+        return;
+    };
     let f = &font.0;
     commands
         .entity(root)
         .insert(OptionsBuilt)
-        .with_children(|ui| {
-            menu_button(ui, &art, f);
-            modal(ui, &art, f);
-        });
+        .with_children(|ui| modal(ui, &art, f));
+    commands
+        .entity(buttons)
+        .with_children(|ui| menu_button(ui, &art, f));
 }
 
-/// Right of Enter World (200×60 at BOTTOM (0,30)), on its centre line, the multiplier under it.
+/// The Run Options button and multiplier, as one block in the menu action row.
 fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
     let px = Val::Px;
     ui.spawn(Node {
-        position_type: PositionType::Absolute,
-        left: Val::Percent(50.0),
-        bottom: px(33.0),
-        margin: UiRect::left(px(116.0)),
         width: px(150.0),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,

@@ -27,8 +27,8 @@ use bevy::ui_render::ui_material::MaterialNode;
 
 use super::super::armory::{panel, para, text, TabCtx};
 use super::super::gear::ItemIcon;
-use super::super::hud::{self, HudFont, MenuRoot};
-use super::super::menu::{self, MenuBuilt};
+use super::super::hud::{self, HudFont};
+use super::super::menu::{self, MenuButtons};
 use super::super::profile::Profile;
 use super::super::run_options::GREEN;
 use super::super::{Phase, Selection};
@@ -199,27 +199,24 @@ pub(super) fn plugin(app: &mut App) {
 
 // ── The menu's button ───────────────────────────────────────────────────────────────────────────
 
-/// The Darkmoon Faire button, left of Enter World (200×60 at BOTTOM (0,30)) as Run Options is
-/// right of it, with where the Faire is and the purse under it.
+/// The Darkmoon Faire button and its whereabouts and purse, as one block in the menu action row.
 #[allow(clippy::type_complexity)]
 fn build_entry(
     mut commands: Commands,
-    roots: Query<Entity, (With<MenuRoot>, With<MenuBuilt>, Without<EntryBuilt>)>,
+    buttons: Query<Entity, (With<MenuButtons>, Without<EntryBuilt>)>,
     art: Res<GlueArt>,
     font: Res<HudFont>,
 ) {
-    let Ok(root) = roots.single() else { return };
+    let Ok(buttons) = buttons.single() else {
+        return;
+    };
     let f = &font.0;
     let px = Val::Px;
     commands
-        .entity(root)
+        .entity(buttons)
         .insert(EntryBuilt)
         .with_children(|ui| {
             ui.spawn(Node {
-                position_type: PositionType::Absolute,
-                right: Val::Percent(50.0),
-                bottom: px(33.0),
-                margin: UiRect::right(px(116.0)),
                 width: px(150.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
