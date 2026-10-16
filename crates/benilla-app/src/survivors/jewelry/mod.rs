@@ -41,7 +41,8 @@ pub(super) fn plugin(app: &mut App) {
             open_jewelry
                 .after(treasure::open_caches)
                 .before(hero::hero_vitals)
-                .run_if(in_state(Phase::Playing)),
+                .run_if(super::strip::world_runs)
+                .run_if(super::party::simulates),
         )
         .add_systems(
             Update,
@@ -475,6 +476,17 @@ pub(super) fn deal<H: DerefMut<Target = HeroState>>(
     run.pending_jewelry = 0;
 }
 
+/// `piece` on `hero` as a co-op hand gives it, with no slot to pick: into a free slot of its kind,
+/// else in place of the plainest piece of that kind.
+pub(super) fn put_on(hero: &mut HeroState, piece: &'static Piece) {
+    let replace = match hero.jewelry.free(piece.kind) {
+        Some(_) => None,
+        None => Jewelry::slots_of(piece.kind)
+            .min_by_key(|&i| hero.jewelry.slot(i).map_or(-1, |p| p.rarity as i32)),
+    };
+    let _ = wear(hero, piece, replace);
+}
+
 /// A hero no one picks for (the test aid's extras) takes a random piece from each offer it is
 /// dealt, replacing a random one of its kind when its slots are full; with nothing left to offer
 /// it takes a random level-up card instead.
@@ -685,7 +697,7 @@ fn deal_jewelry(
     }
     match heroes
         .iter_mut()
-        .find(|(hero, local, _)| *local && hero.alive())
+        .find(|(hero, local, ..)| *local && hero.alive())
     {
         Some((mut hero, ..)) => {
             offer.replacing = None;

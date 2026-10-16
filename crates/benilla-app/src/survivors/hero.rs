@@ -623,6 +623,10 @@ pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
         return 0.0;
     }
     let mut dmg = hero.stats().after_armor(raw);
+    // Focused (a co-op hand open), half of it.
+    if hero.focused {
+        dmg *= super::strip::FOCUS_TAKEN;
+    }
     if hero.shield_t > 0.0 && hero.shield > 0.0 {
         let absorbed = dmg.min(hero.shield);
         hero.shield -= absorbed;
@@ -721,6 +725,9 @@ pub(super) fn hero_vitals(
         }
         if hero.passives.iter().any(|(p, _)| p.key == "renew") {
             shown.push(139);
+        }
+        if hero.focused {
+            shown.push(super::strip::FOCUS_MARK);
         }
         marks.set(&shown);
         marks.flush(entity, guid.0, &mut store, &mut fields);

@@ -114,7 +114,8 @@ pub(super) fn plugin(app: &mut App) {
             (spawn_companions, run_companions)
                 .chain()
                 .after(WorldStage::Input)
-                .run_if(in_state(Phase::Playing))
+                .run_if(super::super::strip::world_runs)
+                .run_if(super::super::party::simulates)
                 .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_systems(

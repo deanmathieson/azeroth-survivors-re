@@ -68,7 +68,7 @@ use bevy::prelude::*;
 use super::abilities;
 use super::bonus::{Bonus, School};
 use super::data::{self, AbilityDef};
-use super::{HeroState, Phase};
+use super::HeroState;
 
 /// How much a mechanic's flat numbers grow per run level past the first.
 pub(crate) const LEVEL_GROWTH: f32 = 0.03;
@@ -83,7 +83,8 @@ pub(super) fn plugin(app: &mut App) {
             .chain()
             .after(abilities::apply_hits)
             .before(super::hero::hero_vitals)
-            .run_if(in_state(Phase::Playing))
+            .run_if(super::strip::world_runs)
+            .run_if(super::party::simulates)
             .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
     );
 }

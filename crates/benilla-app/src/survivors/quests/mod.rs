@@ -57,7 +57,8 @@ pub(super) fn plugin(app: &mut App) {
                 .after(enemies::collect_gems)
                 .after(treasure::open_caches)
                 .before(hero::hero_vitals)
-                .run_if(in_state(Phase::Playing))
+                .run_if(super::strip::world_runs)
+                .run_if(super::party::simulates)
                 .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
         )
         .add_systems(

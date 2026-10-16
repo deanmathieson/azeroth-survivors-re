@@ -70,48 +70,170 @@ pub(super) struct UnitSpec<'a> {
     pub sheath: u8,
 }
 
+/// How a unit or object of the run is built, kept on it: an online co-op client builds the same
+/// body from the host's ([`dress`]), since only this and the place travel, never the meshes.
+#[derive(Component, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) enum Look {
+    /// A creature, as [`spawn_unit`] makes one.
+    Unit {
+        serial: u64,
+        display: u32,
+        scale: f32,
+        level: u32,
+        faction: u32,
+        bytes0: u32,
+        weapons: Vec<Weapon>,
+        sheath: u8,
+    },
+    /// A generic GameObject, as [`spawn_object`] makes one.
+    Object {
+        serial: u64,
+        display: u32,
+        scale: f32,
+    },
+    /// A ground spell's dynamic object, as [`spawn_area_object`] makes one.
+    Area {
+        serial: u64,
+        spell: u32,
+        radius: f32,
+    },
+}
+
 /// Spawn a unit the attach builds a body for; the caller adds its own components.
 pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, yaw: f32) -> Entity {
-    let guid = HIGH_CREATURE | spec.serial;
-    let mut pairs: Vec<(u16, u32)> = vec![
-        (0, guid as u32),
-        (1, (guid >> 32) as u32),
-        (2, 0x9),
-        (4, spec.scale.to_bits()),
-        (FIELD_HEALTH, 100),
-        (FIELD_MAX_HEALTH, 100),
-        (FIELD_LEVEL, spec.level),
-        (FIELD_FACTION, spec.faction),
-        (FIELD_BYTES_0, spec.bytes0),
-        (FIELD_BYTES_2, u32::from(spec.sheath)),
-    ];
-    for &(slot, display, class, sub, material, inv, sheath) in spec.weapons {
-        pairs.push((FIELD_VIRTUAL_ITEM_DISPLAY + slot, display));
-        pairs.push((
-            FIELD_VIRTUAL_ITEM_INFO + 2 * slot,
-            u32::from(class)
-                | u32::from(sub) << 8
-                | u32::from(material) << 16
-                | u32::from(inv) << 24,
-        ));
-        pairs.push((FIELD_VIRTUAL_ITEM_INFO + 2 * slot + 1, u32::from(sheath)));
+    let look = Look::Unit {
+        serial: spec.serial,
+        display: spec.display,
+        scale: spec.scale,
+        level: spec.level,
+        faction: spec.faction,
+        bytes0: spec.bytes0,
+        weapons: spec.weapons.to_vec(),
+        sheath: spec.sheath,
+    };
+    let mut e = commands.spawn_empty();
+    dress(&mut e, look, pos, yaw);
+    e.id()
+}
+
+/// Everything the attach, animation and spell-visual systems need to build `look` at `pos`, onto
+/// `e`, with the [`Look`] itself.
+pub(super) fn dress(e: &mut EntityCommands, look: Look, pos: Vec3, yaw: f32) {
+    let place = Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw));
+    match &look {
+        Look::Unit {
+            serial,
+            display,
+            scale,
+            level,
+            faction,
+            bytes0,
+            weapons,
+            sheath,
+        } => {
+            let guid = HIGH_CREATURE | serial;
+            let mut pairs: Vec<(u16, u32)> = vec![
+                (0, guid as u32),
+                (1, (guid >> 32) as u32),
+                (2, 0x9),
+                (4, scale.to_bits()),
+                (FIELD_HEALTH, 100),
+                (FIELD_MAX_HEALTH, 100),
+                (FIELD_LEVEL, *level),
+                (FIELD_FACTION, *faction),
+                (FIELD_BYTES_0, *bytes0),
+                (FIELD_BYTES_2, u32::from(*sheath)),
+            ];
+            for &(slot, display, class, sub, material, inv, sheath) in weapons {
+                pairs.push((FIELD_VIRTUAL_ITEM_DISPLAY + slot, display));
+                pairs.push((
+                    FIELD_VIRTUAL_ITEM_INFO + 2 * slot,
+                    u32::from(class)
+                        | u32::from(sub) << 8
+                        | u32::from(material) << 16
+                        | u32::from(inv) << 24,
+                ));
+                pairs.push((FIELD_VIRTUAL_ITEM_INFO + 2 * slot + 1, u32::from(sheath)));
+            }
+            e.try_insert((
+                Guid(guid),
+                NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: Some(*display),
+                    scale: *scale,
+                },
+                ObjectStore(ObjectFields::from_pairs(&pairs)),
+                crate::creature_anim::MovementState::default(),
+                crate::net::ScriptedFacing,
+                place,
+                Visibility::default(),
+                RunEntity,
+            ));
+        }
+        Look::Object {
+            serial,
+            display,
+            scale,
+        } => {
+            let guid = HIGH_GAMEOBJECT | serial;
+            let pairs = [
+                (0, guid as u32),
+                (1, (guid >> 32) as u32),
+                (2, 0x21),
+                (4, scale.to_bits()),
+                (FIELD_GO_DISPLAY, *display),
+                (FIELD_GO_STATE, GO_STATE_READY),
+                (FIELD_GO_TYPE, GO_TYPE_GENERIC),
+            ];
+            e.try_insert((
+                Guid(guid),
+                NetEntity {
+                    kind: benilla_protocol::EntityKind::GameObject,
+                    display_id: Some(*display),
+                    scale: *scale,
+                },
+                ObjectStore(ObjectFields::from_pairs(&pairs)),
+                place,
+                Visibility::default(),
+                RunEntity,
+                avian3d::prelude::ColliderDisabled,
+            ));
+        }
+        Look::Area {
+            serial,
+            spell,
+            radius,
+        } => {
+            let guid = HIGH_DYNAMIC | serial;
+            let wow = bevy_to_wow(pos);
+            e.try_insert((
+                Guid(guid),
+                NetEntity {
+                    kind: benilla_protocol::EntityKind::DynamicObject,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                ObjectStore(ObjectFields::from_pairs(&[
+                    (0, guid as u32),
+                    (1, (guid >> 32) as u32),
+                    (2, 0x41),
+                    (3, *spell),
+                    (4, 1.0f32.to_bits()),
+                    (8, 1),
+                    (9, *spell),
+                    (10, radius.to_bits()),
+                    (11, wow[0].to_bits()),
+                    (12, wow[1].to_bits()),
+                    (13, wow[2].to_bits()),
+                    (14, 0),
+                ])),
+                Transform::from_translation(pos),
+                Visibility::default(),
+                RunEntity,
+            ));
+        }
     }
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::Unit,
-                display_id: Some(spec.display),
-                scale: spec.scale,
-            },
-            ObjectStore(ObjectFields::from_pairs(&pairs)),
-            crate::creature_anim::MovementState::default(),
-            crate::net::ScriptedFacing,
-            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::default(),
-            RunEntity,
-        ))
-        .id()
+    e.try_insert(look);
 }
 
 /// Spawn a generic GameObject showing `GameObjectDisplayInfo` row `display`. Its hull, if the
@@ -123,31 +245,14 @@ pub(super) fn spawn_object(
     scale: f32,
     pos: Vec3,
 ) -> Entity {
-    let guid = HIGH_GAMEOBJECT | serial;
-    let pairs = [
-        (0, guid as u32),
-        (1, (guid >> 32) as u32),
-        (2, 0x21),
-        (4, scale.to_bits()),
-        (FIELD_GO_DISPLAY, display),
-        (FIELD_GO_STATE, GO_STATE_READY),
-        (FIELD_GO_TYPE, GO_TYPE_GENERIC),
-    ];
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::GameObject,
-                display_id: Some(display),
-                scale,
-            },
-            ObjectStore(ObjectFields::from_pairs(&pairs)),
-            Transform::from_translation(pos),
-            Visibility::default(),
-            RunEntity,
-            avian3d::prelude::ColliderDisabled,
-        ))
-        .id()
+    let look = Look::Object {
+        serial,
+        display,
+        scale,
+    };
+    let mut e = commands.spawn_empty();
+    dress(&mut e, look, pos, 0.0);
+    e.id()
 }
 
 /// Zero health: the animation selector plays Death and holds the corpse pose.
@@ -173,35 +278,14 @@ pub(super) fn spawn_area_object(
     radius: f32,
     pos: Vec3,
 ) -> Entity {
-    let guid = HIGH_DYNAMIC | serial;
-    let wow = bevy_to_wow(pos);
-    commands
-        .spawn((
-            Guid(guid),
-            NetEntity {
-                kind: benilla_protocol::EntityKind::DynamicObject,
-                display_id: None,
-                scale: 1.0,
-            },
-            ObjectStore(ObjectFields::from_pairs(&[
-                (0, guid as u32),
-                (1, (guid >> 32) as u32),
-                (2, 0x41),
-                (3, spell),
-                (4, 1.0f32.to_bits()),
-                (8, 1),
-                (9, spell),
-                (10, radius.to_bits()),
-                (11, wow[0].to_bits()),
-                (12, wow[1].to_bits()),
-                (13, wow[2].to_bits()),
-                (14, 0),
-            ])),
-            Transform::from_translation(pos),
-            Visibility::default(),
-            RunEntity,
-        ))
-        .id()
+    let look = Look::Area {
+        serial,
+        spell,
+        radius,
+    };
+    let mut e = commands.spawn_empty();
+    dress(&mut e, look, pos, 0.0);
+    e.id()
 }
 
 /// Eight aura slots we drive on a unit, from `base` (a multiple of 8, so one flag word covers

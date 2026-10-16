@@ -20,6 +20,8 @@ trace_chrome = ["bevy/trace_chrome"]
 # needs WebGPU).
 webgl2 = ["bevy/webgl2", "benilla-world/webgl2"]
 webgpu = ["bevy/webgpu", "benilla-world/webgpu"]
+# Online co-op over UDP (`survivors::coop`): native only, on for `warcraft-survivors`, off for wasm.
+coop = ["dep:bevy_replicon", "dep:bevy_replicon_renet2"]
 
 [dependencies]
 # Wall-clock reads (`SystemTime::now`) go through `web-time`: a re-export of std's on native, and
@@ -77,6 +79,8 @@ rtrb = "0.3"
 mint = "0.5"
 # The gossip greeting's weighted draw, re-rolled per open as in the reference.
 rand = "0.8"
+bevy_replicon = { workspace = true, optional = true }
+bevy_replicon_renet2 = { workspace = true, optional = true }
 
 # The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x. Native-only:
 # arboard has no wasm32 backend (`textinput/clipboard.rs` falls back to no pasteboard there).

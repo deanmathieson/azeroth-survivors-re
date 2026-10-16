@@ -34,7 +34,7 @@ use crate::net::{FieldChanged, Guid, ObjectStore};
 /// The player this machine drives: the only one until co-op.
 pub(super) const LOCAL_PLAYER: u8 = 0;
 /// The most heroes a party holds.
-pub(super) const MAX_PARTY: u8 = 4;
+pub(super) const MAX_PARTY: u8 = 5;
 /// How far from the local hero the test aid's extras stand, in yards.
 const EXTRA_SPACING: f32 = 3.0;
 
@@ -50,10 +50,41 @@ pub(super) struct Bot;
 
 /// Another player's hero, driven from their own machine: it picks its own cards on its own screen,
 /// handed in through [`apply_pick`] / [`apply_skip`], and the level-up waits for it. Nothing sets
-/// it yet; the network layer will.
-#[allow(dead_code, reason = "the network layer will drive it")]
+/// it outside online co-op ([`super::coop`]).
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
 #[derive(Component)]
 pub(super) struct Remote;
+
+/// Who simulates the run on this machine: alone or hosting, this machine does; a co-op client only
+/// shows the host's world ([`simulates`]).
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum NetRole {
+    #[default]
+    Solo,
+    Host,
+    Client,
+}
+
+/// Run condition: this machine runs the horde, the damage, the drops and the clock.
+pub(super) fn simulates(role: Res<NetRole>) -> bool {
+    *role != NetRole::Client
+}
+
+/// One choice at the level-up hand, as a co-op client makes it: sent to the host, which applies it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HandDecision {
+    Pick(usize),
+    Reroll,
+    Banish(usize),
+    Skip,
+}
+
+/// Present on a co-op client only: the cards and the hand's tools post the choices here instead of
+/// applying them, and the host deals the next hand.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+#[derive(Resource, Default)]
+pub(super) struct HandOutbox(pub Vec<HandDecision>);
 
 /// How many heroes a run fields: one, unless `WOW_SURVIVORS_PARTY` asks for more.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +153,9 @@ pub(super) struct HeroState {
     /// How far a downed hero's revive has got, 0 to 1: an ally beside it fills it
     /// ([`revive_downed`]).
     pub revive_t: f32,
+    /// Focused: in co-op, the hero's hand is open, and it takes half damage
+    /// ([`super::strip::FOCUS_TAKEN`]).
+    pub focused: bool,
     /// Level-up hands this hero has still to pick from, dealt from the run's banked levels
     /// ([`deal_hands`]).
     pub picks: u32,
@@ -169,6 +203,7 @@ impl Default for HeroState {
             mobile: mobility::MobilityState::default(),
             dead_t: None,
             revive_t: 0.0,
+            focused: false,
             picks: 0,
             rerolls: hand::REROLLS_PER_RUN,
             banishes: hand::BANISHES_PER_RUN,
@@ -253,38 +288,79 @@ pub(super) fn party_picked<'a>(heroes: impl IntoIterator<Item = (&'a HeroState, 
 
 /// A [`Remote`] player's pick, made on their own screen: `choice` joins `hero`'s build and one of
 /// its hands is spent. False, and nothing taken, for a hero downed or with no hand to pick from.
-#[allow(dead_code, reason = "the network layer will drive it")]
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
 pub(super) fn apply_pick(hero: &mut HeroState, choice: Choice) -> bool {
-    if !hero.alive() || hero.picks == 0 {
+    if !hero.alive() {
         return false;
     }
+    // A piece of jewelry spends a jewelry choice; any other card a level-up hand.
+    let bank = match choice {
+        Choice::Jewel(_) => &mut hero.jewelry.picks,
+        _ => &mut hero.picks,
+    };
+    if *bank == 0 {
+        return false;
+    }
+    *bank -= 1;
     hud::take(hero, choice);
-    hero.picks -= 1;
     true
 }
 
 /// A [`Remote`] player's Skip: one hand passed up for the gold [`hand::skip_gold`] pays under the
 /// skipper's own multiplier, into the party's purse. `None` for a hero downed or with no hand.
-#[allow(dead_code, reason = "the network layer will drive it")]
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
 pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run) -> Option<u32> {
-    if !hero.alive() || hero.picks == 0 {
+    if !hero.alive() || super::strip::banked(hero) == 0 {
         return None;
     }
     let gold = hand::skip_gold(run, hero);
     run.gold += gold;
-    hero.picks -= 1;
+    // The hand on offer is a jewelry choice while one is banked ([`next_hand`]).
+    if hero.jewelry.picks > 0 {
+        hero.jewelry.picks -= 1;
+    } else {
+        hero.picks -= 1;
+    }
     Some(gold)
+}
+
+/// The next hand a co-op hero holds of its banked ones: a jewelry choice first, rolled from the
+/// whole catalog (one with nothing left to offer becomes a level-up hand), then a level-up hand.
+/// `None` with none banked, or the hero down.
+pub(super) fn next_hand(hero: &mut HeroState, level: u32, rng: &mut Rng) -> Option<Vec<Choice>> {
+    if !hero.alive() {
+        return None;
+    }
+    while hero.jewelry.picks > 0 {
+        let pieces = jewelry::roll(jewelry::pieces(), &hero.jewelry, &hero.stats(), level, rng);
+        if !pieces.is_empty() {
+            return Some(pieces.into_iter().map(Choice::Jewel).collect());
+        }
+        hero.jewelry.picks -= 1;
+        hero.picks += 1;
+    }
+    (hero.picks > 0).then(|| hud::choices_for(hero, rng))
 }
 
 /// The level-up waits for the party: while a player standing still holds a hand, play does not
 /// resume when the local hero is done (the local screen shows the wait), and once the last of
 /// them has picked, it does. Runs after every picker of the frame.
 pub(super) fn wait_for_party(
+    coop: Option<Res<super::strip::CoopRun>>,
     phase: Res<State<Phase>>,
     heroes: Query<(&HeroState, Has<Bot>)>,
     offer: Res<Offer>,
     mut next: ResMut<NextState<Phase>>,
 ) {
+    // In co-op nothing waits: every hero's hands stay banked ([`super::strip`]).
+    if coop.is_some_and(|c| c.0) {
+        if matches!(*phase.get(), Phase::LevelUp | Phase::Jewelry)
+            && matches!(*next, NextState::Unchanged)
+        {
+            next.set(Phase::Playing);
+        }
+        return;
+    }
     if *phase.get() != Phase::LevelUp {
         return;
     }
@@ -425,7 +501,7 @@ pub(super) const HEALER_REVIVE_SECS: f32 = 1.5;
 /// The share of its max health a revived hero gets up with.
 pub(super) const REVIVED_HP: f32 = 0.5;
 /// The glow over a downed hero while an ally can revive it: Divine Intervention's.
-const REVIVE_MARK: u32 = 19752;
+pub(super) const REVIVE_MARK: u32 = 19752;
 
 /// The healing classes, which revive a downed ally twice as fast: Priest, Paladin, Druid, Shaman.
 pub(super) fn is_healer(class: &ClassDef) -> bool {
@@ -522,13 +598,14 @@ pub(super) fn revive_downed(
 }
 
 /// What the horde's health and numbers are multiplied by for a party of `heroes` (bots count):
-/// x1.0 / 1.6 / 2.2 / 2.8 for one to four.
+/// x1.0 / 1.6 / 2.2 / 2.8 / 3.4 for one to five.
 pub(super) fn scale(heroes: u8) -> f32 {
     match heroes {
         0 | 1 => 1.0,
         2 => 1.6,
         3 => 2.2,
-        _ => 2.8,
+        4 => 2.8,
+        _ => 3.4,
     }
 }
 
@@ -1190,8 +1267,8 @@ mod tests {
 
     #[test]
     fn the_horde_scales_with_the_party() {
-        let table: Vec<f32> = (1..=4).map(scale).collect();
-        assert_eq!(table, [1.0, 1.6, 2.2, 2.8]);
+        let table: Vec<f32> = (1..=5).map(scale).collect();
+        assert_eq!(table, [1.0, 1.6, 2.2, 2.8, 3.4]);
         assert_eq!(scale(0), 1.0);
         for n in [0, 1, 7, 28, 220] {
             assert_eq!(crowd(n, 1), n, "a party of one is unchanged");
@@ -1199,6 +1276,7 @@ mod tests {
         assert_eq!(crowd(100, 2), 160);
         assert_eq!(crowd(100, 3), 220);
         assert_eq!(crowd(100, 4), 280);
+        assert_eq!(crowd(100, 5), 340);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use super::cards::PendingPick;
 use super::hud::{self, Choice, Offer};
+use super::party::HandDecision;
 use super::{treasure, HeroState, LocalHero, Phase, Rng, Run};
 
 /// Rerolls and banishes a run starts with.
@@ -37,7 +38,7 @@ pub(super) fn struck(choice: Choice, hero: &HeroState) -> Option<Struck> {
         Choice::Upgrade(k) => hero.abilities.get(k).map(|o| Struck::Ability(o.def.key)),
         Choice::NewPassive(p) => Some(Struck::Passive(p.key)),
         Choice::UpPassive(k) => hero.passives.get(k).map(|(p, _)| Struck::Passive(p.key)),
-        Choice::Overcharge(_) => None,
+        Choice::Overcharge(_) | Choice::Jewel(_) => None,
         Choice::Heal => None,
     }
 }
@@ -58,7 +59,7 @@ pub(super) fn skip_gold(run: &Run, hero: &HeroState) -> u32 {
 
 /// The Skip button's label, with what it pays.
 fn skip_label(run: &Run, hero: &HeroState) -> String {
-    format!("Skip: +{} gold", skip_gold(run, hero))
+    format!("Skip (X): +{} gold", skip_gold(run, hero))
 }
 
 /// Deal a whole new hand, if a reroll is left.
@@ -190,8 +191,10 @@ pub(super) fn use_tools(
     mut offer: ResMut<Offer>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    mut outbox: Option<ResMut<super::party::HandOutbox>>,
+    strip: Option<Res<super::strip::HandStrip>>,
 ) {
-    if *phase.get() != Phase::LevelUp {
+    if !super::strip::hand_up(*phase.get(), strip.as_deref()) {
         if mode.banishing {
             mode.banishing = false;
         }
@@ -213,15 +216,44 @@ pub(super) fn use_tools(
     if keys.just_pressed(KeyCode::KeyB) {
         used = Some(Tool::Banish);
     }
+    if keys.just_pressed(super::strip::SKIP_KEY) {
+        used = Some(Tool::Skip);
+    }
+    // The co-op strip spends banked hands; a jewelry hand cannot be rerolled.
+    let banked = *phase.get() == Phase::Playing;
+    let jewels = offer
+        .choices()
+        .iter()
+        .any(|c| matches!(c, Choice::Jewel(_)));
     // Checked first: touching the offer mutably re-deals the cards.
     match used {
-        Some(Tool::Reroll) if me.rerolls > 0 => {
+        // A co-op client posts the tool to the host, which deals the hand that follows.
+        Some(Tool::Reroll) if me.rerolls > 0 && !jewels => {
             mode.banishing = false;
-            reroll(&mut me, &mut offer, &mut rng);
+            match outbox.as_deref_mut() {
+                Some(outbox) => outbox.0.push(HandDecision::Reroll),
+                None => {
+                    reroll(&mut me, &mut offer, &mut rng);
+                }
+            }
         }
-        Some(Tool::Skip) => {
+        Some(Tool::Skip) if !offer.choices().is_empty() => {
             mode.banishing = false;
-            skip(&mut run, &mut me, &mut offer, &mut rng, &mut next);
+            match outbox.as_deref_mut() {
+                Some(outbox) => {
+                    outbox.0.push(HandDecision::Skip);
+                    offer.deal(Vec::new());
+                }
+                None if banked => {
+                    if let Some(gold) = super::party::apply_skip(&mut me, &mut run) {
+                        run.banner = Some((format!("Skipped: +{gold} gold"), 2.5));
+                    }
+                    offer.deal(Vec::new());
+                }
+                None => {
+                    skip(&mut run, &mut me, &mut offer, &mut rng, &mut next);
+                }
+            }
         }
         Some(Tool::Banish) => {
             let arm = !mode.banishing && can_banish(&me, &offer);
@@ -243,13 +275,20 @@ pub(super) fn refresh_tools(
     mut buttons: Query<(&Tool, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
     mut labels: Query<(&ToolLabel, &mut Text, &mut TextColor)>,
     mut hints: Query<&mut Text, (With<ToolHint>, Without<ToolLabel>)>,
+    strip: Option<Res<super::strip::HandStrip>>,
 ) {
-    if *phase.get() != Phase::LevelUp {
+    if !super::strip::hand_up(*phase.get(), strip.as_deref()) {
         return;
     }
     let Ok(me) = local.single() else { return };
     let ready = |tool: Tool| match tool {
-        Tool::Reroll => me.rerolls > 0,
+        Tool::Reroll => {
+            me.rerolls > 0
+                && !offer
+                    .choices()
+                    .iter()
+                    .any(|c| matches!(c, Choice::Jewel(_)))
+        }
         Tool::Skip => true,
         Tool::Banish => mode.banishing || can_banish(me, &offer),
     };
@@ -395,7 +434,11 @@ mod tests {
         let label = skip_label(&run, &hero);
         let paid = skip(&mut run, &mut hero, &mut offer, &mut rng, &mut next);
         assert_eq!(paid, SKIP_COINS);
-        assert_eq!(label, format!("Skip: +{paid} gold"), "it pays what it says");
+        assert_eq!(
+            label,
+            format!("Skip (X): +{paid} gold"),
+            "it pays what it says"
+        );
         assert_eq!((run.gold, hero.picks), (paid, 1));
         assert_ne!(offer.len(), 0, "another banked level deals another hand");
         assert!(matches!(next, NextState::Unchanged));
@@ -417,7 +460,7 @@ mod tests {
             let paid = skip(run, hero, &mut offer, &mut rng, &mut next);
             assert_eq!(paid, skip_gold(run, hero));
             assert_eq!(run.gold, paid);
-            assert_eq!(label, format!("Skip: +{paid} gold"));
+            assert_eq!(label, format!("Skip (X): +{paid} gold"));
             paid
         };
         let (mut run, mut hero) = (Run::default(), fresh_hero());

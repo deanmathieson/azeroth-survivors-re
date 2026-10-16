@@ -498,7 +498,10 @@ pub(super) fn spawn_elites(
     collide: Option<WorldCollision>,
     world: WorldPoint,
 ) {
-    if run.elapsed < run.next_elite || !heroes.iter().any(|(_, h)| h.alive()) {
+    if run.elapsed < run.next_elite
+        || !heroes.iter().any(|(_, h)| h.alive())
+        || !super::strip::may_spawn(&run)
+    {
         return;
     }
     let (standing, everyone) = enemies::hero_spots(&heroes);

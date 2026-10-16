@@ -183,8 +183,9 @@ fn tenths(v: f32) -> String {
     }
 }
 
-/// Bonuses summed per stat, with school-scoped damage kept apart from unscoped damage.
-#[derive(Default, Clone, Debug, PartialEq)]
+/// Bonuses summed per stat, with school-scoped damage kept apart from unscoped damage. Serde
+/// carries a co-op player's totals to the host, which builds that player's hero on them.
+#[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Bonuses {
     totals: [f32; StatKey::COUNT],
     school_damage: [f32; School::COUNT],

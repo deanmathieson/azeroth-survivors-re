@@ -81,6 +81,11 @@ pub(super) struct OfferRow;
 /// The line under LEVEL UP: which level this is.
 #[derive(Component)]
 pub(super) struct LevelUpSub;
+/// LEVEL UP itself, and the hint under the tools: the co-op strip hides both.
+#[derive(Component)]
+pub(super) struct LevelUpTitle;
+#[derive(Component)]
+pub(super) struct LevelUpHint;
 
 /// A radial cooldown sweep over one ability icon: `sweep` is the remaining fraction
 /// (1.0 = just cast, 0.0 = ready), drawn by `ui_sweep.wgsl`.
@@ -261,6 +266,8 @@ pub(super) enum Choice {
     UpPassive(usize),
     Overcharge(Overcharge),
     Heal,
+    /// A piece of jewelry, as a co-op hand deals a banked jewelry choice ([`super::strip`]).
+    Jewel(&'static super::jewelry::Piece),
 }
 
 /// The level-up cards on offer.
@@ -818,7 +825,7 @@ pub(super) fn setup_hud(
                 UiTransform::default(),
                 bevy::ui::FocusPolicy::Pass,
             ));
-            root.spawn(centered(f, "LEVEL UP", 52.0, GOLD));
+            root.spawn((LevelUpTitle, centered(f, "LEVEL UP", 52.0, GOLD)));
             root.spawn((
                 LevelUpSub,
                 centered(f, "Choose your power", 16.0, Color::srgb(0.85, 0.78, 0.6)),
@@ -833,7 +840,10 @@ pub(super) fn setup_hud(
                 },
             ));
             super::hand::spawn_tools(root, f);
-            root.spawn(centered(f, "Click a card, or press 1, 2 or 3", 14.0, DIM));
+            root.spawn((
+                LevelUpHint,
+                centered(f, "Click a card, or press 1, 2 or 3", 14.0, DIM),
+            ));
         });
 
     // --- Pause. ---
@@ -1237,7 +1247,12 @@ pub(super) fn roll_offer(
     mut rng: ResMut<Rng>,
     mut offer: ResMut<Offer>,
     mut next: ResMut<NextState<Phase>>,
+    outbox: Option<Res<party::HandOutbox>>,
 ) {
+    // A co-op client's hands come from the host.
+    if outbox.is_some() {
+        return;
+    }
     party::deal_hands(&mut run, heroes.iter_mut().map(|(hero, ..)| hero));
     for (mut hero, _, bot) in &mut heroes {
         if party::auto_picks(&hero, bot) {
@@ -1273,6 +1288,7 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
         Choice::NewPassive(p) => hero.passives.push((p, 1)),
         Choice::UpPassive(k) => hero.passives[k].1 += 1,
         Choice::Overcharge(kind) => hero.overcharges[kind.index()] += 1,
+        Choice::Jewel(piece) => super::jewelry::put_on(hero, piece),
         // The healthstone heals no downed hero, as no heal does.
         Choice::Heal => {
             if hero.alive() {
@@ -1576,6 +1592,23 @@ pub(super) fn describe_card(
                 legendary: None,
             }
         }
+        Choice::Jewel(piece) => CardText {
+            spell: 0,
+            name: piece.name.into(),
+            tag: piece.kind.label().into(),
+            tag_color: piece.rarity.color(),
+            desc: piece
+                .bonuses
+                .iter()
+                .map(|b| b.describe())
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                ),
+            ranks: None,
+            legendary: None,
+        },
         Choice::Heal => CardText {
             spell: 5720,
             name: "Healthstone".into(),
@@ -2763,6 +2796,7 @@ pub(super) fn show_panels(
         Query<(&mut Visibility, &mut Node), With<OverRoot>>,
     )>,
     next: Res<NextState<Phase>>,
+    strip: Option<Res<super::strip::HandStrip>>,
 ) {
     let p = *phase.get();
     // A run starting from the menu this frame: the screens hold until it is under way, so "Play
@@ -2799,7 +2833,8 @@ pub(super) fn show_panels(
         set(root, p != Phase::Menu && p != Phase::GameOver);
     }
     for root in &mut roots.p2() {
-        set(root, p == Phase::LevelUp);
+        // The paused level-up, or the co-op hand strip over play.
+        set(root, super::strip::hand_up(p, strip.as_deref()));
     }
     for root in &mut roots.p3() {
         set(root, p == Phase::Paused);

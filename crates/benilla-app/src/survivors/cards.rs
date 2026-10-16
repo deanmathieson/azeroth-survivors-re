@@ -11,7 +11,7 @@ use bevy::ui::RelativeCursorPosition;
 use super::data::{self, Kind};
 use super::hand::{self, HandMode};
 use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
-use super::{HeroState, LocalHero, Phase, Rng, Run};
+use super::{party, HeroState, LocalHero, Phase, Rng, Run};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
 pub(super) const COMMON: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -136,6 +136,7 @@ pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
             _ => Rarity::Uncommon,
         },
         Choice::Overcharge(_) => Rarity::Epic,
+        Choice::Jewel(piece) => piece.rarity,
         Choice::Heal => Rarity::Common,
     }
 }
@@ -528,11 +529,15 @@ pub(super) fn animate_cards(
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
     mode: Res<HandMode>,
+    mut outbox: Option<ResMut<party::HandOutbox>>,
+    strip: Option<Res<super::strip::HandStrip>>,
 ) {
-    if *phase.get() != Phase::LevelUp {
+    if !super::strip::hand_up(*phase.get(), strip.as_deref()) {
         pending.0 = None;
         return;
     }
+    // The co-op strip takes its pick off the banked hands; the paused level-up deals on.
+    let banked = *phase.get() == Phase::Playing;
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     for mut r in &mut rays {
@@ -635,8 +640,21 @@ pub(super) fn animate_cards(
         if *t >= PICK_SECS {
             let i = *i;
             pending.0 = None;
-            if let Ok(mut me) = local.single_mut() {
-                hud::pick(i, &mut me, &mut run, &mut offer, &mut rng, &mut next);
+            if let Some(outbox) = outbox.as_deref_mut() {
+                // A co-op client: the host applies the pick and deals what comes next.
+                outbox.0.push(party::HandDecision::Pick(i));
+                offer.deal(Vec::new());
+            } else if let Ok(mut me) = local.single_mut() {
+                if banked {
+                    if let Some(&choice) = offer.choices().get(i) {
+                        if party::apply_pick(&mut me, choice) {
+                            run.version += 1;
+                        }
+                    }
+                    offer.deal(Vec::new());
+                } else {
+                    hud::pick(i, &mut me, &mut run, &mut offer, &mut rng, &mut next);
+                }
             }
         }
     }
@@ -654,8 +672,10 @@ pub(super) fn choose_card(
     mut mode: ResMut<HandMode>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
     mut rng: ResMut<Rng>,
+    mut outbox: Option<ResMut<party::HandOutbox>>,
+    strip: Option<Res<super::strip::HandStrip>>,
 ) {
-    if *phase.get() != Phase::LevelUp || pending.0.is_some() {
+    if !super::strip::hand_up(*phase.get(), strip.as_deref()) || pending.0.is_some() {
         return;
     }
     let mut pick = cards
@@ -681,7 +701,12 @@ pub(super) fn choose_card(
         return;
     };
     if hand::strikable(i, &me, &offer) {
-        hand::banish(i, &mut me, &mut offer, &mut rng);
+        match outbox.as_deref_mut() {
+            Some(outbox) => outbox.0.push(party::HandDecision::Banish(i)),
+            None => {
+                hand::banish(i, &mut me, &mut offer, &mut rng);
+            }
+        }
         mode.banishing = false;
     }
 }

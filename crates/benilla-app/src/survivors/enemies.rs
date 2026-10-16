@@ -292,7 +292,8 @@ pub(super) fn spawn_enemies(
     world: WorldPoint,
 ) {
     let (standing, everyone) = hero_spots(&heroes);
-    if standing.is_empty() {
+    // A co-op Breather after a boss: the horde waits ([`super::strip::breather`]).
+    if standing.is_empty() || !super::strip::may_spawn(&run) {
         return;
     }
     let leash = party::Leash::of(selection.stage_def());
