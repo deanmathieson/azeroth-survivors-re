@@ -459,6 +459,14 @@ fn bottom(p: &mut ChildSpawnerCommands, art: &GlueArt, font: &Handle<Font>) {
     });
 }
 
+/// The screen's three kinds of text, kept disjoint so one system can write all of them.
+type CaptionTexts<'w, 's> =
+    Query<'w, 's, (&'static Caption, &'static mut Text), (Without<Readout>, Without<Name>)>;
+type ReadoutTexts<'w, 's> =
+    Query<'w, 's, (&'static Readout, &'static mut Text), (Without<Caption>, Without<Name>)>;
+type NameTexts<'w, 's> =
+    Query<'w, 's, &'static mut Text, (With<Name>, Without<Caption>, Without<Readout>)>;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn input(
     mut commands: Commands,
@@ -473,9 +481,9 @@ pub(super) fn input(
     mut rng: ResMut<Rng>,
     keys: Res<ButtonInput<KeyCode>>,
     mut keyboard: MessageReader<KeyboardInput>,
-    mut captions: Query<(&Caption, &mut Text), (Without<Readout>, Without<Name>)>,
-    mut reads: Query<(&Readout, &mut Text), (Without<Caption>, Without<Name>)>,
-    mut names: Query<&mut Text, (With<Name>, Without<Caption>, Without<Readout>)>,
+    mut captions: CaptionTexts,
+    mut reads: ReadoutTexts,
+    mut names: NameTexts,
     roots: Query<Entity, With<CreateRoot>>,
 ) {
     if !session.open {
@@ -682,9 +690,9 @@ fn refresh(
     strings: Option<&GlueStrings>,
     store: &GearStore,
     session: &CreateSession,
-    captions: &mut Query<(&Caption, &mut Text), (Without<Readout>, Without<Name>)>,
-    reads: &mut Query<(&Readout, &mut Text), (Without<Caption>, Without<Name>)>,
-    names: &mut Query<&mut Text, (With<Name>, Without<Caption>, Without<Readout>)>,
+    captions: &mut CaptionTexts,
+    reads: &mut ReadoutTexts,
+    names: &mut NameTexts,
 ) {
     let Some((class, trainer, race, sex)) = super::looks_ui::pick(selection) else {
         return;
