@@ -27,6 +27,8 @@ use bevy::prelude::*;
 
 use super::bonus::{Bonus, Bonuses};
 use super::mechanics::{self as game_mechanics, MechanicId};
+use crate::combat_text::CombatTextSpawn;
+use crate::sound::SoundCue;
 use super::meta::MetaParts;
 use super::party::{HeroState, LocalHero};
 use super::profile::{slug, Profile};
@@ -117,6 +119,9 @@ pub(super) fn plugin(app: &mut App) {
 #[allow(clippy::type_complexity)]
 fn grant_talents(
     mut commands: Commands,
+    mut run: Option<ResMut<super::Run>>,
+    mut text: Option<MessageWriter<CombatTextSpawn>>,
+    mut cues: Option<MessageWriter<SoundCue>>,
     profile: Option<Res<Profile>>,
     selection: Res<Selection>,
     phase: Res<State<super::Phase>>,
@@ -141,6 +146,24 @@ fn grant_talents(
         if granted.is_some_and(|granted| granted.0 == ranks) {
             continue;
         }
+        let before = granted.map_or(&[][..], |g| g.0.as_slice());
+        if let (Some(run), Some(text), Some(cues), Some(id)) = (
+            run.as_deref_mut(),
+            text.as_mut(),
+            cues.as_mut(),
+            newly_granted_milestone(before, ranks),
+        ) {
+            let name = mechanics::entry(id).map_or("Talent", |m| m.name);
+            run.banner = Some((format!("{name}!"), 3.0));
+            text.write(CombatTextSpawn {
+                anchor: e,
+                text: format!("{name}!"),
+                category: 4,
+                color: Some(super::units::COLOR_SPELL),
+            });
+            // The 1.12 level-up cue is the game's stock talent-acquisition sound.
+            cues.write(SoundCue::flat("LEVELUPSOUND"));
+        }
         let spec = grant_learned(&mut hero, ranks);
         match (spec, had) {
             (Some(spec), Some(had)) if std::ptr::eq(spec, had.0) => {}
@@ -154,6 +177,15 @@ fn grant_talents(
         }
         commands.entity(e).insert(TalentsGranted(ranks.to_vec()));
     }
+}
+
+/// The first newly present landmark is the run's announcement; later frames retain the record in
+/// [`TalentsGranted`], so loading, respecing, or replication cannot replay it.
+fn newly_granted_milestone(before: &[(u32, u8)], now: &[(u32, u8)]) -> Option<u32> {
+    now.iter()
+        .filter(|(id, rank)| *rank > 0 && !before.iter().any(|(old, _)| old == id))
+        .map(|(id, _)| *id)
+        .find(|id| mechanics::MILESTONES.iter().any(|(_, ids)| ids.contains(id)))
 }
 
 /// Put every learned active talent on a freshly created hero, what the learned talents teach,
@@ -1125,5 +1157,12 @@ mod tests {
                 .map(|s| Bonus::school(s, b.school_damage(s)).describe()),
         );
         out.join(", ")
+    }
+
+    #[test]
+    fn landmarks_announce_only_when_first_learned_this_run() {
+        assert_eq!(newly_granted_milestone(&[], &[(86, 1)]), Some(86));
+        assert_eq!(newly_granted_milestone(&[(86, 1)], &[(86, 1)]), None);
+        assert_eq!(newly_granted_milestone(&[], &[(34, 1)]), None);
     }
 }

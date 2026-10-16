@@ -366,6 +366,8 @@ fn a_host_and_a_client_play_over_udp_on_the_loopback() {
         trainer: 3000,
         bonuses: Bonuses::default(),
         talents: vec![(61, 5), (71, 1)],
+        mount_display: 0,
+        mount_hat: None,
         hero: None,
     };
     let (host_hero, theirs) = {
@@ -582,6 +584,8 @@ fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
         trainer: 4000,
         bonuses: Bonuses::default(),
         talents: Vec::new(),
+        mount_display: 0,
+        mount_hat: None,
         hero: None,
     };
     // Joining at level 6, it banks five hands; and one jewelry choice from a cache.

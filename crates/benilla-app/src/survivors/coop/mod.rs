@@ -29,7 +29,7 @@ mod social;
 #[cfg(test)]
 mod tests;
 mod ui;
-mod wire;
+pub(in crate::survivors) mod wire;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;

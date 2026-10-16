@@ -156,8 +156,6 @@ pub(super) fn greet(
     mut start: MessageWriter<ToClients<StartRun>>,
     build: Option<Res<crate::BuildId>>,
     name: Res<PlayerName>,
-    profile: Option<Res<Profile>>,
-    displays: Option<Res<crate::entities::ItemDisplays>>,
     mut refuse: MessageWriter<ToClients<Refused>>,
     mut cut: MessageWriter<DisconnectRequest>,
 ) {
@@ -578,6 +576,8 @@ pub(super) fn tag(
     mut commands: Commands,
     selection: Res<Selection>,
     name: Res<PlayerName>,
+    profile: Option<Res<Profile>>,
+    displays: Option<Res<crate::entities::ItemDisplays>>,
     fresh: Query<
         (
             Entity,

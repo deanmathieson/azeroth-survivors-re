@@ -163,6 +163,13 @@ nothing in the run shares a name with.
 
 ## The 31-point specs
 
+## Landmark moments
+
+The first newly learned 10-, 20-, 30-point landmark (including a 31-point spec capstone) in a
+run announces itself with its rank-one spell name in the HUD banner and floating combat text,
+and plays the stock 1.12 talent-acquisition cue. The run remembers the grant, so the same
+landmark cannot announce twice after a respec or replication refresh.
+
 Each tree's capstone (its tier-7 talent, 31 points deep) makes the hero that spec for every run:
 the class's run-start ability becomes the spec's signature spell (keeping its rank), and the spec
 brings a signature summon or form for the whole run. On the Talents tab the capstone wears a deep
