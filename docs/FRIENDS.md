@@ -32,17 +32,21 @@ Already have a 1.12.1 client from back in the day? Its `Data` folder works too.
 
 ## 2. Unzip the kit
 
-Grab `AzerothSurvivors-xxxxxxx.zip` from the host and unzip it somewhere you can write to, such
-as Desktop or Documents (not Program Files). Spaces in the path are fine. Inside you'll find:
+Download [AzerothSurvivors.zip](https://github.com/deanmathieson/azeroth-survivors-re/releases/latest/download/AzerothSurvivors.zip)
+once and unzip it somewhere you can write to, such as Desktop or Documents (not Program Files).
+Spaces in the path are fine. Inside you'll find:
 
 - `Play.bat`: just play.
 - `Host.bat`: play and host a party.
 - `Join.bat`: play and join a party.
+- `Update.bat`: check for an update without starting the game.
 - `README-FRIENDS.txt`: this page, the short version.
 - `benilla-config\`: your profile (settings, talents, achievements). It starts empty.
 
 The first run asks where your `Data` folder is (paste the path) and remembers it in
-`wow-data-path.txt`. Point it at the wrong place? Delete that file and run again.
+`wow-data-path.txt`. Point it at the wrong place? Delete that file and run again. Each launcher
+also checks for the latest kit automatically. It keeps your data path, last host, name files,
+and `benilla-config` profile/saves.
 
 ## 3. Get on the same network: Tailscale
 
@@ -72,11 +76,11 @@ Want a different hero on your first night? Use `Play.bat` instead: pick your cla
 **Multiplayer**, type the host's address and click **Join**. The host can do the same with
 **Host**.
 
-## 5. Everyone on the same zip
+## 5. Everyone on the same build
 
-The game checks that everyone runs the same build. The zip name ends in a build code
-(`AzerothSurvivors-c162faa.zip`); everyone's must match the host's. When there's a new kit,
-everyone updates. To keep your progress, copy your old `benilla-config` folder into the new kit.
+The game checks that everyone runs the same build. The launcher updates itself on startup, so if
+you get “different build” while joining, everyone should close the game and restart their chosen
+launcher. It will fetch the current release; no manual copying is needed.
 
 ## Troubleshooting
 
@@ -84,7 +88,7 @@ everyone updates. To keep your progress, copy your old `benilla-config` folder i
 | --- | --- |
 | "Windows protected your PC" / unrecognized app | Click **More info**, then **Run anyway**. It's unsigned, not cursed. |
 | Firewall prompt the first time you host | Allow it on **Private networks**. Say no and nobody can join. |
-| "different build" when joining | Your zip doesn't match the host's. Get the latest one from them. |
+| "different build" when joining | Everyone restarts their launcher to update, then retries. |
 | Can't connect | Both of you check Tailscale is connected and you're joining the host's `100.x.y.z` address. Then the host checks the Windows firewall allows `warcraft-survivors.exe` (Windows Security, Firewall, Allow an app). |
 | Asks for the Data folder every time | Unzip the kit somewhere writable, not Program Files. |
 | The game closed with an error | Send the host the files in `benilla-config\Diagnostics`. |

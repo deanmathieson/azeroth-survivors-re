@@ -5,11 +5,12 @@
 .DESCRIPTION
     Builds nothing. Takes target/play/warcraft-survivors.exe (build it first with
     `cargo build --profile play -p warcraft-survivors`) and writes
-    dist/AzerothSurvivors-<git short hash>.zip holding:
-        AzerothSurvivors-<hash>/
+    dist/AzerothSurvivors-<version>.zip holding:
+        AzerothSurvivors-<version>/
             warcraft-survivors.exe
-            Play.bat, Host.bat, Join.bat, _launch.cmd   (from scripts/friends-kit/)
+            Play.bat, Host.bat, Join.bat, Update.bat, _launch.cmd, _update.ps1
             README-FRIENDS.txt
+            version.txt
             benilla-config/README.txt                   (an empty profile: no saves)
     The .bat files set BENILLA_HOME to the kit's own benilla-config, so the profile stays beside
     the exe wherever the zip is unzipped. No Blizzard data is ever packed: the script refuses to
@@ -21,6 +22,13 @@
 .PARAMETER OutDir
     Where the zip goes. Default: <repo>/dist.
 
+.PARAMETER Tag
+    Version written into version.txt and used in the versioned zip name. Defaults to the tag at
+    HEAD (or GITHUB_REF_NAME for a tag build), then the git short hash.
+
+.PARAMETER Force
+    Replace an existing versioned zip. Use this in CI so packaging never prompts.
+
 .EXAMPLE
     pwsh scripts/package-friends.ps1
     pwsh scripts/package-friends.ps1 -Exe "D:\other worktree\target\play\warcraft-survivors.exe"
@@ -28,7 +36,9 @@
 [CmdletBinding()]
 param(
     [string]$Exe,
-    [string]$OutDir
+    [string]$OutDir,
+    [string]$Tag,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +56,15 @@ $Exe = (Resolve-Path -LiteralPath $Exe).Path
 
 $hash = (& git -C $Root rev-parse --short HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $hash) { throw "git rev-parse failed in '$Root'." }
+if (-not $Tag -and $env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME) {
+    $Tag = $env:GITHUB_REF_NAME
+}
+if (-not $Tag) {
+    $headTag = @(& git -C $Root tag --points-at HEAD | Where-Object { $_ -match '^v' } | Select-Object -First 1)
+    if ($headTag) { $Tag = $headTag[0].Trim() }
+}
+if (-not $Tag) { $Tag = $hash }
+if ($Tag -match '[\\/:*?"<>|]') { throw "Tag '$Tag' cannot be used in a kit file name." }
 $dirty = & git -C $Root status --porcelain --untracked-files=no
 if ($dirty) {
     Write-Warning "The working tree has uncommitted changes: the zip is named after HEAD ($hash), which may not match what the exe was built from."
@@ -56,12 +75,16 @@ if ($exeAge -lt $commitAge) {
     Write-Warning "The exe ($exeAge) is older than HEAD ($commitAge). Rebuild if HEAD changed the game."
 }
 
-$name = "AzerothSurvivors-$hash"
+$name = "AzerothSurvivors-$Tag"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 $zip = Join-Path $OutDir "$name.zip"
+$stableZip = Join-Path $OutDir 'AzerothSurvivors.zip'
 $stageRoot = Join-Path $OutDir '_stage'
 $stage = Join-Path $stageRoot $name
+if ((Test-Path -LiteralPath $zip) -and -not $Force) {
+    throw "'$zip' already exists. Pass -Force to replace it."
+}
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'benilla-config') | Out-Null
 
@@ -73,10 +96,11 @@ function Copy-Crlf([string]$From, [string]$To) {
 }
 
 Copy-Item -LiteralPath $Exe -Destination (Join-Path $stage 'warcraft-survivors.exe')
-foreach ($f in 'Play.bat', 'Host.bat', 'Join.bat', '_launch.cmd', 'README-FRIENDS.txt') {
+foreach ($f in 'Play.bat', 'Host.bat', 'Join.bat', 'Update.bat', '_launch.cmd', '_update.ps1', 'README-FRIENDS.txt') {
     Copy-Crlf (Join-Path $KitSrc $f) (Join-Path $stage $f)
 }
 Copy-Crlf (Join-Path $KitSrc 'benilla-config-README.txt') (Join-Path $stage 'benilla-config/README.txt')
+[IO.File]::WriteAllText((Join-Path $stage 'version.txt'), "$Tag`r`n", [Text.Encoding]::ASCII)
 
 # Guard: never ship Blizzard data.
 $bad = Get-ChildItem -LiteralPath $stage -Recurse -Force |
@@ -100,7 +124,10 @@ if ($entries | Where-Object { $_ -match '(?i)\.mpq$' }) {
     throw 'An .MPQ ended up in the zip; deleted it.'
 }
 
+Copy-Item -LiteralPath $zip -Destination $stableZip -Force
+
 $mb = [math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)
 Write-Host "Wrote $zip ($mb MB):"
 $entries | ForEach-Object { Write-Host "  $_" }
+Write-Host "Wrote $stableZip"
 Write-Host 'Everyone in the party needs this exact zip.'

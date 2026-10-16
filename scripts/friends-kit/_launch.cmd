@@ -7,6 +7,14 @@ set "KIT=%~dp0"
 set "EXE=%KIT%warcraft-survivors.exe"
 set "PATHFILE=%KIT%wow-data-path.txt"
 
+rem Updating is deliberately best-effort: a party should still be able to play offline.
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { . '%KIT%_update.ps1'; [void](Invoke-AzerothSurvivorsUpdate -KitPath '%KIT%') }"
+
+if /i "%~1"=="--update-only" (
+    endlocal
+    exit /b 0
+)
+
 if not exist "%EXE%" (
     echo Cannot find warcraft-survivors.exe next to this file.
     echo Unzip the whole kit into one folder and run it from there.

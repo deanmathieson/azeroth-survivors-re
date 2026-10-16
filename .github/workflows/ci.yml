@@ -5,6 +5,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [progression]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +17,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  survivors-coop:
+    name: Survivors co-op fast check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      WOW_DATA: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: survivors-coop
+      - name: Native Bevy dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libasound2-dev libudev-dev libx11-dev libxkbcommon-dev libwayland-dev
+      - name: Check friends build
+        run: cargo check -p warcraft-survivors --no-default-features --features coop
+      - name: Run survivors co-op tests
+        run: cargo test -p benilla-app --no-default-features --features coop --lib survivors
+
   gates:
     # A branch of this repository runs the full chain before it lands; a fork's pull request runs here.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository

@@ -1,0 +1,43 @@
+name: Release friends kit
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to package and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the friends executable
+        run: cargo build --profile play -p warcraft-survivors --no-default-features --features coop
+      - name: Package the friends kit
+        shell: pwsh
+        run: scripts/package-friends.ps1 -Exe target/play/warcraft-survivors.exe -OutDir dist -Tag $env:TAG -Force
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            dist/AzerothSurvivors.zip
+            dist/AzerothSurvivors-${{ env.TAG }}.zip
