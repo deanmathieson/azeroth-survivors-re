@@ -1347,6 +1347,19 @@ pub(super) fn close_hand(
     rng: &mut Rng,
     next: &mut NextState<Phase>,
 ) {
+    // A jewelry hand can reach this common closer when a phase changes under a card's burst.
+    // Spend the bank that made the displayed hand, or the strip will deal that same jewelry hand
+    // again forever.
+    let jewelry_hand = offer
+        .choices()
+        .iter()
+        .any(|choice| matches!(choice, Choice::Jewel(_)));
+    if jewelry_hand {
+        hero.jewelry.picks = hero.jewelry.picks.saturating_sub(1);
+        offer.deal(Vec::new());
+        next.set(Phase::Playing);
+        return;
+    }
     hero.picks = hero.picks.saturating_sub(1);
     if hero.picks > 0 {
         offer.deal(choices_for(hero, rng));
@@ -2853,6 +2866,30 @@ pub(super) fn show_panels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_a_jewelry_hand_spends_its_jewelry_pick() {
+        let mut hero = HeroState {
+            picks: 1,
+            ..default()
+        };
+        hero.jewelry.picks = 1;
+        let mut offer = Offer::default();
+        offer.deal(vec![Choice::Jewel(&super::super::jewelry::pieces()[0])]);
+        let mut rng = Rng::default();
+        let mut next = NextState::default();
+        pick(
+            0,
+            &mut hero,
+            &mut Run::default(),
+            &mut offer,
+            &mut rng,
+            &mut next,
+        );
+        assert_eq!((hero.picks, hero.jewelry.picks), (1, 0));
+        assert!(offer.choices().is_empty());
+        assert!(matches!(next, NextState::Pending(Phase::Playing)));
+    }
 
     #[test]
     fn results_note_prioritizes_first_zone_win() {

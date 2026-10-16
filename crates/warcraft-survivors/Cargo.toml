@@ -23,4 +23,4 @@ benilla-buildstamp = { path = "../benilla-buildstamp" }
 [[bin]]
 name = "warcraft-survivors"
 path = "src/main.rs"
-test = false
+test = true
