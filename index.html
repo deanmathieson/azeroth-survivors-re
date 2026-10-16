@@ -1113,6 +1113,19 @@
           </div>
         </li>
         <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Character Create</h3>
+            <p>Unique</p>
+            <p class="split"><span>Main menu</span><span>Customize</span></p>
+            <ul class="lines fx">
+              <li>Use: Customize on the main menu opens a proper WoW-style create screen. Rotate your hero and pick race, gender and class.</li>
+              <li>Equip: Skin, face, hair, colour and features on little arrows, plus a random name, Randomize, Accept and Cancel.</li>
+            </ul>
+            <p class="flavor">"Forty minutes on the hair. Eight seconds into the run, buried under the horde."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
           <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-talent"/></svg></span>
           <div class="tip">
             <h3 class="name">Talents 2.0</h3>
@@ -1247,6 +1260,18 @@
               <li>Chance on hit: Milestone talents get a banner the first time they fire.</li>
             </ul>
             <p class="flavor">"Power Infusion goes to the top ally. The Mage will be insufferable."</p>
+          </div>
+        </li>
+        <li class="item q-rare" data-quality="rare">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-pips"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Options Menu</h3>
+            <p class="split"><span>Interface</span><span>Settings</span></p>
+            <ul class="lines fx">
+              <li>Use: <kbd>Esc</kbd> then Options, or Options on the main menu.</li>
+              <li>Equip: Sound sliders for Master, Effects, Music and Ambience. Video: VSync, windowed and view distance. Interface: mouse sensitivity, plus a key bindings list.</li>
+            </ul>
+            <p class="flavor">"Music to 100. Effects to 100. Your flatmate to 0."</p>
           </div>
         </li>
         <li class="item q-rare" data-quality="rare">
@@ -1865,7 +1890,7 @@
             <ul class="objectives">
               <li class="done">- Fresh play build: 1/1</li>
               <li class="done">- Online co-op live: 1/1</li>
-              <li class="done">- New loot in the bags: 23/23</li>
+              <li class="done">- New loot in the bags: 25/25</li>
               <li class="done">- Faire booth open for business: 1/1</li>
             </ul>
             <h4>Rewards:</h4>
@@ -1912,6 +1937,10 @@
     <section class="panel" id="run-it" aria-labelledby="play-title">
       <h2 class="plate" id="play-title">Play It Yourself</h2>
       <p class="play-lede">Installation takes longer than a Molten Core trash pull. Barely.</p>
+      <p class="notice">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#g-pack"/></svg>
+        <span><strong>Just want to play?</strong> Grab <a href="https://github.com/deanmathieson/azeroth-survivors-re/releases/latest/download/AzerothSurvivors.zip">AzerothSurvivors.zip</a> (always the latest release), unzip it and run <strong>Play.bat</strong>, <strong>Host.bat</strong> or <strong>Join.bat</strong>. They keep themselves up to date. The steps below are for building from source.</span>
+      </p>
       <p class="notice">
         <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#g-quest"/></svg>
         <span><strong>You need World of Warcraft 1.12.1 client data to play.</strong> Nothing Blizzard-owned is hosted here or in the repo. Step 3 fetches a client's <code>Data</code> folder for you.</span>
@@ -1981,7 +2010,7 @@
             <p class="dialog-sub">Co-op is live tonight</p>
             <p>Online co-op is in. Up to five of you, one shared world. Skip the build steps:</p>
             <ol>
-              <li>Grab the zip from the host. Everyone needs the same build, and the game checks.</li>
+              <li>Download <a href="https://github.com/deanmathieson/azeroth-survivors-re/releases/latest/download/AzerothSurvivors.zip">AzerothSurvivors.zip</a>. It's one stable link that always points at the latest release. Run <strong>Play.bat</strong>, <strong>Host.bat</strong> or <strong>Join.bat</strong> and they keep themselves up to date, so everyone stays on the same build. The game checks.</li>
               <li>Install <a href="https://tailscale.com">Tailscale</a> on your PC. That's the easy way. Or the host forwards <strong>UDP port 5000</strong> on their router.</li>
               <li>The host picks <strong>Host</strong>, everyone else picks <strong>Join</strong>. Ready check, then pull.</li>
             </ol>
@@ -1999,7 +2028,7 @@
       <p class="murlocs">No murlocs were harmed. Several were kited.</p>
       <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
       <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is &#xA9; Blizzard Entertainment.</p>
-      <p class="nerd"><span>Patch notes for nerds:</span> 391 tests pass, clippy is clean and the play build is good to go on the <code>progression</code> branch. Save format v4 is live, with older saves migrated forward.</p>
+      <p class="nerd"><span>Patch notes for nerds:</span> 391 tests pass, clippy is clean and the play build is good to go on the <code>progression</code> branch. Save format v4 is live, with older saves migrated forward. v0.3.2: a treasure reward that could be picked forever is fixed (sorry, farmers), and double-clicking the exe now works.</p>
       <p class="updated">Last updated: 16 Oct 2026 &middot; Built for &lt;Toast House&gt; &middot; <a href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">Code on GitHub</a> &middot; <a href="#top">Back to top</a></p>
     </footer>
 
