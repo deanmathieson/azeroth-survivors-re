@@ -1,6 +1,7 @@
 //! Stable collection and the small bridge from its saved cosmetic pick to a unit mount field.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::armory::ArmoryState;
 use super::bonus::{Bonus, Bonuses, StatKey};
@@ -17,6 +18,17 @@ use crate::net::ObjectStore;
 pub(in crate::survivors) enum StableAction {
     Mount(String),
     Hat(Option<String>),
+}
+
+/// The resolved model and fit of a selected hat.  This is plain data because a co-op peer must
+/// render the owner's choice, not re-resolve its own profile.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(in crate::survivors) struct CosmeticHat {
+    pub(in crate::survivors) display: u32,
+    pub(in crate::survivors) mount_nudge: [f32; 3],
+    pub(in crate::survivors) offset: [f32; 3],
+    pub(in crate::survivors) pitch: f32,
+    pub(in crate::survivors) scale: f32,
 }
 
 /// CreatureDisplayInfo rows for the 1.12 riding models. The prize names deliberately remain the
@@ -58,6 +70,24 @@ fn hat_nudge(key: Option<&str>) -> Vec3 {
     }
 }
 
+/// Per-hat fit on top of the mount's head seat: `(offset, pitch radians, scale)`.  The short
+/// party/pith hats use the common 2× human-helm size; broad hats sit a touch lower; tall hats
+/// are lowered, tipped back and reduced so their crown does not float above a mount's head.
+fn hat_fit(key: &str) -> (Vec3, f32, f32) {
+    match key {
+        "tiny_party_hat" => (Vec3::new(0.0, -0.08, 0.0), 0.0, 1.0),
+        "pirate_hat" => (Vec3::new(0.0, -0.16, 0.03), 0.08, 0.95),
+        "red_winter_hat" | "green_winter_hat" => (Vec3::new(0.0, -0.12, 0.04), 0.10, 0.9),
+        "dapper_top_hat" => (Vec3::new(0.0, -0.2, 0.02), 0.0, 0.82),
+        "tiny_pith_helmet" => (Vec3::new(0.0, -0.1, 0.0), 0.0, 0.95),
+        // INV_Helmet_53 resolves to the vanilla pointed wizard-hat mesh, not a full-face helm.
+        "wizard_hat" => (Vec3::new(0.0, -0.38, 0.09), 0.18, 0.72),
+        "jack_o_lantern_hat" => (Vec3::new(0.0, -0.14, 0.04), 0.0, 0.88),
+        "crown_of_the_fire_festival" => (Vec3::new(0.0, -0.1, 0.0), 0.0, 0.9),
+        _ => (Vec3::ZERO, 0.0, 1.0),
+    }
+}
+
 /// The hat's real `ItemDisplayInfo` model, resolved through its client icon.
 fn hat_display(key: &str, displays: &crate::entities::ItemDisplays) -> Option<u32> {
     prizes(Kind::MountHat)
@@ -78,7 +108,7 @@ pub(super) fn plugin(app: &mut App) {
 pub(in crate::survivors) fn selected_cosmetics(
     profile: &Profile,
     displays: Option<&crate::entities::ItemDisplays>,
-) -> (u32, Option<(u32, [f32; 3])>) {
+) -> (u32, Option<CosmeticHat>) {
     let mount = profile
         .stable
         .mount
@@ -91,7 +121,22 @@ pub(in crate::survivors) fn selected_cosmetics(
         .as_deref()
         .filter(|key| profile.quests.mount_hats.contains(*key))
         .and_then(|key| displays.and_then(|displays| hat_display(key, displays)))
-        .map(|hat| (hat, hat_nudge(mount).to_array()));
+        .map(|display| {
+            let (offset, pitch, scale) = hat_fit(
+                profile
+                    .stable
+                    .mount_hat
+                    .as_deref()
+                    .expect("selected hat key"),
+            );
+            CosmeticHat {
+                display,
+                mount_nudge: hat_nudge(mount).to_array(),
+                offset: offset.to_array(),
+                pitch,
+                scale,
+            }
+        });
     (display, hat)
 }
 
@@ -163,10 +208,13 @@ fn apply_mount_field(
         }
         if let Some(mount) = mount {
             let mut child = commands.entity(mount.0);
-            if let Some((display, nudge)) = hat {
+            if let Some(hat) = hat {
                 child.insert(crate::entities::mount::MountHat {
-                    display,
-                    nudge: Vec3::from_array(nudge),
+                    display: hat.display,
+                    nudge: Vec3::from_array(hat.mount_nudge),
+                    offset: Vec3::from_array(hat.offset),
+                    pitch: hat.pitch,
+                    scale: hat.scale,
                 });
             } else {
                 child.remove::<crate::entities::mount::MountHat>();
@@ -195,10 +243,13 @@ pub(in crate::survivors) fn apply_remote_mount_field(
         }
         if let Some(mount) = mount {
             let mut child = commands.entity(mount.0);
-            if let Some((display, nudge)) = net.mount_hat {
+            if let Some(hat) = net.mount_hat {
                 child.insert(crate::entities::mount::MountHat {
-                    display,
-                    nudge: Vec3::from_array(nudge),
+                    display: hat.display,
+                    nudge: Vec3::from_array(hat.mount_nudge),
+                    offset: Vec3::from_array(hat.offset),
+                    pitch: hat.pitch,
+                    scale: hat.scale,
                 });
             } else {
                 child.remove::<crate::entities::mount::MountHat>();
@@ -371,6 +422,59 @@ mod tests {
                 at.z < saddle.z,
                 "{} ({path}): hat {at:?} is not ahead of the saddle {saddle:?}",
                 prize.name
+            );
+        }
+    }
+
+    /// A human helm becomes a mount hat at two times its source size.  Keep every adjusted hat
+    /// substantial enough to read but below a riding model's head-scale envelope; this catches a
+    /// bad icon-to-display mapping (notably a full-head helm in place of a pointed hat).
+    #[test]
+    fn catalog_hat_bounds_fit_mount_heads() {
+        use crate::entities::mount::HAT_SCALE;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        let items = benilla_formats::load_item_display_catalog(&mut chain).expect("items");
+        let displays = crate::entities::ItemDisplays::icons_for_tests(items);
+        for hat in prizes(Kind::MountHat) {
+            let display = hat_display(&hat.key, &displays).expect("hat display");
+            let model = displays
+                .catalog
+                .get(display)
+                .and_then(|display| display.model[0].clone())
+                .expect("hat model");
+            let file = format!(
+                "Item\\ObjectComponents\\Head\\{}",
+                crate::entities::helm_file(&model, 1, 0)
+            );
+            let bounds = benilla_formats::parse_m2_bounds(&chain.read_file(&file).expect("hat"))
+                .expect("hat bounds");
+            let (offset, _, scale) = hat_fit(&hat.key);
+            let extent = (Vec3::from_array(bounds.bbox_max) - Vec3::from_array(bounds.bbox_min))
+                .max_element()
+                * HAT_SCALE
+                * scale;
+            assert!(
+                extent.is_finite() && extent > 0.08 && extent < 5.0 && offset.length() < 0.6,
+                "{} ({file}): adjusted extent {extent}, offset {offset:?}",
+                hat.name
+            );
+        }
+        for mount in prizes(Kind::Mount) {
+            let display = mount_display(&mount.key).expect("mount display");
+            let model = creatures.model(display).expect("mount model");
+            let path = benilla_assets::m2_url(&model.model_path).replace("mpq://", "");
+            let bounds = benilla_formats::parse_m2_bounds(&chain.read_file(&path).expect("mount"))
+                .expect("mount bounds");
+            let mount_extent = (Vec3::from_array(bounds.bbox_max)
+                - Vec3::from_array(bounds.bbox_min))
+            .max_element();
+            assert!(
+                mount_extent > 1.0,
+                "{} ({path}): implausible mount bounds",
+                mount.name
             );
         }
     }

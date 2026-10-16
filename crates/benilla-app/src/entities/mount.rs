@@ -24,11 +24,25 @@ use benilla_world::rig_anim::RigPose;
 pub(crate) struct MountHat {
     pub(crate) display: u32,
     pub(crate) nudge: Vec3,
+    /// Per-hat adjustment after its mount's head seat.
+    pub(crate) offset: Vec3,
+    pub(crate) pitch: f32,
+    pub(crate) scale: f32,
 }
 
 /// The hat that the mount's ordinary equipment path has applied.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) struct AppliedMountHat(Option<u32>);
+
+/// The unadjusted attach transform remembered at the root, so retrying an asynchronously built
+/// hat does not stack its offset or pitch every frame.
+#[derive(Component, Clone, Copy, PartialEq)]
+struct AppliedMountHatFit {
+    base: Vec3,
+    offset: Vec3,
+    pitch: f32,
+    scale: f32,
+}
 
 type MountHatQuery<'w, 's> = Query<
     'w,
@@ -461,25 +475,37 @@ pub(super) fn resolve_mount_hats(
 /// rider placement for a skinned one, which composes from the mount's rig, not the root.
 pub(super) fn size_mount_hats(
     mut commands: Commands,
-    mounts: Query<&super::equipment::HeldAttached, (With<MountBody>, With<MountHat>)>,
+    mounts: Query<(&super::equipment::HeldAttached, &MountHat), With<MountBody>>,
     mut roots: Query<(
+        Entity,
         &mut Transform,
         Option<&benilla_world::rig_rider::RiderScale>,
+        Option<&AppliedMountHatFit>,
     )>,
 ) {
-    let want = benilla_world::rig_rider::RiderScale(HAT_SCALE);
-    for attached in &mounts {
+    for (attached, hat) in &mounts {
         let Some(root) = attached.spawned_slots()[super::equipment::HAT_SLOT] else {
             continue;
         };
-        let Ok((mut tf, scale)) = roots.get_mut(root) else {
+        let Ok((root, mut tf, scale, applied)) = roots.get_mut(root) else {
             continue;
         };
-        if tf.scale != Vec3::splat(HAT_SCALE) {
-            tf.scale = Vec3::splat(HAT_SCALE);
+        let want = AppliedMountHatFit {
+            base: applied.map_or(tf.translation, |fit| fit.base),
+            offset: hat.offset,
+            pitch: hat.pitch,
+            scale: hat.scale,
+        };
+        let visual_scale = HAT_SCALE * want.scale;
+        if applied != Some(&want) {
+            tf.translation = want.base + want.offset;
+            tf.rotation = Quat::from_rotation_x(want.pitch);
+            tf.scale = Vec3::splat(visual_scale);
+            commands.entity(root).insert(want);
         }
-        if scale != Some(&want) {
-            commands.entity(root).try_insert(want);
+        let rider_scale = benilla_world::rig_rider::RiderScale(visual_scale);
+        if scale != Some(&rider_scale) {
+            commands.entity(root).try_insert(rider_scale);
         }
     }
 }

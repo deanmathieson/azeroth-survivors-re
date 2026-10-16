@@ -40,7 +40,7 @@ pub(super) struct Peer {
     pub(super) bonuses: super::super::bonus::Bonuses,
     pub(super) talents: Vec<(u32, u8)>,
     pub(super) mount_display: u32,
-    pub(super) mount_hat: Option<(u32, [f32; 3])>,
+    pub(super) mount_hat: Option<super::super::stable::CosmeticHat>,
     pub(super) hero: Option<Entity>,
 }
 
@@ -69,6 +69,7 @@ pub(super) fn plugin(app: &mut App) {
         PreUpdate,
         (
             greet,
+            update_cosmetics,
             apply_moves,
             apply_focus,
             apply_self_res,
@@ -232,6 +233,26 @@ pub(super) fn greet(
         }
         // The newcomer needs the lobby even if nothing else changed.
         session.lobby.clear();
+    }
+}
+
+/// Keep the host's authoritative peer and already-spawned hero in step with a lobby Stable
+/// change.  Updating `NetHero` is what makes Replicon fan this cosmetic choice out to everyone.
+pub(super) fn update_cosmetics(
+    mut cosmetics: MessageReader<FromClient<Cosmetics>>,
+    mut peers: Query<&mut Peer>,
+    mut heroes: Query<&mut NetHero>,
+) {
+    for update in cosmetics.read() {
+        let Ok(mut peer) = peers.get_mut(update.client_id) else {
+            continue;
+        };
+        peer.mount_display = update.message.mount_display;
+        peer.mount_hat = update.message.mount_hat;
+        if let Some(hero) = peer.hero.and_then(|hero| heroes.get_mut(hero).ok()) {
+            hero.mount_display = update.message.mount_display;
+            hero.mount_hat = update.message.mount_hat;
+        }
     }
 }
 
