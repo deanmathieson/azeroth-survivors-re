@@ -1064,20 +1064,50 @@ pub(super) fn setup_hud(
         });
 }
 
-/// The menu's hero is the run's hero: respawned whenever the pick changes, dressed in the class's
-/// gear and looks ([`super::gear::Dresser`]), which re-dress it in place as they change.
+/// The body identity of the menu hero. Gear and features deliberately do not appear here: the
+/// dresser changes those on the standing unit, without interrupting its composite build.
+type MenuBody = (usize, u32, u8, u8);
+
+/// A composite normally attaches within a frame or two.  Keep enough state to recover a menu
+/// hero whose attach was lost while a rapid body switch tore down an earlier composite.
+#[derive(Default)]
+pub(super) struct MenuPreviewState {
+    shown: Option<MenuBody>,
+    missing_since: Option<f32>,
+}
+
+fn menu_body(selection: &Selection) -> Option<MenuBody> {
+    selection
+        .class
+        .zip(selection.look.and_then(|i| selection.looks.get(i)).copied())
+        .map(|(class, (trainer, race, sex))| (class, trainer, race, sex))
+}
+
+fn menu_preview_repair_due(
+    key: Option<MenuBody>,
+    count: usize,
+    visible: bool,
+    missing_since: Option<f32>,
+    now: f32,
+) -> bool {
+    key.is_some() && count == 1 && !visible && missing_since.is_some_and(|then| now - then >= 0.5)
+}
+
+/// The menu's hero is the run's hero. A body switch replaces it, while gear and looks are dressed
+/// in place by [`super::gear::Dresser`]; this leaves a pending character composite alive.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn menu_preview(
     mut commands: Commands,
     phase: Res<State<Phase>>,
     selection: Res<Selection>,
     mut run: ResMut<Run>,
-    heroes: Query<Entity, With<Hero>>,
+    heroes: Query<(Entity, Has<crate::entities::VisualAttached>), With<Hero>>,
     next: Res<NextState<Phase>>,
     collide: Option<benilla_world::collision::WorldCollision>,
     world: benilla_world::world_point::WorldPoint,
     mut dresser: super::gear::Dresser,
-    mut shown: Local<Option<(usize, u32, usize, u32)>>,
+    time: Res<Time>,
+    mut preview: Local<MenuPreviewState>,
 ) {
     if *phase.get() != Phase::Menu {
         return;
@@ -1092,14 +1122,34 @@ pub(super) fn menu_preview(
     let want = selection
         .class
         .zip(selection.look.and_then(|i| selection.looks.get(i)).copied());
-    let key = want.map(|(c, l)| (c, l.0, selection.stage, selection.version));
-    if key == *shown && (key.is_none() || !heroes.is_empty()) {
+    let key = menu_body(&selection);
+    let mut count = 0;
+    let mut visible = false;
+    for (_, attached) in &heroes {
+        count += 1;
+        visible |= attached;
+    }
+    let body_changed = key != preview.shown;
+    let repair = menu_preview_repair_due(
+        key,
+        count,
+        visible,
+        preview.missing_since,
+        time.elapsed_secs(),
+    );
+    if !body_changed && (key.is_none() || (count == 1 && (visible || !repair))) {
+        if key.is_some() && !visible {
+            preview.missing_since.get_or_insert(time.elapsed_secs());
+        } else {
+            preview.missing_since = None;
+        }
         return;
     }
-    for e in &heroes {
+    for (e, _) in &heroes {
         commands.entity(e).despawn();
     }
-    *shown = key;
+    preview.shown = key;
+    preview.missing_since = None;
     let Some((class, (trainer, race, sex))) = want else {
         return;
     };
@@ -2925,6 +2975,36 @@ mod tests {
         assert_eq!(describe_card(choice, &hero, None).tag, "Rank 3 » 5");
         take(&mut hero, choice);
         assert_eq!(hero.passives[0].1, data::MAX_PASSIVE_LEVEL);
+    }
+
+    #[test]
+    fn rapid_menu_picks_coalesce_to_the_latest_body_not_the_selection_version() {
+        let mut selection = Selection {
+            class: Some(0),
+            looks: vec![(10, 1, 0), (11, 1, 1)],
+            look: Some(0),
+            version: 1,
+            ..default()
+        };
+        let first = menu_body(&selection);
+        // Several UI events can settle the resource before the one preview pass this frame.
+        selection.look = Some(1);
+        selection.version += 1;
+        selection.class = Some(2);
+        selection.looks = vec![(30, 3, 0)];
+        selection.look = Some(0);
+        selection.version += 1;
+
+        assert_eq!(menu_body(&selection), Some((2, 30, 3, 0)));
+        assert_ne!(menu_body(&selection), first);
+    }
+
+    #[test]
+    fn missing_menu_hero_is_repaired_after_half_a_second() {
+        let key = Some((2, 30, 3, 0));
+        assert!(!menu_preview_repair_due(key, 1, false, Some(4.0), 4.49));
+        assert!(menu_preview_repair_due(key, 1, false, Some(4.0), 4.5));
+        assert!(!menu_preview_repair_due(key, 1, true, Some(4.0), 5.0));
     }
 
     #[test]
