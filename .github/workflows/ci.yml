@@ -17,6 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  warm-release-cache:
+    name: Warm Windows release cache
+    if: github.event_name == 'push' && github.ref == 'refs/heads/progression'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    concurrency:
+      group: warm-release-cache-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: friends-release
+          save-if: ${{ github.ref == 'refs/heads/progression' }}
+      - name: Build the friends executable
+        run: cargo build --profile play -p warcraft-survivors --no-default-features --features coop
+
   survivors-coop:
     name: Survivors co-op fast check
     runs-on: ubuntu-latest
