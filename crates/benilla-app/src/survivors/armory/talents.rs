@@ -14,9 +14,9 @@ use crate::glue::widgets::{glue_button, overlay, GlueBtnKind, GlueDisabled, Hili
 use crate::survivors::profile::Profile;
 use crate::survivors::talents::{
     check_learn, check_reset, check_unlearn, describe_rank, earned_points, is_headline,
-    locked_reasons, mechanic_description, saved, shade, spec_lines, unmet, why_text, xp_for_points,
-    Allocation, Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp, TalentFocus,
-    TalentSave, TalentShade, TalentSlot, Tree, Why, MAX_POINTS,
+    locked_reasons, mechanic_description, rank_text, saved, shade, spec_lines, unmet, why_text,
+    xp_for_points, Allocation, Talent, TalentAction, TalentArt, TalentCatalog, TalentDevXp,
+    TalentFocus, TalentSave, TalentShade, TalentSlot, Tree, Why, MAX_POINTS,
 };
 
 /// `NORMAL_FONT_COLOR`, what a rank grants.
@@ -461,6 +461,14 @@ fn talent_tip(view: &View, t: &Talent, rank: u8, unmet: &[String]) -> ArmoryTip 
     lines.extend(spec.into_iter().map(|line| (line, SPEC_GOLD)));
     if !mechanics.is_empty() {
         lines.extend(mechanics.into_iter().map(|line| (line, TIP_GOLD)));
+        if rank > 0 && rank < t.max_rank {
+            lines.push(("Next rank:".into(), Color::WHITE));
+            lines.extend(
+                mechanic_description(t.id, rank + 1)
+                    .into_iter()
+                    .map(|line| (line, TIP_GOLD)),
+            );
+        }
     } else if t.effect().is_empty() {
         if !is_spec {
             lines.push(("No effect in this mode".into(), DIM));
@@ -599,13 +607,7 @@ fn chosen(b: &mut ChildSpawnerCommands, ctx: &TabCtx, view: &View, t: &Talent) {
             para(b, ctx, &u, 12.0, TIP_RED);
         }
     }
-    let effect = |r: u8| {
-        if t.effect().is_empty() {
-            "No effect in this mode".to_string()
-        } else {
-            describe_rank(t, r)
-        }
-    };
+    let effect = |r: u8| rank_text(t, r);
     text(b, ctx, "Current rank", 11.0, DIM);
     if rank == 0 {
         para(b, ctx, "Not learned", 12.0, DIM);

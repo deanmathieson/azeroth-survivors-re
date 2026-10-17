@@ -26,6 +26,16 @@ use super::super::mechanics::{Aim, Cc, CcKind, Effect as Mech, MechanicSpec as M
 
 /// A burst this long lasts the run: set going once, a second in, it never runs out.
 pub(super) const PERMANENT: f32 = 86_400.0;
+/// Clearcasting, the buff Arcane Concentration and Omen of Clarity leave: the mage's and the
+/// druid's `Spell.dbc` rows. A Clearcasting proc can come at most this often, in seconds.
+pub(super) const CLEARCASTING: u32 = 12536;
+pub(super) const CLEARCASTING_DRUID: u32 = 16870;
+const CLEARCASTING_GAP: f32 = 3.0;
+/// Shatter's visual: the frost shattering on a frozen target.
+pub(super) const SHATTER: u32 = 116;
+/// Ignite's burn, the effect the talent's passive sets going (the talent's own row has no
+/// visual).
+pub(super) const IGNITE: u32 = 12654;
 
 /// How a talent's mechanics grow with its rank.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +109,38 @@ pub(super) fn teachers() -> impl Iterator<Item = &'static TalentMechanics> {
 pub(super) fn all() -> &'static [TalentMechanics] {
     MECHANICS
 }
+
+/// The spell whose sound a landmark talent's moment rings when the talent's own rank-one row has
+/// no visual (a passive): the 1.12 spell it sets off, or the one it is known by.
+/// The first of a talent's that rings is its sound.
+pub(super) static SOUND_SPELLS: &[(u32, u32)] = &[
+    (137, 29131),       // Anger Management: Bloodrage
+    (153, 12976),       // Last Stand's own effect
+    (1391, 5118),       // Bestial Swiftness: Aspect of the Cheetah
+    (1391, 19574),      // or Bestial Wrath
+    (1325, 24131),      // Wyvern Sting's poison
+    (1325, 19503),      // or Scatter Shot
+    (281, 2098),        // Relentless Strikes: Eviscerate
+    (281, 14177),       // or Cold Blood
+    (382, 2983),        // Vigor: Sprint
+    (382, 14177),       // or Cold Blood
+    (381, 1784),        // Premeditation: Stealth
+    (381, 14177),       // or Cold Blood
+    (1561, 27827),      // Spirit of Redemption's spirit
+    (1561, 15237),      // or Holy Nova
+    (574, 16246),       // Elemental Focus: its Clearcasting
+    (565, 403),         // Elemental Fury: Lightning Bolt
+    (565, 16166),       // or Elemental Mastery
+    (582, 8075),        // Totemic Mastery: Strength of Earth Totem
+    (582, 5394),        // or Healing Stream Totem
+    (75, CLEARCASTING), // Arcane Concentration: its Clearcasting
+    (967, 686),         // Ruin: Shadow Bolt
+    (967, 17877),       // or Shadowburn
+    (789, 2912),        // Nature's Grace: Starfire
+    (789, 16864),       // or Omen of Clarity
+    (809, 24932),       // Leader of the Pack's own aura
+    (809, 16857),       // or Faerie Fire (Feral)
+];
 
 /// The three talent ids named by the tree's 10/20/30-point footer, if it is a class tree.
 pub(in crate::survivors) fn milestones(tree: u32) -> Option<&'static [u32; 3]> {
@@ -238,29 +280,83 @@ pub(super) fn describe(talent: u32, rank: u8) -> Vec<String> {
     entry
         .specs
         .iter()
-        .map(|s| describe_spec(&scaled(*s, entry.per_rank, rank.max(1)), label))
+        .map(|s| {
+            describe_spec(
+                &scaled(*s, entry.per_rank, rank.max(1)),
+                label,
+                Some(proc_name(entry)),
+            )
+        })
         .collect()
 }
 
+/// The name a talent's proc goes by in the tooltip: Clearcasting for the talents that leave it,
+/// else the talent's own.
+fn proc_name(entry: &TalentMechanics) -> &'static str {
+    let clearcasting = entry.specs.iter().any(|s| {
+        matches!(
+            s.effect,
+            Mech::NextCast { aura, .. } if aura == CLEARCASTING || aura == CLEARCASTING_DRUID
+        )
+    });
+    if clearcasting {
+        "Clearcasting"
+    } else {
+        entry.name
+    }
+}
+
 /// One mechanic as a tooltip line; `label` names what its trigger listens to, when that is not
-/// its own [`Of`].
-pub(super) fn describe_spec(spec: &M, label: Option<&str>) -> String {
-    if let (Trigger::Periodic { .. }, Mech::Burst { duration, bonuses }) =
-        (spec.trigger, spec.effect)
-    {
-        if duration >= PERMANENT {
+/// its own [`Of`]. A proc of a talent `name`d reads as WoW words one: "Your hits have a 10% chance
+/// to proc Impact: stuns the target for 1.5 sec."
+pub(super) fn describe_spec(spec: &M, label: Option<&str>, name: Option<&str>) -> String {
+    match (spec.trigger, spec.effect) {
+        (Trigger::Periodic { .. }, Mech::Burst { duration, bonuses }) if duration >= PERMANENT => {
             return format!("For the whole run: {}.", bonus_list(bonuses));
         }
+        (_, Mech::TotemReach { mult }) => {
+            return format!(
+                "Your totems reach {} farther, their reach ringed on the ground.",
+                pct(mult - 1.0)
+            );
+        }
+        _ => {}
     }
     let proc = matches!(
         spec.trigger,
         Trigger::OnHit { .. } | Trigger::OnCrit { .. } | Trigger::OnKill { .. }
     );
-    let mut when = trigger_text(spec.trigger, label);
-    if spec.cooldown > 0.0 && !matches!(spec.trigger, Trigger::Periodic { .. }) {
-        when.push_str(&format!(" (once every {})", secs(spec.cooldown)));
+    let once = (spec.cooldown > 0.0 && !matches!(spec.trigger, Trigger::Periodic { .. }))
+        .then(|| format!(" (once every {})", secs(spec.cooldown)));
+    let mut when = match name.and_then(|n| proc_text(spec.trigger, label, n)) {
+        Some(named) => named,
+        None => trigger_text(spec.trigger, label),
+    };
+    if let Some(once) = once {
+        when.push_str(&once);
     }
     format!("{when}: {}.", effect_text(spec.effect, spec.at, proc))
+}
+
+/// A proc trigger as WoW names a talent's proc: "Your critical strikes proc Ignite", "Your Fire
+/// hits have a 6% chance to proc Impact". `None` for any other trigger.
+fn proc_text(trigger: Trigger, label: Option<&str>, name: &str) -> Option<String> {
+    let (of, c, what) = match trigger {
+        Trigger::OnHit { of, chance } => (of, chance, "hits"),
+        Trigger::OnCrit { of, chance } => (of, chance, "critical strikes"),
+        Trigger::OnKill { of, chance } => (of, chance, "killing blows"),
+        _ => return None,
+    };
+    let subject = match (label, of) {
+        (Some(l), _) => format!("Your {l} {what}"),
+        (None, Of::Ability(key)) => format!("Your {} {what}", title(key)),
+        (None, Of::Any) => format!("Your {what}"),
+    };
+    Some(if c >= 1.0 {
+        format!("{subject} proc {name}")
+    } else {
+        format!("{subject} have a {} chance to proc {name}", pct(c))
+    })
 }
 
 fn trigger_text(trigger: Trigger, label: Option<&str>) -> String {
@@ -439,6 +535,70 @@ fn effect_text(effect: Mech, at: Aim, proc: bool) -> String {
             school.label(),
             secs(t)
         ),
+        Mech::NextCast {
+            instant,
+            crit,
+            cooldown,
+            ..
+        } => {
+            let mut parts = Vec::new();
+            if instant {
+                parts.push("your slowest ability is ready at once".to_string());
+            }
+            if crit {
+                parts.push("your next cast strikes critically with every blow".to_string());
+            }
+            if cooldown < 1.0 {
+                let kept = if (cooldown - 0.5).abs() < 1e-3 {
+                    "halved".to_string()
+                } else {
+                    format!("{} shorter", pct(1.0 - cooldown))
+                };
+                parts.push(format!("your next cast's cooldown is {kept}"));
+            }
+            parts.join(", and ")
+        }
+        Mech::Ignite {
+            dps,
+            secs: t,
+            per_burn,
+        } => format!(
+            "{} burns for {} Fire damage a second for {}, {} more for each Fire burn already on it",
+            target_at(at, proc),
+            num(dps),
+            secs(t),
+            pct(per_burn)
+        ),
+        Mech::Shatter { bonus } => format!(
+            "a frozen or rooted target takes the blow again for {} of it",
+            pct(bonus)
+        ),
+        Mech::ConsumeDot {
+            school,
+            burst,
+            spread,
+            radius,
+            secs: t,
+        } => format!(
+            "your {s} burn on the nearest enemy is consumed for {} of its remaining damage at once, \
+             and spreads to {} within {} yd for {}",
+            pct(burst),
+            count(spread, "enemy", "enemies"),
+            num(radius),
+            secs(t),
+            s = school.label(),
+        ),
+        Mech::ShareHeal {
+            school,
+            share,
+            radius,
+        } => format!(
+            "{} of the {} damage you dealt heals you and allies within {} yd",
+            pct(share),
+            school.label(),
+            num(radius)
+        ),
+        Mech::TotemReach { mult } => format!("your totems reach {} farther", pct(mult - 1.0)),
     }
 }
 
@@ -559,7 +719,7 @@ fn secs(v: f32) -> String {
 }
 
 macro_rules! mechanic {
-    ($id:literal, $name:literal, $spell:literal, $trigger:expr, $effect:expr) => {
+    ($id:literal, $name:literal, $spell:expr, $trigger:expr, $effect:expr) => {
         TalentMechanics {
             id: $id,
             name: $name,
@@ -574,7 +734,7 @@ macro_rules! mechanic {
 
 /// A multi-rank talent whose chance is stated per rank in vanilla.
 macro_rules! proc_mechanic {
-    ($id:literal, $name:literal, $spell:literal, $trigger:expr, $effect:expr) => {
+    ($id:literal, $name:literal, $spell:expr, $trigger:expr, $effect:expr) => {
         TalentMechanics {
             id: $id,
             name: $name,
@@ -582,6 +742,61 @@ macro_rules! proc_mechanic {
             per_rank: PerRank::Chance,
             listen: Listen::Own,
             specs: &[M::new($trigger, $effect).visual($spell)],
+            teaches: None,
+        }
+    };
+}
+
+/// A multi-rank proc talent whose blow lands a crowd control on the struck target: `chance` per
+/// rank on a hit, `secs` of `kind`, under `spell`'s impact.
+macro_rules! cc_proc {
+    ($id:literal, $name:literal, $spell:literal, $chance:literal, $kind:expr, $secs:literal) => {
+        TalentMechanics {
+            id: $id,
+            name: $name,
+            headline: false,
+            per_rank: PerRank::Chance,
+            listen: Listen::Own,
+            specs: &[M::new(
+                Trigger::OnHit {
+                    of: Of::Any,
+                    chance: $chance,
+                },
+                Mech::ApplyCc {
+                    kind: $kind,
+                    secs: $secs,
+                },
+            )
+            .visual($spell)],
+            teaches: None,
+        }
+    };
+}
+
+/// A multi-rank talent whose 1.12 proc was an extra combo point: `chance` per rank on a hit to
+/// cut the next cast's cooldown by a quarter, at most once every [`CLEARCASTING_GAP`].
+macro_rules! combo_proc {
+    ($id:literal, $name:literal, $spell:literal, $chance:literal) => {
+        TalentMechanics {
+            id: $id,
+            name: $name,
+            headline: false,
+            per_rank: PerRank::Chance,
+            listen: Listen::Own,
+            specs: &[M::new(
+                Trigger::OnHit {
+                    of: Of::Any,
+                    chance: $chance,
+                },
+                Mech::NextCast {
+                    instant: false,
+                    crit: false,
+                    cooldown: 0.75,
+                    aura: 0,
+                },
+            )
+            .visual($spell)
+            .cooldown(CLEARCASTING_GAP)],
             teaches: None,
         }
     };
@@ -644,19 +859,40 @@ macro_rules! aura {
 /// The active talents.  Their rank-one spell is deliberately the visual: this keeps the ability
 /// recognisable even where the roguelite effect is only an echo of its WoW counterpart.
 static MECHANICS: &[TalentMechanics] = &[
-    mechanic!(
-        75,
-        "Arcane Concentration",
-        11213,
-        Trigger::OnCast(Of::Any),
-        Mech::Echo { extra_casts: 1 }
-    ),
+    // Clearcasting: a hit may halve the next cast's cooldown.
+    TalentMechanics {
+        id: 75,
+        name: "Arcane Concentration",
+        headline: true,
+        per_rank: PerRank::Chance,
+        listen: Listen::Own,
+        specs: &[M::new(
+            Trigger::OnHit {
+                of: Of::Any,
+                chance: 0.02,
+            },
+            Mech::NextCast {
+                instant: false,
+                crit: false,
+                cooldown: 0.5,
+                aura: CLEARCASTING,
+            },
+        )
+        .visual(11213)
+        .cooldown(CLEARCASTING_GAP)],
+        teaches: None,
+    },
     mechanic!(
         86,
         "Presence of Mind",
         12043,
         Trigger::Periodic { every: 30.0 },
-        Mech::Echo { extra_casts: 1 }
+        Mech::NextCast {
+            instant: true,
+            crit: true,
+            cooldown: 1.0,
+            aura: 12043
+        }
     ),
     mechanic!(
         87,
@@ -767,16 +1003,27 @@ static MECHANICS: &[TalentMechanics] = &[
     proc_mechanic!(
         34,
         "Ignite",
-        11119,
+        IGNITE,
         Trigger::OnCrit {
             of: Of::Any,
             chance: 1.0
         },
-        Mech::Dot {
-            school: School::Fire,
+        // Fed by the burns on its target: Fireball's own among them.
+        Mech::Ignite {
             dps: 8.0,
-            secs: 4.0
+            secs: 4.0,
+            per_burn: 0.15
         }
+    ),
+    proc_mechanic!(
+        67,
+        "Shatter",
+        SHATTER,
+        Trigger::OnCrit {
+            of: Of::Any,
+            chance: 0.2
+        },
+        Mech::Shatter { bonus: 0.5 }
     ),
     proc_mechanic!(
         464,
@@ -833,6 +1080,51 @@ static MECHANICS: &[TalentMechanics] = &[
             secs: 2.0
         }
     ),
+    // Talents whose 1.12 effect was a named proc, once a "luck" row: now that proc, under the
+    // spell it set off.
+    cc_proc!(125, "Mace Specialization", 5530, 0.01, CcKind::Stun, 1.5),
+    cc_proc!(147, "Improved Revenge", 12798, 0.03, CcKind::Stun, 1.0),
+    cc_proc!(149, "Improved Shield Bash", 18498, 0.03, CcKind::Stun, 1.0),
+    cc_proc!(
+        1341,
+        "Improved Concussive Shot",
+        19410,
+        0.01,
+        CcKind::Stun,
+        1.5
+    ),
+    cc_proc!(1304, "Entrapment", 19185, 0.02, CcKind::Root, 2.0),
+    proc_mechanic!(
+        268,
+        "Improved Poisons",
+        2818,
+        Trigger::OnHit {
+            of: Of::Any,
+            chance: 0.02
+        },
+        Mech::Dot {
+            school: School::Nature,
+            dps: 3.0,
+            secs: 6.0
+        }
+    ),
+    cc_proc!(206, "Improved Kick", 18425, 0.03, CcKind::Stun, 1.0),
+    cc_proc!(184, "Mace Specialization", 5530, 0.01, CcKind::Stun, 1.5),
+    cc_proc!(88, "Improved Counterspell", 18469, 0.03, CcKind::Stun, 1.0),
+    cc_proc!(38, "Frostbite", 12494, 0.03, CcKind::Root, 2.0),
+    cc_proc!(982, "Aftermath", 18118, 0.02, CcKind::Chill(0.5), 3.0),
+    cc_proc!(986, "Pyroclasm", 18093, 0.03, CcKind::Stun, 1.5),
+    cc_proc!(
+        921,
+        "Improved Nature's Grasp",
+        19975,
+        0.02,
+        CcKind::Root,
+        2.0
+    ),
+    // An extra combo point, here a hastened next cast.
+    combo_proc!(273, "Ruthlessness", 14156, 0.03),
+    combo_proc!(245, "Initiative", 13976, 0.03),
     // The 27 trees' 10 / 20 / 30-point landmarks.  Keep this list in lock-step with
     // MILESTONES: the test below deliberately checks both the Talent and Spell DBC data.
     aura!(137, "Anger Management", 12296, StatKey::Regen, 1.0),
@@ -934,8 +1226,30 @@ static MECHANICS: &[TalentMechanics] = &[
     teaches!(442, "Holy Nova", Teach::Spell("holy_nova")),
     teaches!(1637, "Lightwell", Teach::Spec),
     teaches!(501, "Mind Flay", Teach::Spell("mind_flay")),
-    aura!(484, "Vampiric Embrace", 15286, StatKey::Lifesteal, 0.08),
-    aura!(521, "Shadowform", 15473, StatKey::Damage, 0.15),
+    mechanic!(
+        484,
+        "Vampiric Embrace",
+        15286,
+        Trigger::Periodic { every: 2.0 },
+        Mech::ShareHeal {
+            school: School::Shadow,
+            share: 0.15,
+            radius: 40.0
+        }
+    ),
+    mechanic!(
+        521,
+        "Shadowform",
+        15473,
+        Trigger::Periodic { every: 1.0 },
+        Mech::Burst {
+            duration: PERMANENT,
+            bonuses: &[
+                Bonus::school(School::Shadow, 0.15),
+                Bonus::new(StatKey::Armor, 0.15)
+            ]
+        }
+    ),
     aura!(574, "Elemental Focus", 16164, StatKey::CritChance, 0.12),
     aura!(565, "Elemental Fury", 16089, StatKey::CritDamage, 0.25),
     aura!(573, "Elemental Mastery", 16166, StatKey::Damage, 0.20),
@@ -948,7 +1262,13 @@ static MECHANICS: &[TalentMechanics] = &[
     ),
     aura!(616, "Parry", 16268, StatKey::Armor, 0.10),
     teaches!(901, "Stormstrike", Teach::Spell("stormstrike")),
-    aura!(582, "Totemic Mastery", 16189, StatKey::Area, 0.15),
+    mechanic!(
+        582,
+        "Totemic Mastery",
+        16189,
+        Trigger::Periodic { every: PERMANENT },
+        Mech::TotemReach { mult: 1.5 }
+    ),
     aura!(591, "Nature's Swiftness", 16188, StatKey::Cooldown, 0.15),
     active!(590, "Mana Tide Totem", 16190, School::Nature),
     teaches!(29, "Pyroblast", Teach::Spell("pyroblast")),
@@ -966,8 +1286,42 @@ static MECHANICS: &[TalentMechanics] = &[
     aura!(1281, "Demonic Sacrifice", 18788, StatKey::Damage, 0.15),
     aura!(1282, "Soul Link", 19028, StatKey::Armor, 0.15),
     aura!(967, "Ruin", 17959, StatKey::CritDamage, 0.35),
-    active!(968, "Conflagrate", 17962, School::Fire),
-    aura!(788, "Omen of Clarity", 16864, StatKey::Cooldown, 0.12),
+    mechanic!(
+        968,
+        "Conflagrate",
+        17962,
+        Trigger::Periodic { every: 10.0 },
+        Mech::ConsumeDot {
+            school: School::Fire,
+            burst: 1.25,
+            spread: 2,
+            radius: 8.0,
+            secs: 5.0
+        }
+    ),
+    // Clearcasting: a hit may halve the next cast's cooldown.
+    TalentMechanics {
+        id: 788,
+        name: "Omen of Clarity",
+        headline: true,
+        per_rank: PerRank::Same,
+        listen: Listen::Own,
+        specs: &[M::new(
+            Trigger::OnHit {
+                of: Of::Any,
+                chance: 0.06,
+            },
+            Mech::NextCast {
+                instant: false,
+                crit: false,
+                cooldown: 0.5,
+                aura: CLEARCASTING_DRUID,
+            },
+        )
+        .visual(16864)
+        .cooldown(CLEARCASTING_GAP)],
+        teaches: None,
+    },
     aura!(789, "Nature's Grace", 16880, StatKey::CritChance, 0.12),
     active!(804, "Feral Charge", 16979, School::Physical),
     active!(1162, "Faerie Fire (Feral)", 16857, School::Nature),
@@ -1004,7 +1358,7 @@ mod tests {
         )
         .at(Aim::Trigger);
         assert_eq!(
-            describe_spec(&spec, None),
+            describe_spec(&spec, None, None),
             "15% chance on a hit: stuns the target for 2 sec."
         );
     }
@@ -1053,5 +1407,133 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Presence of Mind and Clearcasting are one reusable next-cast guarantee.
+    #[test]
+    fn presence_of_mind_and_clearcasting_are_next_cast_guarantees() {
+        let pom = at_rank(86, 1).pop().unwrap();
+        assert_eq!(pom.trigger, Trigger::Periodic { every: 30.0 });
+        assert!(matches!(
+            pom.effect,
+            Mech::NextCast {
+                instant: true,
+                crit: true,
+                ..
+            }
+        ));
+        for (id, aura) in [(75, CLEARCASTING), (788, CLEARCASTING_DRUID)] {
+            let spec = at_rank(id, 1).pop().unwrap();
+            assert!(spec.validate().is_ok(), "{id}");
+            assert_eq!(
+                spec.effect,
+                Mech::NextCast {
+                    instant: false,
+                    crit: false,
+                    cooldown: 0.5,
+                    aura,
+                }
+            );
+            assert!(spec.cooldown > 0.0, "{id}: Clearcasting cannot chain");
+        }
+        let Trigger::OnHit { chance, .. } = at_rank(75, 5).pop().unwrap().trigger else {
+            panic!("a hit proc")
+        };
+        assert!((chance - 0.10).abs() < 1e-6, "2% a rank, as 1.12's");
+    }
+
+    /// Fire, frost, warlock, priest and shaman talents do what their 1.12 talents did.
+    #[test]
+    fn the_signature_talents_are_their_mechanics() {
+        assert!(matches!(
+            at_rank(34, 5).pop().unwrap().effect,
+            Mech::Ignite { per_burn, .. } if per_burn > 0.0
+        ));
+        let shatter = at_rank(67, 5).pop().unwrap();
+        assert!(matches!(shatter.effect, Mech::Shatter { .. }));
+        assert_eq!(
+            shatter.trigger,
+            Trigger::OnCrit {
+                of: Of::Any,
+                chance: 1.0
+            },
+            "every crit at 5/5"
+        );
+        assert!(matches!(
+            at_rank(968, 1).pop().unwrap().effect,
+            Mech::ConsumeDot {
+                school: School::Fire,
+                ..
+            }
+        ));
+        let Mech::Burst { bonuses, .. } = at_rank(521, 1).pop().unwrap().effect else {
+            panic!("Shadowform is held all run")
+        };
+        assert!(bonuses.contains(&Bonus::new(StatKey::Armor, 0.15)));
+        assert!(bonuses.contains(&Bonus::school(School::Shadow, 0.15)));
+        assert!(matches!(
+            at_rank(484, 1).pop().unwrap().effect,
+            Mech::ShareHeal {
+                school: School::Shadow,
+                ..
+            }
+        ));
+        assert!(matches!(
+            at_rank(582, 1).pop().unwrap().effect,
+            Mech::TotemReach { mult } if mult > 1.0
+        ));
+        for m in MECHANICS {
+            for spec in m.specs {
+                spec.validate()
+                    .unwrap_or_else(|e| panic!("{} {}: {e}", m.id, m.name));
+            }
+        }
+    }
+
+    /// A proc talent's tooltip names its proc, as WoW's do, rank by rank.
+    #[test]
+    fn proc_tooltips_name_their_procs() {
+        assert_eq!(
+            describe(30, 5),
+            ["Your hits have a 10% chance to proc Impact: stuns the target for 1.5 sec."]
+        );
+        assert_eq!(
+            describe(38, 3),
+            ["Your hits have a 9% chance to proc Frostbite: roots the target for 2 sec."]
+        );
+        assert_eq!(
+            describe(34, 1),
+            [
+                "Your critical strikes proc Ignite: the target burns for 8 Fire damage a second for \
+              4 sec, 15% more for each Fire burn already on it."
+            ]
+        );
+        assert_eq!(
+            describe(75, 5),
+            [
+                "Your hits have a 10% chance to proc Clearcasting (once every 3 sec): your next \
+              cast's cooldown is halved."
+            ]
+        );
+        assert_eq!(
+            describe(86, 1),
+            [
+                "Every 30 sec: your slowest ability is ready at once, and your next cast strikes \
+              critically with every blow."
+            ]
+        );
+        assert_eq!(
+            describe(582, 1),
+            ["Your totems reach 50% farther, their reach ringed on the ground."]
+        );
+        assert_eq!(
+            describe(484, 1),
+            ["Every 2 sec: 15% of the Shadow damage you dealt heals you and allies within 40 yd."]
+        );
+        for m in MECHANICS {
+            for line in describe(m.id, 1) {
+                assert!(!line.contains("luck"), "{}: {line}", m.name);
+            }
+        }
     }
 }

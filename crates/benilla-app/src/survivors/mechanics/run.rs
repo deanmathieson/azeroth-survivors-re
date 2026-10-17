@@ -8,14 +8,15 @@ use bevy::prelude::*;
 use super::super::abilities::{roll, GroundArea, Hit, Origin, PendingHits};
 use super::super::bonus::{Bonus, School};
 use super::super::data::{self, AbilityDef};
-use super::super::enemies::Enemy;
+use super::super::enemies::{Dot, Enemy};
 use super::super::party;
 use super::super::units::{self, flat, Fx, COLOR_HEAL, COLOR_SPELL};
 use super::super::{HeroState, Rng, Run, RunEntity, Stats};
 use super::target::{self, Foe};
 use super::{
     chance, cheat_death, execute_bonus, fires_on, level_scale, low_health, periodic,
-    sync_legendaries, Aim, Cc, Effect, MechanicSpec, Proc, Procs, Running, Trigger, ECHO_GAP,
+    sync_legendaries, Aim, Armed, Cc, Effect, MechanicSpec, Proc, Procs, Running, Trigger,
+    ECHO_GAP, HEALTHSTONE_REACH, HEALTHSTONE_SHARE, HEALTHSTONE_SPELL, MAX_FEED, SHATTER_CHILL,
 };
 use crate::entities::dest_fx::GroundBurst;
 
@@ -261,7 +262,7 @@ pub(crate) fn tick(
     mut rng: ResMut<Rng>,
     mut procs: ResMut<Procs>,
     mut heroes: Query<(Entity, &Transform, &mut HeroState)>,
-    mut enemies: Query<(Entity, &mut Transform, &Enemy), Without<HeroState>>,
+    mut enemies: Query<(Entity, &mut Transform, &mut Enemy), Without<HeroState>>,
     mut show: Show,
     mut pending: ResMut<PendingHits>,
     mut hits: MessageWriter<Hit>,
@@ -270,6 +271,11 @@ pub(crate) fn tick(
     if dt <= 0.0 {
         return;
     }
+    let party: Vec<(Entity, Vec3)> = heroes
+        .iter()
+        .map(|(e, tf, _)| (e, tf.translation))
+        .collect();
+    share_healthstones(&mut heroes, &party, &mut show);
     let mut fires = Vec::new();
     for (me, tf, mut hero) in &mut heroes {
         clocks(me, tf.translation, &mut hero, dt, &mut show, &mut fires);
@@ -285,22 +291,18 @@ pub(crate) fn tick(
     let foes: Vec<Foe> = enemies
         .iter()
         .filter(|(_, _, en)| !en.dead)
-        .map(|(e, tf, en)| Foe {
-            e,
-            pos: tf.translation,
-            hp: en.hp,
-            max_hp: en.max_hp,
-            radius: en.radius,
-            boss: en.boss,
-        })
-        .collect();
-    let party: Vec<(Entity, Vec3)> = heroes
-        .iter()
-        .map(|(e, tf, _)| (e, tf.translation))
+        .map(|(e, tf, en)| foe_of(e, tf.translation, en))
         .collect();
     let mut shoves: Vec<(Entity, Vec3)> = Vec::new();
+    let mut consumes: Vec<(Entity, Vec3, MechanicSpec)> = Vec::new();
     let (now, level) = (run.elapsed, run.level);
     for fire in &fires {
+        if let Effect::ConsumeDot { .. } = fire.spec.effect {
+            if let Ok((_, htf, _)) = heroes.get(fire.owner) {
+                consumes.push((fire.owner, htf.translation, fire.spec));
+            }
+            continue;
+        }
         land(
             fire,
             &mut heroes,
@@ -322,6 +324,163 @@ pub(crate) fn tick(
             tf.translation += shove;
         }
     }
+    for (owner, at, spec) in consumes {
+        consume(owner, at, spec, &mut enemies, &mut show, &mut hits);
+    }
+}
+
+/// One living enemy as the mechanics see it.
+fn foe_of(e: Entity, pos: Vec3, en: &Enemy) -> Foe {
+    let burns = en
+        .dots
+        .iter()
+        .filter(|d| d.school == Some(School::Fire))
+        .count();
+    Foe {
+        e,
+        pos,
+        hp: en.hp,
+        max_hp: en.max_hp,
+        radius: en.radius,
+        boss: en.boss,
+        frozen: frozen(en),
+        burns: u8::try_from(burns).unwrap_or(u8::MAX),
+    }
+}
+
+/// Whether Shatter shatters `en`: rooted, or chilled to half speed or slower.
+pub(crate) fn frozen(en: &Enemy) -> bool {
+    en.root_t > 0.0 || (en.slow_t > 0.0 && en.slow <= SHATTER_CHILL)
+}
+
+/// A Healthstone taken reaches every other living hero within [`HEALTHSTONE_REACH`] of its taker,
+/// healing [`HEALTHSTONE_SHARE`] of their max health, credited to the taker.
+fn share_healthstones(
+    heroes: &mut Query<(Entity, &Transform, &mut HeroState)>,
+    party: &[(Entity, Vec3)],
+    show: &mut Show,
+) {
+    let mut takers = Vec::new();
+    for &(e, at) in party {
+        if let Ok((.., mut h)) = heroes.get_mut(e) {
+            if std::mem::take(&mut h.mechanics.healthstone) {
+                takers.push((e, at));
+            }
+        }
+    }
+    for (taker, at) in takers {
+        let mut total = 0.0;
+        let mut healed = Vec::new();
+        for &(e, pos) in party {
+            if e == taker || flat(pos - at).length() > HEALTHSTONE_REACH {
+                continue;
+            }
+            let Ok((.., mut ally)) = heroes.get_mut(e) else {
+                continue;
+            };
+            if !ally.alive() {
+                continue;
+            }
+            let max = ally.stats().max_hp;
+            let landed = party::heal(&mut ally, max * HEALTHSTONE_SHARE);
+            if landed > 0.0 {
+                show.fx.number(e, landed, false, COLOR_HEAL);
+            }
+            total += landed;
+            healed.push(e);
+        }
+        if let Ok((.., mut me)) = heroes.get_mut(taker) {
+            me.healing_done += f64::from(total);
+        }
+        show.on(Some(HEALTHSTONE_SPELL), &healed);
+    }
+}
+
+/// Conflagrate: `owner`'s damage over time of the spec's school on the nearest enemy carrying one
+/// within [`REACH`] of `at`, consumed for its remaining damage at once, and spread afresh to the
+/// enemies near it that lack one.
+fn consume(
+    owner: Entity,
+    at: Vec3,
+    spec: MechanicSpec,
+    enemies: &mut Query<(Entity, &mut Transform, &mut Enemy), Without<HeroState>>,
+    show: &mut Show,
+    hits: &mut MessageWriter<Hit>,
+) {
+    let Effect::ConsumeDot {
+        school,
+        burst,
+        spread,
+        radius,
+        secs,
+    } = spec.effect
+    else {
+        return;
+    };
+    let carries = |en: &Enemy| {
+        !en.dead
+            && en
+                .dots
+                .iter()
+                .any(|d| d.source == owner && d.school == Some(school))
+    };
+    let Some((target, pos)) = enemies
+        .iter()
+        .filter(|(_, tf, en)| carries(en) && flat(tf.translation - at).length() <= REACH)
+        .map(|(e, tf, _)| (e, tf.translation))
+        .min_by(|a, b| flat(a.1 - at).length().total_cmp(&flat(b.1 - at).length()))
+    else {
+        return;
+    };
+    let Ok((.., mut en)) = enemies.get_mut(target) else {
+        return;
+    };
+    let (left, dps) = consumed(&mut en.dots, owner, school);
+    if left <= 0.0 {
+        return;
+    }
+    hits.write(Hit {
+        school: Some(school),
+        ..blow(owner, target, left * burst, false, data::Effect::None)
+    });
+    let mut struck = vec![target];
+    let mut near: Vec<(Entity, f32)> = enemies
+        .iter()
+        .filter(|(e, tf, en)| {
+            *e != target
+                && !en.dead
+                && !carries(en)
+                && flat(tf.translation - pos).length() <= radius + en.radius * 0.5
+        })
+        .map(|(e, tf, _)| (e, flat(tf.translation - pos).length()))
+        .collect();
+    near.sort_by(|a, b| a.1.total_cmp(&b.1));
+    for (e, _) in near.into_iter().take(usize::from(spread)) {
+        hits.write(Hit {
+            dot: dps,
+            dot_dur: secs,
+            school: Some(school),
+            ..blow(owner, e, 0.0, false, data::Effect::None)
+        });
+        struck.push(e);
+    }
+    show.on(spec.visual, &struck);
+}
+
+/// `owner`'s damages over time of `school` taken off `dots`: their remaining damage, and the
+/// strongest one's damage a second.
+pub(crate) fn consumed(dots: &mut Vec<Dot>, owner: Entity, school: School) -> (f32, f32) {
+    let (mut left, mut dps) = (0.0f32, 0.0f32);
+    dots.retain(|d| {
+        if d.source == owner && d.school == Some(school) {
+            left += d.dps * d.left.max(0.0);
+            dps = dps.max(d.dps);
+            false
+        } else {
+            true
+        }
+    });
+    (left, dps)
 }
 
 /// One hero's own clocks: new transformations granted, bursts running out, and the periodic,
@@ -696,7 +855,12 @@ fn land(
                     continue;
                 };
                 let effect = Cc { kind, secs }.effect();
-                hits.write(blow(owner, foes[i].e, 0.0, false, effect));
+                // The proc's own state kit (a stun's swirl, Frostbite's ice) marks the target.
+                hits.write(Hit {
+                    mark: spec.visual.unwrap_or(0),
+                    mark_dur: secs,
+                    ..blow(owner, foes[i].e, 0.0, false, effect)
+                });
                 show.on(spec.visual, &[foes[i].e]);
             }
             Effect::HealPulse { radius, amount } => {
@@ -767,12 +931,81 @@ fn land(
                     }
                 }
             }
-            // The hero's own, landed above.
+            Effect::Ignite {
+                dps,
+                secs,
+                per_burn,
+            } => {
+                let Some(i) = subject(site, foes) else {
+                    continue;
+                };
+                let fed = 1.0 + per_burn * f32::from(foes[i].burns.min(MAX_FEED));
+                hits.write(Hit {
+                    dot: caster.damage(dps, level, School::Fire) * fed,
+                    dot_dur: secs,
+                    school: Some(School::Fire),
+                    mark: spec.visual.unwrap_or(0),
+                    mark_dur: secs,
+                    ..blow(owner, foes[i].e, 0.0, false, data::Effect::None)
+                });
+                show.on(spec.visual, &[foes[i].e]);
+            }
+            Effect::Shatter { bonus } => {
+                let Some(i) = subject(site, foes) else {
+                    continue;
+                };
+                if foes[i].frozen && fire.base > 0.0 {
+                    let e = foes[i].e;
+                    hits.write(blow(owner, e, fire.base * bonus, true, data::Effect::None));
+                    show.on(spec.visual, &[e]);
+                }
+            }
+            Effect::ShareHeal {
+                school,
+                share,
+                radius,
+            } => {
+                let pooled = match heroes.get_mut(owner) {
+                    Ok((.., mut me)) => me.mechanics.drain_pool(school),
+                    Err(_) => 0.0,
+                };
+                let amount = pooled * share;
+                if amount <= 0.0 {
+                    continue;
+                }
+                let mut total = 0.0;
+                let mut healed = Vec::new();
+                for &(e, pos) in party {
+                    if flat(pos - site.pos).length() > radius {
+                        continue;
+                    }
+                    let Ok((.., mut ally)) = heroes.get_mut(e) else {
+                        continue;
+                    };
+                    if !ally.alive() {
+                        continue;
+                    }
+                    let landed = party::heal(&mut ally, amount);
+                    if landed > 0.0 {
+                        show.fx.number(e, landed, false, COLOR_HEAL);
+                        healed.push(e);
+                    }
+                    total += landed;
+                }
+                if let Ok((.., mut me)) = heroes.get_mut(owner) {
+                    me.healing_done += f64::from(total);
+                }
+                show.on(spec.visual, &healed);
+            }
+            // The hero's own, landed above; Conflagrate's, after the rest.
             Effect::Burst { .. }
             | Effect::Shield { .. }
             | Effect::CheatDeath { .. }
             | Effect::ResetCooldowns
-            | Effect::Echo { .. } => {}
+            | Effect::Echo { .. }
+            | Effect::NextCast { .. }
+            | Effect::TotemReach { .. }
+            | Effect::ConsumeDot { .. } => {}
         }
     }
 }
@@ -821,9 +1054,49 @@ fn own(
                     .echo(ability.key, now + ECHO_GAP, extra_casts);
             }
         }
+        Effect::NextCast {
+            instant,
+            crit,
+            cooldown,
+            aura,
+        } => {
+            if let Ok((.., mut hero)) = heroes.get_mut(owner) {
+                arm(
+                    &mut hero,
+                    instant,
+                    Armed {
+                        crit,
+                        cooldown,
+                        aura,
+                    },
+                );
+                show.on_hero(owner, visual, &[owner]);
+                // The buff it leaves rings in as it goes up: Clearcasting's flash and chime.
+                if aura != 0 && Some(aura) != visual {
+                    show.on(Some(aura), &[owner]);
+                }
+            }
+        }
+        // A standing property of the hero, read where its totems go down.
+        Effect::TotemReach { .. } => {}
         _ => return false,
     }
     true
+}
+
+/// A next-cast guarantee armed on `hero`; `instant` readies at once the ability furthest from
+/// ready, as Presence of Mind makes the next spell instant.
+pub(crate) fn arm(hero: &mut HeroState, instant: bool, armed: Armed) {
+    hero.mechanics.arm(armed);
+    if instant {
+        if let Some(o) = hero
+            .abilities
+            .iter_mut()
+            .max_by(|a, b| a.cd.total_cmp(&b.cd))
+        {
+            o.cd = o.cd.min(0.0);
+        }
+    }
 }
 
 /// A burst's bonuses on `hero` for `duration`: refreshed if mechanic `uid`'s is running already.

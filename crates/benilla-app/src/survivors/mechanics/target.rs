@@ -15,6 +15,10 @@ pub(crate) struct Foe {
     pub max_hp: f32,
     pub radius: f32,
     pub boss: bool,
+    /// Rooted, or chilled to half speed or slower: what Shatter shatters.
+    pub frozen: bool,
+    /// The Fire burns on it, which an Ignite feeds on.
+    pub burns: u8,
 }
 
 fn dist(a: Vec3, b: Vec3) -> f32 {

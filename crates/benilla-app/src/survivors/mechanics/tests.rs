@@ -22,6 +22,8 @@ fn foe(i: u32, x: f32, z: f32) -> Foe {
         max_hp: 100.0,
         radius: 0.0,
         boss: false,
+        frozen: false,
+        burns: 0,
     }
 }
 
@@ -691,4 +693,362 @@ fn legendary_visuals_are_real_spells_with_the_kits_they_play() {
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A sturdy enemy standing still at `x`, with no afflictions but what `edit` puts on it.
+fn enemy_at(
+    world: &mut World,
+    x: f32,
+    edit: impl FnOnce(&mut super::super::enemies::Enemy),
+) -> Entity {
+    let mut en = super::super::enemies::Enemy {
+        def: &data::roster(0).enemies[0],
+        hp: 1000.0,
+        max_hp: 1000.0,
+        speed: 0.0,
+        damage: 0.0,
+        radius: 0.6,
+        xp: 1,
+        boss: false,
+        elite: false,
+        guardian: false,
+        dormant: false,
+        attack_cd: 0.0,
+        slow: 1.0,
+        slow_t: 0.0,
+        root_t: 0.0,
+        stun_t: 0.0,
+        fear_t: 0.0,
+        weaken: 1.0,
+        weaken_t: 0.0,
+        dots: Vec::new(),
+        dead: false,
+        taunted: None,
+        debuffs: Default::default(),
+    };
+    edit(&mut en);
+    world.spawn((en, Transform::from_xyz(x, 0.0, 0.0))).id()
+}
+
+fn burn(source: Entity, dps: f32, left: f32) -> super::super::enemies::Dot {
+    super::super::enemies::Dot {
+        dps,
+        left,
+        tick: 1.0,
+        source,
+        school: Some(School::Fire),
+    }
+}
+
+/// Every hit the frame's mechanics wrote.
+fn written(world: &mut World) -> Vec<Hit> {
+    world.resource_mut::<Messages<Hit>>().drain().collect()
+}
+
+/// A crit of `damage` from `owner`'s Fireball on `target`, for the mechanics to match.
+fn crit_on(world: &mut World, owner: Entity, target: Entity, damage: f32) {
+    world.resource_mut::<Procs>().0.push(Proc {
+        owner,
+        ability: data::ability("fireball"),
+        kind: ProcKind::Hit {
+            crit: true,
+            killed: false,
+        },
+        target: Some(target),
+        pos: Vec3::ZERO,
+        damage,
+        effect: data::Effect::None,
+    });
+}
+
+#[test]
+fn next_cast_guarantees_arm_merge_ready_the_slowest_and_are_spent_once() {
+    let mut hero = hero_with("fireball", 1);
+    hero.abilities.push(Owned {
+        def: data::ability("frostbolt"),
+        level: 1,
+        cd: 3.0,
+    });
+    hero.abilities[0].cd = 1.0;
+    // Presence of Mind: the slowest ability ready now, the next cast a crit.
+    let pom = Armed {
+        crit: true,
+        cooldown: 1.0,
+        aura: 12043,
+    };
+    run::arm(&mut hero, true, pom);
+    assert_eq!(
+        hero.abilities[1].cd, 0.0,
+        "frostbolt, furthest off, is ready"
+    );
+    assert_eq!(hero.abilities[0].cd, 1.0);
+    // Clearcasting on top keeps the crit and halves the cooldown.
+    let clearcasting = Armed {
+        crit: false,
+        cooldown: 0.5,
+        aura: 12536,
+    };
+    run::arm(&mut hero, false, clearcasting);
+    assert_eq!(
+        hero.mechanics.armed(),
+        Some(Armed {
+            crit: true,
+            cooldown: 0.5,
+            aura: 12536
+        })
+    );
+    assert!(hero.mechanics.spend_armed().is_some());
+    assert_eq!(hero.mechanics.armed(), None, "one cast spends it");
+
+    // Through the tick: a periodic guarantee arms on its period.
+    let mut world = tick_world();
+    let mut armed = hero_with("fireball", 1);
+    grant(
+        &mut armed,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::Periodic { every: 0.5 },
+            Effect::NextCast {
+                instant: true,
+                crit: true,
+                cooldown: 1.0,
+                aura: 12043,
+            },
+        )],
+    );
+    let e = world.spawn((Transform::default(), armed)).id();
+    tick(&mut world);
+    assert_eq!(
+        world.get::<HeroState>(e).unwrap().mechanics.armed(),
+        Some(pom)
+    );
+}
+
+#[test]
+fn ignite_feeds_on_the_fire_burns_on_its_target() {
+    let mut world = tick_world();
+    let mut mage = HeroState::default();
+    grant(
+        &mut mage,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::OnCrit {
+                of: Of::Any,
+                chance: 1.0,
+            },
+            Effect::Ignite {
+                dps: 8.0,
+                secs: 4.0,
+                per_burn: 0.15,
+            },
+        )],
+    );
+    let mage = world.spawn((Transform::default(), mage)).id();
+    let other = Entity::from_raw_u32(999).unwrap();
+    let burning = enemy_at(&mut world, 3.0, |en| {
+        en.dots = vec![burn(mage, 1.0, 3.0), burn(other, 1.0, 3.0)];
+    });
+    let bare = enemy_at(&mut world, -3.0, |_| {});
+    crit_on(&mut world, mage, burning, 30.0);
+    crit_on(&mut world, mage, bare, 30.0);
+    tick(&mut world);
+    let hits = written(&mut world);
+    let dot_on = |e: Entity| hits.iter().find(|h| h.target == e).map(|h| h.dot);
+    assert_eq!(hits.len(), 2);
+    assert!(close(dot_on(bare).unwrap(), 8.0), "nothing to feed on");
+    assert!(
+        close(dot_on(burning).unwrap(), 8.0 * 1.3),
+        "two burns feed it 15% each"
+    );
+    assert!(hits.iter().all(|h| h.school == Some(School::Fire)));
+}
+
+#[test]
+fn shatter_strikes_frozen_targets_again_and_spares_the_rest() {
+    let mut world = tick_world();
+    let mut mage = HeroState::default();
+    grant(
+        &mut mage,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::OnCrit {
+                of: Of::Any,
+                chance: 1.0,
+            },
+            Effect::Shatter { bonus: 0.5 },
+        )],
+    );
+    let mage = world.spawn((Transform::default(), mage)).id();
+    let rooted = enemy_at(&mut world, 2.0, |en| en.root_t = 2.0);
+    let chilled = enemy_at(&mut world, 4.0, |en| {
+        en.slow = 0.5;
+        en.slow_t = 2.0;
+    });
+    let slowed = enemy_at(&mut world, 6.0, |en| {
+        en.slow = 0.8;
+        en.slow_t = 2.0;
+    });
+    for e in [rooted, chilled, slowed] {
+        crit_on(&mut world, mage, e, 40.0);
+    }
+    tick(&mut world);
+    let hits = written(&mut world);
+    let on = |e: Entity| hits.iter().filter(|h| h.target == e).count();
+    assert_eq!((on(rooted), on(chilled), on(slowed)), (1, 1, 0));
+    assert!(hits.iter().all(|h| close(h.damage, 20.0) && h.crit));
+}
+
+#[test]
+fn conflagrate_consumes_the_burn_for_a_burst_and_spreads_it() {
+    let mut world = tick_world();
+    let mut lock = HeroState::default();
+    grant(
+        &mut lock,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::Periodic { every: 0.5 },
+            Effect::ConsumeDot {
+                school: School::Fire,
+                burst: 1.25,
+                spread: 1,
+                radius: 8.0,
+                secs: 5.0,
+            },
+        )],
+    );
+    let lock = world.spawn((Transform::default(), lock)).id();
+    let burning = enemy_at(&mut world, 5.0, |en| en.dots = vec![burn(lock, 4.0, 5.0)]);
+    let near = enemy_at(&mut world, 9.0, |_| {});
+    let nearer = enemy_at(&mut world, 7.0, |_| {});
+    let far = enemy_at(&mut world, 30.0, |_| {});
+    tick(&mut world);
+    assert!(
+        world
+            .get::<super::super::enemies::Enemy>(burning)
+            .unwrap()
+            .dots
+            .is_empty(),
+        "consumed"
+    );
+    let hits = written(&mut world);
+    let burst = hits.iter().find(|h| h.target == burning).unwrap();
+    assert!(close(burst.damage, 4.0 * 5.0 * 1.25));
+    let spread: Vec<&Hit> = hits.iter().filter(|h| h.dot > 0.0).collect();
+    assert_eq!(spread.len(), 1);
+    assert_eq!(spread[0].target, nearer, "to the nearest first");
+    assert!(close(spread[0].dot, 4.0) && close(spread[0].dot_dur, 5.0));
+    assert!(hits.iter().all(|h| h.target != far && h.target != near));
+
+    // Only the hero's own burn of the school is taken.
+    let mut dots = vec![burn(lock, 2.0, 3.0), burn(near, 9.0, 3.0)];
+    assert_eq!(run::consumed(&mut dots, lock, School::Fire), (6.0, 2.0));
+    assert_eq!(dots.len(), 1, "the other hero's burn stays");
+    assert_eq!(run::consumed(&mut dots, lock, School::Fire), (0.0, 0.0));
+}
+
+#[test]
+fn a_shared_heal_turns_its_schools_damage_into_party_healing() {
+    let mut world = tick_world();
+    let max = HeroState::default().stats().max_hp;
+    let mut priest = HeroState {
+        hp: max - 50.0,
+        ..HeroState::default()
+    };
+    grant(
+        &mut priest,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::Periodic { every: 0.5 },
+            Effect::ShareHeal {
+                school: School::Shadow,
+                share: 0.5,
+                radius: 40.0,
+            },
+        )],
+    );
+    priest.mechanics.pool(School::Shadow, 20.0);
+    priest.mechanics.pool(School::Fire, 100.0);
+    let priest = world.spawn((Transform::default(), priest)).id();
+    let hurt = |player: u8| HeroState {
+        player,
+        hp: max - 50.0,
+        ..HeroState::default()
+    };
+    let ally = world
+        .spawn((Transform::from_xyz(20.0, 0.0, 0.0), hurt(1)))
+        .id();
+    let far = world
+        .spawn((Transform::from_xyz(60.0, 0.0, 0.0), hurt(2)))
+        .id();
+    tick(&mut world);
+    let hp = |w: &World, e| w.get::<HeroState>(e).unwrap().hp;
+    assert!(
+        close(hp(&world, priest), max - 40.0),
+        "half the Shadow damage"
+    );
+    assert!(close(hp(&world, ally), max - 40.0));
+    assert!(close(hp(&world, far), max - 50.0), "out of reach");
+    let credited = world.get::<HeroState>(priest).unwrap().healing_done;
+    assert!((credited - 20.0).abs() < 1e-4);
+    // The pool is spent: the next period has nothing to share.
+    tick(&mut world);
+    assert!(close(hp(&world, ally), max - 40.0));
+}
+
+#[test]
+fn a_healthstone_heals_the_allies_near_its_taker() {
+    let mut world = tick_world();
+    let max = HeroState::default().stats().max_hp;
+    let mut taker = HeroState {
+        hp: 10.0,
+        ..HeroState::default()
+    };
+    hud::take(&mut taker, Choice::Heal);
+    assert_eq!(taker.hp, max);
+    let taker = world.spawn((Transform::default(), taker)).id();
+    let hurt = |player: u8| HeroState {
+        player,
+        hp: 10.0,
+        ..HeroState::default()
+    };
+    let near = world
+        .spawn((Transform::from_xyz(8.0, 0.0, 0.0), hurt(1)))
+        .id();
+    let far = world
+        .spawn((Transform::from_xyz(15.0, 0.0, 0.0), hurt(2)))
+        .id();
+    tick(&mut world);
+    let hp = |w: &World, e| w.get::<HeroState>(e).unwrap().hp;
+    let share = max * HEALTHSTONE_SHARE;
+    assert!(close(hp(&world, near), 10.0 + share));
+    assert!(close(hp(&world, far), 10.0), "past 10 yd");
+    let credited = world.get::<HeroState>(taker).unwrap().healing_done;
+    assert!((credited - f64::from(share)).abs() < 1e-3);
+    // Once: the next tick passes nothing on.
+    tick(&mut world);
+    assert!(close(hp(&world, near), 10.0 + share));
+}
+
+#[test]
+fn totem_reach_is_the_best_granted_and_shatter_sees_frost() {
+    let mut hero = HeroState::default();
+    assert_eq!(hero.mechanics.totem_reach(), 1.0);
+    grant(
+        &mut hero,
+        MechanicId::Other("test"),
+        [spec(
+            Trigger::Periodic { every: 60.0 },
+            Effect::TotemReach { mult: 1.5 },
+        )],
+    );
+    assert_eq!(hero.mechanics.totem_reach(), 1.5);
+    let mut world = World::new();
+    let rooted = enemy_at(&mut world, 0.0, |en| en.root_t = 1.0);
+    let thawed = enemy_at(&mut world, 0.0, |en| {
+        en.slow = 0.4;
+        en.slow_t = 0.0;
+    });
+    let en = |e| world.get::<super::super::enemies::Enemy>(e).unwrap();
+    assert!(run::frozen(en(rooted)));
+    assert!(!run::frozen(en(thawed)), "a chill run out freezes nothing");
 }
