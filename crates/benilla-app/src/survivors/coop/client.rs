@@ -99,6 +99,7 @@ pub(super) fn plugin(app: &mut App) {
 
 /// A replicated look can arrive after the body. Replacing only the display keeps the existing
 /// mirrored hero and its interpolation state intact.
+#[allow(clippy::type_complexity)]
 fn redress(
     mut dresser: Dresser,
     mut heroes: Query<

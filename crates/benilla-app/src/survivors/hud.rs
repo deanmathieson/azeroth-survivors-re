@@ -1481,7 +1481,9 @@ pub(super) fn buttons(
                         replay.0 = true;
                         next.set(Phase::Menu);
                     }
-                    (UiAction::MainMenu, Phase::Playing) if coop.is_some_and(|c| c.0) => {
+                    (UiAction::MainMenu, Phase::Playing)
+                        if coop.as_deref().is_some_and(|c| c.0) =>
+                    {
                         let menu = coop_menu.as_deref_mut().expect("co-op menu is initialized");
                         if menu.leaving {
                             next.set(Phase::Menu);

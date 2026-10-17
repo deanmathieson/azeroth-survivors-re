@@ -24,7 +24,9 @@ use benilla_protocol::messages::ObjectFields;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
 use super::super::coop::wire::NetHero;
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
 use super::super::coop::wire::NetLooks;
 use super::super::data::CLASSES;
 use super::super::hero::Hero;
@@ -260,6 +262,7 @@ impl Dresser<'_> {
     }
 
     /// A replicated hero's own dress. It never consults this machine's profile.
+    #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
     pub(in crate::survivors) fn display_remote(
         &mut self,
         class: usize,
@@ -309,6 +312,63 @@ pub(in crate::survivors) fn wear(
     true
 }
 
+/// A co-op hero's replicated pick and looks; nothing without co-op.
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+type RemoteLook = (Option<&'static NetLooks>, Option<&'static NetHero>);
+#[cfg(not(all(feature = "coop", not(target_arch = "wasm32"))))]
+type RemoteLook = ();
+
+/// What a hero that is not the local one wears: a replicated co-op hero its own dress, once its
+/// looks arrive (`None` until then); a party extra the pick's dress, `shared`.
+#[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+fn remote_dress<C: Catalog>(
+    remote: (Option<&NetLooks>, Option<&NetHero>),
+    shared: u32,
+    wardrobe: &mut Wardrobe,
+    catalog: &mut C,
+    cc: Option<&CharCreateCatalog>,
+) -> Option<u32> {
+    let (remote, hero) = match remote {
+        (_, None) => return Some(shared),
+        (None, Some(_)) => return None,
+        (Some(remote), Some(hero)) => (remote, hero),
+    };
+    let trainer = catalog.npc_look(hero.trainer);
+    let mut dress = plan(
+        usize::from(hero.class).min(CLASSES.len() - 1),
+        (hero.trainer, hero.race, hero.sex),
+        &GearSave::EMPTY,
+        trainer.as_ref(),
+        cc,
+        None,
+    );
+    if let Some(features) = remote.features {
+        dress.features =
+            features.clamped(feature_ranges(cc, hero.race, hero.sex).unwrap_or([u8::MAX; 5]));
+    }
+    for (slot, display) in Slot::ALL.into_iter().zip(remote.gear) {
+        if let (Some(column), false) = (column(slot), display == 0) {
+            dress.equipment[column] = display;
+        }
+    }
+    Some(match wardrobe.cached(&dress) {
+        Some(id) => id,
+        None => wardrobe.register(&dress, catalog).unwrap_or(dress.base),
+    })
+}
+
+/// Without co-op every other hero is a party extra, in the pick's dress.
+#[cfg(not(all(feature = "coop", not(target_arch = "wasm32"))))]
+fn remote_dress<C: Catalog>(
+    _: (),
+    shared: u32,
+    _: &mut Wardrobe,
+    _: &mut C,
+    _: Option<&CharCreateCatalog>,
+) -> Option<u32> {
+    Some(shared)
+}
+
 /// Every hero wears the picked class's dress, re-planned only when the pick, the gear or the
 /// looks may have changed, or a hero arrives; a dress it already wears changes nothing. Party
 /// extras share the pick, so they share the dress.
@@ -320,25 +380,23 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
     char_create: Option<Res<CharCreate>>,
     catalog: Option<ResMut<C>>,
     mut wardrobe: ResMut<Wardrobe>,
-    mut heroes: Query<
-        (
-            &mut NetEntity,
-            &mut ObjectStore,
-            Option<&NetLooks>,
-            Option<&NetHero>,
-            Has<LocalHero>,
-        ),
-        With<Hero>,
-    >,
+    mut heroes: Query<(&mut NetEntity, &mut ObjectStore, RemoteLook, Has<LocalHero>), With<Hero>>,
     arrived: Query<(), Added<Hero>>,
-    changed_remote: Query<(), Changed<NetLooks>>,
+    #[cfg(all(feature = "coop", not(target_arch = "wasm32")))] changed_remote: Query<
+        (),
+        Changed<NetLooks>,
+    >,
 ) {
     let Some(mut catalog) = catalog else { return };
+    #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
+    let remote_changed = !changed_remote.is_empty();
+    #[cfg(not(all(feature = "coop", not(target_arch = "wasm32"))))]
+    let remote_changed = false;
     if !selection.is_changed()
         && !gear.is_changed()
         && !profile.as_ref().is_some_and(|p| p.is_changed())
         && arrived.is_empty()
-        && changed_remote.is_empty()
+        && !remote_changed
     {
         return;
     }
@@ -360,34 +418,11 @@ pub(super) fn dress_bodies<C: Catalog + Resource>(
     ) else {
         return;
     };
-    for (mut net, mut store, remote, hero, local) in &mut heroes {
+    for (mut net, mut store, remote, local) in &mut heroes {
         let id = if local {
             id
-        } else if let (Some(remote), Some(hero)) = (remote, hero) {
-            let trainer = catalog.npc_look(hero.trainer);
-            let mut dress = plan(
-                usize::from(hero.class).min(CLASSES.len() - 1),
-                (hero.trainer, hero.race, hero.sex),
-                &GearSave::EMPTY,
-                trainer.as_ref(),
-                cc,
-                None,
-            );
-            if let Some(features) = remote.features {
-                dress.features = features
-                    .clamped(feature_ranges(cc, hero.race, hero.sex).unwrap_or([u8::MAX; 5]));
-            }
-            for (slot, display) in Slot::ALL.into_iter().zip(remote.gear) {
-                if let (Some(column), false) = (column(slot), display == 0) {
-                    dress.equipment[column] = display;
-                }
-            }
-            match wardrobe.cached(&dress) {
-                Some(id) => id,
-                None => wardrobe
-                    .register(&dress, &mut *catalog)
-                    .unwrap_or(dress.base),
-            }
+        } else if let Some(id) = remote_dress(remote, id, &mut wardrobe, &mut *catalog, cc) {
+            id
         } else {
             continue;
         };

@@ -37,7 +37,7 @@ pub(super) struct AppliedMountHat(Option<u32>);
 /// The unadjusted attach transform remembered at the root, so retrying an asynchronously built
 /// hat does not stack its offset or pitch every frame.
 #[derive(Component, Clone, Copy, PartialEq)]
-struct AppliedMountHatFit {
+pub(super) struct AppliedMountHatFit {
     base: Vec3,
     offset: Vec3,
     pitch: f32,

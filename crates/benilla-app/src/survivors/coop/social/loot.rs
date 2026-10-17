@@ -129,9 +129,9 @@ fn can_use_weapon(class: usize, weapon: Weapon) -> bool {
         Weapon::Axe => matches!(class, 0 | 2 | 5),
         Weapon::Dagger => matches!(class, 0 | 2 | 3 | 4 | 5 | 6 | 7),
         Weapon::Mace => matches!(class, 0 | 1 | 3 | 4 | 5 | 8),
-        Weapon::Polearm => matches!(class, 0 | 1 | 2),
+        Weapon::Polearm => matches!(class, 0..=2),
         Weapon::Staff => matches!(class, 2 | 4 | 5 | 6 | 7 | 8),
-        Weapon::Sword => matches!(class, 0 | 1 | 2 | 3),
+        Weapon::Sword => matches!(class, 0..=3),
         Weapon::Wand => matches!(class, 4 | 6 | 7),
     }
 }

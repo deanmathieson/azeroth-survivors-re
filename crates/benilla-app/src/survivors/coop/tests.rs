@@ -905,6 +905,7 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
         race: 1,
         sex: 0,
         trainer: 0,
+        looks: NetLooks::default(),
         bonuses: Bonuses::default(),
         talents: Vec::new(),
         mount_display: 0,

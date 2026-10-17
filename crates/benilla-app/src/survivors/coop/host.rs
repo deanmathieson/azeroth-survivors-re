@@ -251,12 +251,15 @@ pub(super) fn update_cosmetics(
     mut heroes: Query<&mut NetHero>,
 ) {
     for update in cosmetics.read() {
-        let Ok(mut peer) = peers.get_mut(update.client_id) else {
+        let ClientId::Client(client) = update.client_id else {
+            continue;
+        };
+        let Ok(mut peer) = peers.get_mut(client) else {
             continue;
         };
         peer.mount_display = update.message.mount_display;
         peer.mount_hat = update.message.mount_hat;
-        if let Some(hero) = peer.hero.and_then(|hero| heroes.get_mut(hero).ok()) {
+        if let Some(mut hero) = peer.hero.and_then(|hero| heroes.get_mut(hero).ok()) {
             hero.mount_display = update.message.mount_display;
             hero.mount_hat = update.message.mount_hat;
         }

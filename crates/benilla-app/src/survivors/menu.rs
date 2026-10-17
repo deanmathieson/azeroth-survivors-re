@@ -402,7 +402,7 @@ pub(super) fn build_menu(
                                 38.0,
                                 GlueBtnKind::Small,
                                 1.0,
-                            )
+                            );
                         });
                     stack
                         .spawn((
