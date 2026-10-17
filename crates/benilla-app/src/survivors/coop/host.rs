@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
+use super::super::campfire::{self, Camp, CampAsk, CampProp, VendorItem};
 use super::super::data;
 use super::super::enemies::{self, Enemy, Gem};
 use super::super::gear::GearRead;
@@ -75,6 +76,7 @@ pub(super) fn plugin(app: &mut App) {
             apply_moves,
             apply_focus,
             apply_self_res,
+            camp_actions,
             hand_actions,
         )
             .after(ServerSystems::Receive)
@@ -354,6 +356,39 @@ pub(super) fn apply_self_res(
     }
 }
 
+/// Camp requests are only meaningful while the authoritative timer is live, and only on the
+/// requesting client's own hero, so a client cannot spend the common purse for another. Each is
+/// decided as the host's own are ([`campfire::apply`]); the host rolls the dice.
+pub(super) fn camp_actions(
+    mut msgs: MessageReader<FromClient<CampAction>>,
+    mut camp: ResMut<Camp>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    mut heroes: Query<(&Owner, &mut HeroState), With<party::Remote>>,
+) {
+    for msg in msgs.read() {
+        if !camp.active(&run) {
+            continue;
+        }
+        let ask = match msg.message {
+            CampAction::Ready => CampAsk::Ready,
+            CampAction::Fish => CampAsk::Fish,
+            CampAction::Roll => CampAsk::Roll,
+            CampAction::Buy(i) => match VendorItem::from_index(i) {
+                Some(item) => CampAsk::Buy(item),
+                None => continue,
+            },
+        };
+        let Some((_, mut hero)) = heroes
+            .iter_mut()
+            .find(|(owner, _)| owns(**owner, msg.client_id))
+        else {
+            continue;
+        };
+        campfire::apply(&mut camp, &mut run, &mut hero, ask, &mut rng);
+    }
+}
+
 /// What a hero's player's HUD and cards read of it.
 pub(super) fn build_of(hero: &HeroState) -> NetBuild {
     NetBuild {
@@ -627,6 +662,8 @@ pub(super) fn tag(
             With<super::super::units::Look>,
             With<RunEntity>,
             Without<Gem>,
+            // Each machine builds its own camp round the replicated fire.
+            Without<CampProp>,
             Without<Replicated>,
         ),
     >,
@@ -796,7 +833,7 @@ fn sync_enemies(mut q: Query<(&Enemy, &mut NetLife)>) {
     }
 }
 
-pub(super) fn run_of(run: &Run) -> NetRun {
+pub(super) fn run_of(run: &Run, camp: &Camp) -> NetRun {
     NetRun {
         elapsed: run.elapsed,
         kills: run.kills,
@@ -809,12 +846,19 @@ pub(super) fn run_of(run: &Run) -> NetRun {
         won: run.won,
         banner: run.banner.as_ref().map(|b| b.0.clone()),
         slow: run.slow,
+        camp_left: run.breather,
+        camp_ready: camp.ready.clone(),
+        camp_fished: camp.fished.clone(),
+        fishing_dip: camp.fishing_dip,
+        camp_rolls: camp.roll.clone(),
+        camp_roll_winner: camp.roll_winner,
+        camp_fire: camp.fire.map(|f| f.to_array()),
     }
 }
 
-fn sync_run(run: Res<Run>, mut q: Query<&mut NetRun>) {
+fn sync_run(run: Res<Run>, camp: Res<Camp>, mut q: Query<&mut NetRun>) {
     for mut net in &mut q {
-        net.set_if_neq(run_of(&run));
+        net.set_if_neq(run_of(&run, &camp));
     }
 }
 
@@ -922,7 +966,12 @@ fn begin_run(
     mut out: MessageWriter<ToClients<StartRun>>,
 ) {
     session.in_run = true;
-    commands.spawn((Replicated, RunCarrier, run_of(&run), RunEntity));
+    commands.spawn((
+        Replicated,
+        RunCarrier,
+        run_of(&run, &Camp::default()),
+        RunEntity,
+    ));
     out.write(ToClients {
         targets: SendTargets::CLIENTS_ONLY,
         message: start_of(&selection, &opts),

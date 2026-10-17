@@ -7,6 +7,7 @@
 //! - **Spectating** a living ally while downed ([`spectate`]).
 //! - **Side bets** in Darkmoon Prize Tickets, settled from the run ([`bets`]).
 //! - **Faire pulls** told to the lobby ([`chat`]), and the **fashion vote** after a run ([`vote`]).
+//! - **The campfire's roll-off** told in the chat, and everyone named at the camp ([`camp`]).
 //!
 //! Every player's word goes to the host as one [`wire::Say`], and the host tells everyone, itself
 //! included, with [`wire::Heard`]: replicon writes a listen server's own client messages back to
@@ -15,6 +16,7 @@
 //! loot, tickets and the vote's prize are granted by the winner's own machine on the host's word.
 
 mod bets;
+mod camp;
 mod chat;
 mod lobby;
 mod loot;
@@ -58,6 +60,7 @@ pub(super) fn protocol(app: &mut App) {
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, apply_art);
     chat::plugin(app);
+    camp::plugin(app);
     loot::plugin(app);
     ping::plugin(app);
     ready::plugin(app);

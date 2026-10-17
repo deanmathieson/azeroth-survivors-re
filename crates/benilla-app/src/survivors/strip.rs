@@ -4,9 +4,9 @@
 //! compact strip at the bottom of the screen while the hero keeps moving and casting
 //! ([`HandStrip`]). A hero with its strip open is Focused: it takes half damage, under Divine
 //! Protection's glow ([`FOCUS_MARK`]). Should every living player have a strip open at once, the
-//! world runs at [`SLOW_MO`] speed until one closes. A boss's death brings a Breather, eight
-//! seconds with no spawns ([`breather`]). Esc's menu and the Character panel pause nothing either
-//! ([`world_runs`]).
+//! world runs at [`SLOW_MO`] speed until one closes. A boss's death makes camp
+//! ([`super::campfire`]), with no spawns while it lasts and the full-size hand. Esc's menu and the
+//! Character panel pause nothing either ([`world_runs`]).
 //!
 //! A run of one player (with or without the test aid's bots) keeps the paused level-up exactly as
 //! it was.
@@ -14,7 +14,6 @@
 use bevy::prelude::*;
 
 use super::cards::{PendingPick, Rays};
-use super::enemies::Loot;
 use super::hud::{self, HudFont, Offer};
 use super::party::{self, Bot, LocalHero, NetRole};
 use super::{jewelry, HeroState, Phase, Rng, Run};
@@ -31,9 +30,6 @@ pub(super) const FOCUS_TAKEN: f32 = 0.5;
 pub(super) const SLOW_MO: f32 = 0.4;
 /// The banner while the world is slowed.
 const CHOOSING: &str = "Everyone's choosing";
-/// How long a boss's death holds the spawns off, in seconds.
-pub(super) const BREATHER_SECS: f32 = 8.0;
-const BREATHER: &str = "Breather \u{2014} spend your picks";
 /// The strip's scale against the full-screen level-up, and the room under it to the screen's
 /// bottom, in canvas pixels.
 const STRIP_SCALE: f32 = 0.6;
@@ -154,6 +150,7 @@ fn toggle_strip(
     coop: Res<CoopRun>,
     offer: Res<Offer>,
     local: Query<&HeroState, With<LocalHero>>,
+    run: Res<Run>,
     mut strip: ResMut<HandStrip>,
 ) {
     let holds = local
@@ -163,6 +160,11 @@ fn toggle_strip(
         if strip.open {
             strip.open = false;
         }
+        return;
+    }
+    // A camp is deliberately a full, safe level-up hand rather than the combat strip.
+    if run.breather > 0.0 {
+        strip.open = true;
         return;
     }
     if keys.just_pressed(STRIP_KEY) {
@@ -257,26 +259,9 @@ pub(super) fn slow_mo(
     }
 }
 
-/// Whether the horde may grow: not during a Breather.
+/// Whether the horde may grow: not while the party camps.
 pub(super) fn may_spawn(run: &Run) -> bool {
     run.breather <= 0.0
-}
-
-/// In co-op a boss's death brings a Breather: no spawns for [`BREATHER_SECS`], to spend the picks.
-pub(super) fn breather(
-    time: Res<Time>,
-    coop: Res<CoopRun>,
-    mut run: ResMut<Run>,
-    mut loot: MessageReader<Loot>,
-) {
-    let boss = loot.read().filter(|l| l.boss).count() > 0;
-    if run.breather > 0.0 {
-        run.breather = (run.breather - time.delta_secs()).max(0.0);
-    }
-    if boss && coop.0 {
-        run.breather = BREATHER_SECS;
-        run.banner = Some((BREATHER.into(), 4.0));
-    }
 }
 
 fn spawn_badge(mut commands: Commands, font: Option<Res<HudFont>>, badges: Query<(), With<Badge>>) {
@@ -340,6 +325,7 @@ fn refresh_badge(
 fn style_strip(
     phase: Res<State<Phase>>,
     strip: Res<HandStrip>,
+    run: Res<Run>,
     mut roots: Query<
         (&mut Node, &mut BackgroundGradient, &mut UiTransform),
         With<hud::LevelUpRoot>,
@@ -354,7 +340,7 @@ fn style_strip(
     mut subs: Query<&mut Text, With<hud::LevelUpSub>>,
     mut vignette: Local<Option<BackgroundGradient>>,
 ) {
-    let compact = *phase.get() == Phase::Playing && strip.open;
+    let compact = *phase.get() == Phase::Playing && strip.open && run.breather <= 0.0;
     for (mut node, mut bg, mut tf) in &mut roots {
         let (justify, pad, scale, lift) = if compact {
             (
@@ -550,41 +536,6 @@ mod tests {
         let a = w.spawn(hero(0)).id();
         w.get_mut::<HeroState>(a).unwrap().focused = true;
         assert_eq!(speed(&mut w), 1.0);
-    }
-
-    #[test]
-    fn a_boss_down_holds_the_spawns_for_a_breather() {
-        let mut w = world(true);
-        let mut time = Time::<()>::default();
-        time.advance_by(std::time::Duration::from_secs(1));
-        w.insert_resource(time);
-        w.init_resource::<Messages<Loot>>();
-        let boss = &data::roster(0).bosses[0];
-        let loot = |boss_kill: bool| Loot {
-            pos: Vec3::ZERO,
-            xp: 1,
-            boss: boss_kill,
-            elite: false,
-            def: boss,
-        };
-        w.write_message(loot(false));
-        w.run_system_once(breather).unwrap();
-        assert!(may_spawn(w.resource::<Run>()));
-        w.write_message(loot(true));
-        w.run_system_once(breather).unwrap();
-        assert_eq!(w.resource::<Run>().breather, BREATHER_SECS);
-        assert!(!may_spawn(w.resource::<Run>()));
-        // Each one-shot run reads the buffer afresh; the game's reader reads a death once.
-        w.resource_mut::<Messages<Loot>>().clear();
-        for _ in 0..8 {
-            w.run_system_once(breather).unwrap();
-        }
-        assert!(may_spawn(w.resource::<Run>()));
-        // Solo, a boss brings none.
-        w.insert_resource(CoopRun(false));
-        w.write_message(loot(true));
-        w.run_system_once(breather).unwrap();
-        assert!(may_spawn(w.resource::<Run>()));
     }
 
     #[test]

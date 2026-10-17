@@ -828,6 +828,29 @@ pub(crate) fn has(hero: &HeroState, id: MechanicId) -> bool {
     hero.mechanics.has(id)
 }
 
+/// A timed buff from outside the mechanics (a camp elixir, a meal): `bonuses` on `hero` for
+/// `secs`, run and worn off as an [`Effect::Burst`] is. `key` must be unique to the source and
+/// clear of the granted mechanics' own (small) numbers; a second application refreshes it.
+pub(crate) fn timed_buff(hero: &mut HeroState, key: u32, secs: f32, bonuses: &'static [Bonus]) {
+    run::burst(hero, key, secs, bonuses);
+}
+
+/// The seconds left on the buff under `key`, if it runs.
+#[cfg(test)]
+pub(crate) fn buff_left(hero: &HeroState, key: u32) -> Option<f32> {
+    hero.mechanics
+        .bursts
+        .iter()
+        .find(|b| b.uid == key)
+        .map(|b| b.left)
+}
+
+/// `dt` on the hero's running buffs alone, as [`run::tick`] advances them.
+#[cfg(test)]
+pub(crate) fn tick_buffs(hero: &mut HeroState, dt: f32) {
+    run::wear_bursts(hero, dt);
+}
+
 /// Every transformation `hero` has earned and lacks, granted: an ability at its top rank carries
 /// its legendary for the rest of the run, however it got there. Its visual plays on the hero as
 /// the hero next fights. How many were new.

@@ -213,6 +213,79 @@ fn players_are_numbered_and_only_drive_their_own_heroes() {
 }
 
 #[test]
+fn camp_asks_are_host_validated_on_the_askers_own_hero() {
+    use super::super::campfire::Camp;
+    let mut world = World::new();
+    world.init_resource::<Messages<FromClient<CampAction>>>();
+    world.insert_resource(Rng(7));
+    world.insert_resource(Run {
+        breather: 30.0,
+        gold: 60,
+        ..Run::default()
+    });
+    world.init_resource::<Camp>();
+    let a = world.spawn_empty().id();
+    let b = world.spawn_empty().id();
+    let ha = world.spawn((party::Remote, Owner(a), hero_of(1, 0))).id();
+    let hb = world.spawn((party::Remote, Owner(b), hero_of(2, 0))).id();
+    let rerolls = world.get::<HeroState>(ha).unwrap().rerolls;
+    let ask = |world: &mut World, from: Entity, message: CampAction| {
+        world.write_message(FromClient {
+            client_id: ClientId::Client(from),
+            message,
+        });
+    };
+    // A purchase lands on the buyer's own hero, out of the shared purse; an unknown item and one
+    // the purse cannot pay buy nothing.
+    ask(&mut world, a, CampAction::Buy(0));
+    ask(&mut world, b, CampAction::Buy(9));
+    ask(&mut world, b, CampAction::Buy(3));
+    ask(&mut world, b, CampAction::Ready);
+    ask(&mut world, a, CampAction::Roll);
+    // Off the dip, a strike catches nothing.
+    ask(&mut world, a, CampAction::Fish);
+    world.run_system_once(host::camp_actions).unwrap();
+    assert_eq!(world.get::<HeroState>(ha).unwrap().rerolls, rerolls + 1);
+    assert_eq!(world.get::<HeroState>(hb).unwrap().rerolls, rerolls);
+    assert_eq!(world.resource::<Run>().gold, 60 - 25);
+    let camp = world.resource::<Camp>().clone();
+    assert_eq!(camp.ready, vec![2]);
+    assert!(camp.fished.is_empty());
+    assert_eq!(camp.roll.len(), 1);
+    assert_eq!(camp.roll[0].0, 1, "the host rolled for player 1");
+    // Once the camp is over the host hears no more.
+    world.resource_mut::<Run>().breather = 0.0;
+    ask(&mut world, a, CampAction::Buy(1));
+    world.run_system_once(host::camp_actions).unwrap();
+    assert_eq!(world.resource::<Run>().gold, 35);
+}
+
+#[test]
+fn a_client_sees_the_camp_in_its_own_numbering() {
+    use super::client::camp_of;
+    let net = NetRun {
+        camp_left: 20.0,
+        camp_ready: vec![0, 2],
+        camp_fished: vec![2],
+        fishing_dip: 3.0,
+        camp_rolls: vec![(0, 40), (2, 90)],
+        camp_roll_winner: Some(2),
+        camp_fire: Some([1.0, 2.0, 3.0]),
+        ..NetRun::default()
+    };
+    // Player 2's machine: it is 0 here, the host 2.
+    let camp = camp_of(&net, 2);
+    assert_eq!(camp.ready, vec![0, 2]);
+    assert_eq!(camp.fished, vec![LOCAL_PLAYER]);
+    assert_eq!(camp.roll, vec![(0, 90), (2, 40)]);
+    assert_eq!(camp.roll_winner, Some(LOCAL_PLAYER));
+    assert_eq!(camp.fire, Some(Vec3::new(1.0, 2.0, 3.0)));
+    assert_eq!(camp.fishing_dip, 3.0);
+    // The host's own numbering is the session's.
+    assert_eq!(camp_of(&net, 0).roll_winner, Some(2));
+}
+
+#[test]
 fn every_machine_sees_itself_as_player_zero() {
     // Player 2's machine: it is 0 here, the host takes its 2, the others keep theirs.
     assert_eq!(local_player(2, 2), LOCAL_PLAYER);
