@@ -154,6 +154,7 @@ fn toggle_strip(
     coop: Res<CoopRun>,
     offer: Res<Offer>,
     local: Query<&HeroState, With<LocalHero>>,
+    run: Res<Run>,
     mut strip: ResMut<HandStrip>,
 ) {
     let holds = local
@@ -163,6 +164,11 @@ fn toggle_strip(
         if strip.open {
             strip.open = false;
         }
+        return;
+    }
+    // A camp is deliberately a full, safe level-up hand rather than the combat strip.
+    if run.breather > 0.0 {
+        strip.open = true;
         return;
     }
     if keys.just_pressed(STRIP_KEY) {
@@ -340,6 +346,7 @@ fn refresh_badge(
 fn style_strip(
     phase: Res<State<Phase>>,
     strip: Res<HandStrip>,
+    run: Res<Run>,
     mut roots: Query<
         (&mut Node, &mut BackgroundGradient, &mut UiTransform),
         With<hud::LevelUpRoot>,
@@ -354,7 +361,7 @@ fn style_strip(
     mut subs: Query<&mut Text, With<hud::LevelUpSub>>,
     mut vignette: Local<Option<BackgroundGradient>>,
 ) {
-    let compact = *phase.get() == Phase::Playing && strip.open;
+    let compact = *phase.get() == Phase::Playing && strip.open && run.breather <= 0.0;
     for (mut node, mut bg, mut tf) in &mut roots {
         let (justify, pad, scale, lift) = if compact {
             (

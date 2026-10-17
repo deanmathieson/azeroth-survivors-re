@@ -182,7 +182,10 @@ pub(in crate::survivors) struct NetRun {
     /// The authoritative camp timer and ready-check state.
     pub(in crate::survivors) camp_left: f32,
     pub(in crate::survivors) camp_ready: Vec<u8>,
+    pub(in crate::survivors) camp_fished: Vec<u8>,
     pub(in crate::survivors) fishing_dip: f32,
+    pub(in crate::survivors) camp_rolls: Vec<(u8, u8)>,
+    pub(in crate::survivors) camp_roll_winner: Option<u8>,
 }
 
 /// A banished choice, by its key.

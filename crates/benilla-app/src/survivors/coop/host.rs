@@ -374,12 +374,9 @@ pub(super) fn camp_actions(
             }
             match msg.message {
                 CampAction::Ready => camp.ready(hero.player),
-                CampAction::Fish if campfire::fish_caught(camp.fishing_dip) => {
-                    hero.overcharges[2] += 1
-                }
+                CampAction::Fish if camp.fish(hero.player) => hero.overcharges[2] += 1,
                 CampAction::Roll(value) => {
-                    camp.roll.retain(|(player, _)| *player != hero.player);
-                    camp.roll.push((hero.player, value));
+                    camp.roll(hero.player, value);
                 }
                 CampAction::Buy(item) => {
                     let item = match item {
@@ -854,7 +851,10 @@ pub(super) fn run_of(run: &Run, camp: &Camp) -> NetRun {
         slow: run.slow,
         camp_left: run.breather,
         camp_ready: camp.ready.clone(),
+        camp_fished: camp.fished.clone(),
         fishing_dip: camp.fishing_dip,
+        camp_rolls: camp.roll.clone(),
+        camp_roll_winner: camp.roll_winner,
     }
 }
 
