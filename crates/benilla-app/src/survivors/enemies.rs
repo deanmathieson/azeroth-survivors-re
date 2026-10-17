@@ -329,9 +329,9 @@ pub(super) fn spawn_enemies(
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
 
-    let due_bosses = ((elapsed / data::BOSS_EVERY_SECS) as u32).min(roster.bosses.len() as u32);
-    while run.bosses < due_bosses {
-        let def = &roster.bosses[run.bosses as usize];
+    // On a raid stage the last boss walks out after the trash ([`data::next_boss`]).
+    while let Some(next) = data::next_boss(map, elapsed, run.bosses, roster.bosses.len()) {
+        let def = &roster.bosses[next];
         let Some(hpos) = party::spawn_anchor(&standing, &mut spawner.turn) else {
             break;
         };
@@ -348,7 +348,7 @@ pub(super) fn spawn_enemies(
             &opts,
             &mut spawner.xp_carry,
         );
-        run.bosses += 1;
+        run.bosses = next as u32 + 1;
         run.banner = Some((format!("{} approaches!", def.name), 4.0));
     }
 

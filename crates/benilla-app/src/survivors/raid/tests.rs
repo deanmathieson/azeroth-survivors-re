@@ -1005,3 +1005,154 @@ fn the_raid_systems_initialise_without_conflicting_access() {
     let mut attach = IntoSystem::into_system(attach_scripts);
     attach.initialize(&mut world);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Raid stages: the last boss after the trash, and its death wins the run
+// ---------------------------------------------------------------------------------------------
+
+fn stage_of(name: &str) -> usize {
+    data::MAPS.iter().position(|m| m.name == name).unwrap()
+}
+
+/// The roster places a stage sends out over its first `secs`, and when.
+fn walk_outs(stage: usize, secs: f32) -> Vec<(usize, f32)> {
+    let map = &data::MAPS[stage];
+    let count = data::roster(stage).bosses.len();
+    let mut out = 0u32;
+    let mut seen = Vec::new();
+    let mut t = 0.0;
+    while t <= secs {
+        while let Some(i) = data::next_boss(map, t, out, count) {
+            seen.push((i, t));
+            out = i as u32 + 1;
+        }
+        t += 0.25;
+    }
+    seen
+}
+
+#[test]
+fn only_the_three_molten_core_raid_stages_are_raids() {
+    let raids: Vec<&str> = data::MAPS
+        .iter()
+        .filter(|m| m.raid)
+        .map(|m| m.name)
+        .collect();
+    assert_eq!(
+        raids,
+        [
+            "Molten Core: Lucifron's Cavern",
+            "Molten Core: Magmadar's Lair",
+            "Molten Core: Ragnaros' Lair"
+        ]
+    );
+}
+
+#[test]
+fn a_raid_stages_last_boss_walks_out_at_six_minutes() {
+    let stage = stage_of("Molten Core: Lucifron's Cavern");
+    let last = data::roster(stage).bosses.len() - 1;
+    let outs = walk_outs(stage, 900.0);
+    // Two of the trash bosses on the clock, then Lucifron at 6:00, then nothing more.
+    assert_eq!(outs, [(0, 135.0), (1, 270.0), (last, 360.0)]);
+    assert_eq!(data::roster(stage).bosses[last].name, "Lucifron");
+}
+
+#[test]
+fn a_normal_stage_keeps_its_boss_every_two_and_a_quarter_minutes_and_its_bell() {
+    for stage in (0..data::MAPS.len()).filter(|&s| !data::MAPS[s].raid) {
+        let count = data::roster(stage).bosses.len();
+        let outs = walk_outs(stage, 900.0);
+        let want: Vec<(usize, f32)> = (0..count.min(6))
+            .map(|i| (i, (i as f32 + 1.0) * data::BOSS_EVERY_SECS))
+            .collect();
+        assert_eq!(outs, want, "{}", data::MAPS[stage].name);
+        let map = &data::MAPS[stage];
+        assert!(!data::won(map, data::VICTORY_SECS - 0.5, true));
+        assert!(data::won(map, data::VICTORY_SECS, false));
+    }
+    const { assert!(data::RAID_BOSS_SECS < data::VICTORY_SECS) };
+}
+
+/// A world [`hero::hero_vitals`] and the final-boss watch run in: one standing hero on `stage`.
+fn vitals_world(stage: usize, now: f32) -> (World, Entity) {
+    let mut world = raid_world(0.1, now, 1);
+    world.insert_resource(super::super::Selection {
+        map: stage,
+        stage,
+        ..Default::default()
+    });
+    world.init_resource::<super::super::campfire::Camp>();
+    world.init_resource::<NextState<super::super::Phase>>();
+    world.init_resource::<Messages<crate::net::FieldChanged>>();
+    world.init_resource::<Messages<enemies::Loot>>();
+    let hero = world
+        .spawn((
+            Transform::default(),
+            Hero::default(),
+            hero_of(8),
+            crate::net::Guid(7),
+            crate::net::ObjectStore::default(),
+            Marks::buffs(),
+        ))
+        .id();
+    (world, hero)
+}
+
+fn game_over(world: &World) -> bool {
+    matches!(
+        world.resource::<NextState<super::super::Phase>>(),
+        NextState::Pending(super::super::Phase::GameOver)
+    )
+}
+
+#[test]
+fn a_raid_stage_is_not_won_at_fifteen_minutes_while_its_boss_lives() {
+    let stage = stage_of("Molten Core: Magmadar's Lair");
+    let (mut world, _) = vitals_world(stage, 1200.0);
+    world.run_system_once(hero::hero_vitals).unwrap();
+    assert!(!world.resource::<Run>().won && !game_over(&world));
+
+    // Elsewhere the bell still rings at 15:00.
+    let (mut barrens, _) = vitals_world(0, data::VICTORY_SECS);
+    barrens.run_system_once(hero::hero_vitals).unwrap();
+    assert!(barrens.resource::<Run>().won && game_over(&barrens));
+}
+
+#[test]
+fn killing_a_raid_stages_last_boss_wins_the_run() {
+    let stage = stage_of("Molten Core: Lucifron's Cavern");
+    let roster = data::roster(stage);
+    let (mut world, _) = vitals_world(stage, 400.0);
+    // A trash boss falling wins nothing.
+    world.write_message(enemies::Loot {
+        pos: Vec3::ZERO,
+        xp: 10,
+        boss: true,
+        elite: false,
+        def: &roster.bosses[0],
+    });
+    world.run_system_once(note_final_boss).unwrap();
+    world.run_system_once(hero::hero_vitals).unwrap();
+    assert!(!world.resource::<Run>().won && !game_over(&world));
+    world.write_message(enemies::Loot {
+        pos: Vec3::ZERO,
+        xp: 200,
+        boss: true,
+        elite: false,
+        def: roster.bosses.last().unwrap(),
+    });
+    world.run_system_once(note_final_boss).unwrap();
+    world.run_system_once(hero::hero_vitals).unwrap();
+    assert!(world.resource::<Run>().won, "Lucifron's death wins the run");
+    assert!(game_over(&world));
+}
+
+#[test]
+fn a_wiped_raid_is_lost_as_anywhere() {
+    let stage = stage_of("Molten Core: Lucifron's Cavern");
+    let (mut world, hero) = vitals_world(stage, 400.0);
+    world.get_mut::<HeroState>(hero).unwrap().dead_t = Some(10.0);
+    world.run_system_once(hero::hero_vitals).unwrap();
+    assert!(!world.resource::<Run>().won);
+}

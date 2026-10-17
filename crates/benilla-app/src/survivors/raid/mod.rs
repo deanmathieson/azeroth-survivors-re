@@ -91,6 +91,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
+                note_final_boss,
                 attach_scripts,
                 run_bosses,
                 land_telegraphs,
@@ -1077,6 +1078,24 @@ fn play_yells(
 // ---------------------------------------------------------------------------------------------
 // The host's systems
 // ---------------------------------------------------------------------------------------------
+
+/// The stage's last roster boss falling is noted on the run: on a raid stage that wins it
+/// ([`super::data::won`], read by [`hero::hero_vitals`]).
+fn note_final_boss(
+    mut kills: MessageReader<enemies::Loot>,
+    mut run: ResMut<Run>,
+    selection: Res<Selection>,
+) {
+    let last = super::data::roster(selection.stage)
+        .bosses
+        .last()
+        .map(|b| b.name);
+    for kill in kills.read() {
+        if kill.boss && Some(kill.def.name) == last {
+            run.final_boss = true;
+        }
+    }
+}
 
 /// A boss or add whose name has a script gets its brain.
 fn attach_scripts(mut commands: Commands, fresh: Query<(Entity, &Enemy), Without<RaidBoss>>) {

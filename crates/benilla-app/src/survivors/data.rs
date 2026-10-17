@@ -2775,6 +2775,38 @@ pub(crate) static BOSSES: &[EnemyDef] = &[
 pub(crate) const VICTORY_SECS: f32 = 900.0;
 /// A boss every two and a quarter minutes, the last of six at 13:30, a fight before the bell.
 pub(crate) const BOSS_EVERY_SECS: f32 = 135.0;
+/// On a raid stage, the last roster boss walks out this long in, after the trash.
+pub(crate) const RAID_BOSS_SECS: f32 = 360.0;
+
+/// The roster boss `map` sends out next at `elapsed`, given `out` roster places already used
+/// (spawned or passed over), on a roster `count` long. One every [`BOSS_EVERY_SECS`], in order; on
+/// a raid stage the bosses before the last keep that beat only until [`RAID_BOSS_SECS`], when the
+/// last walks out and any not yet out are passed over.
+pub(crate) fn next_boss(map: &MapDef, elapsed: f32, out: u32, count: usize) -> Option<usize> {
+    let out = out as usize;
+    let on_clock = (elapsed / BOSS_EVERY_SECS) as usize;
+    if !map.raid {
+        return (out < on_clock.min(count)).then_some(out);
+    }
+    let last = count.checked_sub(1)?;
+    if elapsed >= RAID_BOSS_SECS {
+        return (out <= last).then_some(last);
+    }
+    (out < on_clock.min(last)).then_some(out)
+}
+
+/// Whether the run is won: on a raid stage once its last boss has fallen ([`Run::final_boss`]),
+/// elsewhere once the clock reaches [`VICTORY_SECS`].
+///
+/// [`Run::final_boss`]: super::Run::final_boss
+pub(crate) fn won(map: &MapDef, elapsed: f32, final_boss_down: bool) -> bool {
+    if map.raid {
+        final_boss_down
+    } else {
+        elapsed >= VICTORY_SECS
+    }
+}
+
 /// Experience per gem: every level of the curve comes at the run's pace.
 pub(crate) const XP_RATE: f32 = 2.0;
 
@@ -2944,6 +2976,9 @@ pub(crate) struct MapDef {
     foes: &'static [Foe],
     /// One every [`BOSS_EVERY_SECS`], in order; empty for The Barrens' [`BOSSES`].
     bosses: &'static [Foe],
+    /// A raid stage: its last boss walks out at [`RAID_BOSS_SECS`] and killing it wins the run;
+    /// the [`VICTORY_SECS`] clock wins nothing ([`next_boss`], [`won`]).
+    pub raid: bool,
 }
 
 impl MapDef {
@@ -3011,6 +3046,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The Barrens are yours.",
         foes: &[],
         bosses: &[],
+        raid: false,
     },
     MapDef {
         name: "The Dark Portal",
@@ -3044,6 +3080,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Lord Banehollow", 8611, 62, 4.8, 1.95),
             giant("Lord Kazzak", 12449, 63, 4.6, 0.75),
         ],
+        raid: false,
     },
     MapDef {
         name: "Gates of Ahn'Qiraj",
@@ -3082,6 +3119,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             giant("Princess Huhuran", 15739, 63, 5.0, 0.55),
             foe("Ossirian the Unscarred", 15432, 63, 4.6, 0.82),
         ],
+        raid: false,
     },
     MapDef {
         name: "Fire Plume Ridge",
@@ -3123,6 +3161,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             giant("Tyrant Devilsaur", 5240, 60, 5.0, 1.0),
             giant("King Mosh", 5305, 61, 5.0, 1.2),
         ],
+        raid: false,
     },
     MapDef {
         name: "Gurubashi Arena",
@@ -3163,6 +3202,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Jin'do the Hexxer", 11311, 63, 4.6, 2.5),
             giant("Hakkar", 15295, 63, 4.4, 2.7),
         ],
+        raid: false,
     },
     MapDef {
         name: "Elwynn Forest",
@@ -3199,6 +3239,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Fedfennel", 175, 12, 4.2, 1.9),
             foe("Gruff Swiftbite", 175, 12, 4.2, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Durotar",
@@ -3235,6 +3276,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Death Flayer", 2491, 11, 4.6, 2.85),
             foe("Burning Blade Cultist", 4194, 11, 3.8, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Teldrassil",
@@ -3271,6 +3313,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Oakenscowl", 2567, 9, 4.2, 2.18),
             foe("Gnarlpine Augur", 3024, 9, 3.8, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Dun Morogh",
@@ -3304,6 +3347,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Vagash", 1050, 11, 4.2, 1.9),
             giant("Bjarn", 913, 12, 4.6, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Mulgore",
@@ -3339,6 +3383,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Elder Plainstrider", 1221, 9, 5.4, 1.9),
             foe("Ghost Howl", 720, 12, 5.4, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Tirisfal Glades",
@@ -3374,6 +3419,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Fellicent's Shade", 5430, 12, 4.2, 1.9),
             foe("Gorefang", 11413, 13, 5.4, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Westfall",
@@ -3410,6 +3456,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Lupos", 11412, 23, 5.4, 1.9),
             foe("Vultros", 507, 26, 5.2, 1.52),
         ],
+        raid: false,
     },
     MapDef {
         name: "Duskwood",
@@ -3446,6 +3493,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Fenros", 11179, 32, 5.4, 1.9),
             foe("Nefaru", 11181, 34, 5.4, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Redridge Mountains",
@@ -3482,6 +3530,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Rohh the Silent", 10792, 26, 4.2, 1.9),
             foe("Kazon", 6041, 27, 4.2, 1.9),
         ],
+        raid: false,
     },
     MapDef {
         name: "Mount Hyjal",
@@ -3519,6 +3568,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             giant("Emeriss", 15366, 63, 4.8, 0.53),
             giant("Ysondre", 15364, 63, 4.8, 0.58),
         ],
+        raid: false,
     },
     MapDef {
         name: "Naxxramas",
@@ -3558,6 +3608,7 @@ pub(crate) static MAPS: &[MapDef] = &[
             giant("Thaddius", 16137, 63, 4.0, 0.98),
             foe("Kel'Thuzad", 15945, 63, 4.4, 2.1),
         ],
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Raid Start",
@@ -3569,6 +3620,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The Core's entrance is secure.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Lucifron's Cavern",
@@ -3580,6 +3632,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "Lucifron's cavern falls silent.",
         foes: MC_FOES,
         bosses: MC_LUCIFRON_BOSSES,
+        raid: true,
     },
     MapDef {
         name: "Molten Core: Magmadar's Lair",
@@ -3591,6 +3644,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "Magmadar's lair is clear.",
         foes: MC_FOES,
         bosses: MC_MAGMADAR_BOSSES,
+        raid: true,
     },
     MapDef {
         name: "Molten Core: South-centre Cavern",
@@ -3602,6 +3656,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The south cavern cools.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: West Cavern",
@@ -3613,6 +3668,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The west cavern is clear.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: North-west Cavern",
@@ -3624,6 +3680,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The north-west cavern is clear.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Centre Cavern",
@@ -3635,6 +3692,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The centre cavern is clear.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Majordomo's Camp",
@@ -3646,6 +3704,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "Majordomo's camp is broken.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Ragnaros's Dry Ledge",
@@ -3657,6 +3716,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "The dry ledge holds.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: false,
     },
     MapDef {
         name: "Molten Core: Ragnaros' Lair",
@@ -3668,6 +3728,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         victory: "Ragnaros is driven back into the lava.",
         foes: MC_FOES,
         bosses: MC_BOSSES,
+        raid: true,
     },
 ];
 

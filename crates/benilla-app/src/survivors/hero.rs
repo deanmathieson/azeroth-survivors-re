@@ -758,6 +758,7 @@ const REVIVE_KNOCKBACK: f32 = 8.0;
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(super) fn hero_vitals(
     time: Res<Time>,
+    selection: Res<Selection>,
     mut run: ResMut<Run>,
     camp: Res<super::campfire::Camp>,
     mut next: ResMut<NextState<Phase>>,
@@ -891,7 +892,8 @@ pub(super) fn hero_vitals(
             standing.push(entity);
         }
     }
-    if !eventful && run.elapsed >= data::VICTORY_SECS {
+    // The clock wins a zone; a raid stage is won by its last boss's death.
+    if !eventful && data::won(selection.stage_def(), run.elapsed, run.final_boss) {
         run.won = true;
         // A last flourish before the results.
         for entity in standing {
@@ -937,6 +939,7 @@ mod tests {
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
         world.init_resource::<Run>();
+        world.init_resource::<Selection>();
         world.init_resource::<super::super::campfire::Camp>();
         world.init_resource::<NextState<Phase>>();
         world.init_resource::<crate::creature_anim::PlaySeq>();
