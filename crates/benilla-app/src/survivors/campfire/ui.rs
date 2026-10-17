@@ -113,6 +113,18 @@ fn art(path: &'static str, coords: [f32; 4], size: f32) -> impl Bundle {
     )
 }
 
+/// [`art`] laid out by `node` instead of a plain square.
+fn art_in(path: &'static str, coords: [f32; 4], node: Node) -> impl Bundle {
+    (
+        node,
+        ImageNode {
+            color: Color::NONE,
+            ..default()
+        },
+        UiArt::crop(path, coords),
+    )
+}
+
 /// The ready check's line for `left` seconds of camp.
 pub(super) fn ready_title(left: f32) -> String {
     format!("Ready to move on? ({}s)", left.ceil().max(0.0) as u32)
@@ -212,8 +224,9 @@ fn build(
                     })
                     .with_children(|slot| {
                         slot.spawn(art(item.icon(), [0.0, 1.0, 0.0, 1.0], 34.0));
-                        slot.spawn((
-                            art(SLOT_FRAME, [0.0, 1.0, 0.0, 1.0], 64.0),
+                        slot.spawn(art_in(
+                            SLOT_FRAME,
+                            [0.0, 1.0, 0.0, 1.0],
                             Node {
                                 position_type: PositionType::Absolute,
                                 left: px(-12.0),
@@ -290,8 +303,9 @@ fn build(
                     },
                     UiArt::crop(READY_FRAME, READY_FRAME_TC),
                 ));
-                p.spawn((
-                    art(FIRE_ICON, [0.07, 0.93, 0.07, 0.93], 50.0),
+                p.spawn(art_in(
+                    FIRE_ICON,
+                    [0.07, 0.93, 0.07, 0.93],
                     Node {
                         position_type: PositionType::Absolute,
                         left: px(10.0),
