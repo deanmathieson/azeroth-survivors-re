@@ -179,6 +179,10 @@ pub(in crate::survivors) struct NetRun {
     pub(in crate::survivors) banner: Option<String>,
     /// Every living player is choosing: the world runs slowed.
     pub(in crate::survivors) slow: bool,
+    /// The authoritative camp timer and ready-check state.
+    pub(in crate::survivors) camp_left: f32,
+    pub(in crate::survivors) camp_ready: Vec<u8>,
+    pub(in crate::survivors) fishing_dip: f32,
 }
 
 /// A banished choice, by its key.
@@ -337,6 +341,15 @@ pub(in crate::survivors) struct HandAction(pub(in crate::survivors) WireDecision
 /// an ankh gets it up on the host, as the local player's key does there.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct SelfRes;
+
+/// A camp interaction requested by one client. The host checks the camp, owner, timing and purse.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) enum CampAction {
+    Ready,
+    Fish,
+    Roll(u8),
+    Buy(u8),
+}
 
 // ---------------------------------------------------------------------------------------------
 // Host → client

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon::server::server_tick::ServerTick;
 
+use super::super::campfire::{self, Camp, VendorItem};
 use super::super::data;
 use super::super::enemies::{self, Enemy, Gem};
 use super::super::gear::GearRead;
@@ -75,6 +76,7 @@ pub(super) fn plugin(app: &mut App) {
             apply_moves,
             apply_focus,
             apply_self_res,
+            camp_actions,
             hand_actions,
         )
             .after(ServerSystems::Receive)
@@ -349,6 +351,47 @@ pub(super) fn apply_self_res(
         for (owner, mut hero) in &mut heroes {
             if owns(*owner, m.client_id) && !hero.alive() {
                 hero.synergy.res.asked = true;
+            }
+        }
+    }
+}
+
+/// Camp requests are only meaningful while the authoritative timer is live, and only on the
+/// requesting client's own hero. Thus a client cannot spend the common purse for another.
+pub(super) fn camp_actions(
+    mut msgs: MessageReader<FromClient<CampAction>>,
+    mut camp: ResMut<Camp>,
+    mut run: ResMut<Run>,
+    mut heroes: Query<(&Owner, &mut HeroState), With<party::Remote>>,
+) {
+    if !camp.active(&run) {
+        return;
+    }
+    for msg in msgs.read() {
+        for (owner, mut hero) in &mut heroes {
+            if !owns(*owner, msg.client_id) {
+                continue;
+            }
+            match msg.message {
+                CampAction::Ready => camp.ready(hero.player),
+                CampAction::Fish if campfire::fish_caught(camp.fishing_dip) => {
+                    hero.overcharges[2] += 1
+                }
+                CampAction::Roll(value) => {
+                    camp.roll.retain(|(player, _)| *player != hero.player);
+                    camp.roll.push((hero.player, value));
+                }
+                CampAction::Buy(item) => {
+                    let item = match item {
+                        0 => VendorItem::Reroll,
+                        1 => VendorItem::Healthstone,
+                        2 => VendorItem::ElixirOfTheMongoose,
+                        3 => VendorItem::ElixirOfFortitude,
+                        _ => continue,
+                    };
+                    campfire::buy(&mut run, &mut hero, item);
+                }
+                _ => {}
             }
         }
     }
@@ -796,7 +839,7 @@ fn sync_enemies(mut q: Query<(&Enemy, &mut NetLife)>) {
     }
 }
 
-pub(super) fn run_of(run: &Run) -> NetRun {
+pub(super) fn run_of(run: &Run, camp: &Camp) -> NetRun {
     NetRun {
         elapsed: run.elapsed,
         kills: run.kills,
@@ -809,12 +852,15 @@ pub(super) fn run_of(run: &Run) -> NetRun {
         won: run.won,
         banner: run.banner.as_ref().map(|b| b.0.clone()),
         slow: run.slow,
+        camp_left: run.breather,
+        camp_ready: camp.ready.clone(),
+        fishing_dip: camp.fishing_dip,
     }
 }
 
-fn sync_run(run: Res<Run>, mut q: Query<&mut NetRun>) {
+fn sync_run(run: Res<Run>, camp: Res<Camp>, mut q: Query<&mut NetRun>) {
     for mut net in &mut q {
-        net.set_if_neq(run_of(&run));
+        net.set_if_neq(run_of(&run, &camp));
     }
 }
 
@@ -922,7 +968,12 @@ fn begin_run(
     mut out: MessageWriter<ToClients<StartRun>>,
 ) {
     session.in_run = true;
-    commands.spawn((Replicated, RunCarrier, run_of(&run), RunEntity));
+    commands.spawn((
+        Replicated,
+        RunCarrier,
+        run_of(&run, &Camp::default()),
+        RunEntity,
+    ));
     out.write(ToClients {
         targets: SendTargets::CLIENTS_ONLY,
         message: start_of(&selection, &opts),

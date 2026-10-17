@@ -444,6 +444,7 @@ fn chase_target(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn move_enemies(
     time: Res<Time>,
+    camp: Res<super::campfire::Camp>,
     mut run: ResMut<Run>,
     selection: Res<Selection>,
     collide: Option<WorldCollision>,
@@ -455,6 +456,13 @@ pub(super) fn move_enemies(
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
+        return;
+    }
+    if camp.active(&run) {
+        for (_, _, _, mut mv) in &mut enemies {
+            mv.speed = 0.0;
+            mv.flags = 0;
+        }
         return;
     }
     let seen: Vec<Seen> = heroes

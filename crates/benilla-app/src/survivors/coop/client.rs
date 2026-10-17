@@ -91,6 +91,7 @@ pub(super) fn plugin(app: &mut App) {
                 send_hand,
                 send_focus,
                 send_self_res,
+                send_camp,
             )
                 .before(ClientSystems::Send)
                 .run_if(joined),
@@ -642,6 +643,7 @@ fn copy_run(q: Query<&NetRun, Changed<NetRun>>, mut run: ResMut<Run>) {
     run.caches = net.caches;
     run.bosses = net.bosses;
     run.won = net.won;
+    run.breather = net.camp_left;
     if let Some(text) = &net.banner {
         if run.banner.as_ref().is_none_or(|b| b.0 != *text) {
             run.banner = Some((text.clone(), 3.0));
@@ -897,6 +899,17 @@ fn send_self_res(
 fn send_hand(mut outbox: ResMut<HandOutbox>, mut out: MessageWriter<HandAction>) {
     for d in outbox.0.drain(..) {
         out.write(HandAction(WireDecision::of(d)));
+    }
+}
+
+/// Enter is the ready-check key on a remote client; the host owns the actual camp transition.
+fn send_camp(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    run: Res<Run>,
+    mut out: MessageWriter<CampAction>,
+) {
+    if run.breather > 0.0 && keys.is_some_and(|k| k.just_pressed(KeyCode::Enter)) {
+        out.write(CampAction::Ready);
     }
 }
 

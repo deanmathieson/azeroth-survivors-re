@@ -12,6 +12,7 @@ mod auto;
 mod body;
 mod bonus;
 mod bossbar;
+mod campfire;
 mod cards;
 mod charpanel;
 #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
@@ -99,6 +100,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(synergy::plugin)
             .add_plugins(sfx::plugin)
             .add_plugins(bossbar::plugin)
+            .add_plugins(campfire::plugin)
             .add_plugins(strip::plugin)
             .add_plugins(partyui::plugin)
             .init_state::<Phase>()
@@ -167,7 +169,7 @@ impl Plugin for SurvivorsPlugin {
                     abilities::apply_hits,
                     enemies::tick_marks,
                     enemies::drop_loot,
-                    strip::breather,
+                    campfire::tick,
                     treasure::drop_boss_chests,
                     enemies::collect_gems,
                     hero::hero_vitals,

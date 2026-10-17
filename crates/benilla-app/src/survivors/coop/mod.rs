@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 7;
+pub(super) const PROTOCOL: u32 = 8;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -176,6 +176,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_client_message::<HandAction>(Channel::Ordered)
         .add_client_message::<FocusInput>(Channel::Ordered)
         .add_client_message::<SelfRes>(Channel::Ordered)
+        .add_client_message::<CampAction>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()
