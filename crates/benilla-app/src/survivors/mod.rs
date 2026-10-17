@@ -564,7 +564,7 @@ pub(super) struct Run {
     /// Heroes in the run, bots counted: the horde's health and numbers scale with it
     /// ([`party::scale`]).
     pub party: u8,
-    /// Seconds of the Breather left: no spawns after a boss falls in co-op ([`strip::breather`]).
+    /// Seconds of the camp left after a boss falls: no spawns while it lasts ([`campfire`]).
     pub breather: f32,
     /// Every living player is choosing a co-op hand: the world runs slowed ([`strip::slow_mo`]).
     pub slow: bool,

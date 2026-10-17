@@ -186,6 +186,8 @@ pub(in crate::survivors) struct NetRun {
     pub(in crate::survivors) fishing_dip: f32,
     pub(in crate::survivors) camp_rolls: Vec<(u8, u8)>,
     pub(in crate::survivors) camp_roll_winner: Option<u8>,
+    /// Where the camp's fire burns: every machine builds the camp's props round it.
+    pub(in crate::survivors) camp_fire: Option<[f32; 3]>,
 }
 
 /// A banished choice, by its key.
@@ -345,12 +347,14 @@ pub(in crate::survivors) struct HandAction(pub(in crate::survivors) WireDecision
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct SelfRes;
 
-/// A camp interaction requested by one client. The host checks the camp, owner, timing and purse.
+/// A camp interaction requested by one client. The host checks the camp, owner, timing and purse,
+/// and rolls the dice itself.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) enum CampAction {
     Ready,
     Fish,
-    Roll(u8),
+    Roll,
+    /// A [`VendorItem`](super::super::campfire::VendorItem), by its place.
     Buy(u8),
 }
 
@@ -663,6 +667,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(round(&run), run);
+        // A camp's state rides the same record.
+        let camp = NetRun {
+            camp_left: 41.5,
+            camp_ready: vec![0, 2],
+            camp_fished: vec![1],
+            fishing_dip: 2.9,
+            camp_rolls: vec![(0, 73), (2, 12)],
+            camp_roll_winner: Some(0),
+            camp_fire: Some([10.0, 2.5, -7.0]),
+            ..run
+        };
+        assert_eq!(round(&camp), camp);
+        for action in [
+            CampAction::Ready,
+            CampAction::Fish,
+            CampAction::Roll,
+            CampAction::Buy(3),
+        ] {
+            assert_eq!(round(&action), action);
+        }
         // The party UI's parts: lean, as they go to every client a few times a second.
         let auras = NetAuras(vec![1243, 1459, 19752]);
         assert_eq!(round(&auras), auras);

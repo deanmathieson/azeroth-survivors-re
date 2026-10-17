@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, ClientSystems};
 
-use super::super::campfire::Camp;
+use super::super::campfire::{Camp, CampAsk, CampRequest};
 use super::super::data;
 use super::super::enemies::{self, Enemy};
 use super::super::gear::{wear, Dresser, GearRead, HeroNames, Slot};
@@ -633,7 +633,12 @@ fn enemy_life(
 }
 
 /// The shared run: the clock, the bar and level, gold, and the announcement.
-fn copy_run(q: Query<&NetRun, Changed<NetRun>>, mut run: ResMut<Run>, mut camp: ResMut<Camp>) {
+fn copy_run(
+    q: Query<&NetRun, Changed<NetRun>>,
+    session: Res<Session>,
+    mut run: ResMut<Run>,
+    mut camp: ResMut<Camp>,
+) {
     let Some(net) = q.iter().last() else { return };
     run.elapsed = net.elapsed;
     run.kills = net.kills;
@@ -645,11 +650,7 @@ fn copy_run(q: Query<&NetRun, Changed<NetRun>>, mut run: ResMut<Run>, mut camp: 
     run.bosses = net.bosses;
     run.won = net.won;
     run.breather = net.camp_left;
-    camp.ready.clone_from(&net.camp_ready);
-    camp.fished.clone_from(&net.camp_fished);
-    camp.fishing_dip = net.fishing_dip;
-    camp.roll.clone_from(&net.camp_rolls);
-    camp.roll_winner = net.camp_roll_winner;
+    *camp = camp_of(net, session.me);
     if let Some(text) = &net.banner {
         if run.banner.as_ref().is_none_or(|b| b.0 != *text) {
             run.banner = Some((text.clone(), 3.0));
@@ -908,34 +909,38 @@ fn send_hand(mut outbox: ResMut<HandOutbox>, mut out: MessageWriter<HandAction>)
     }
 }
 
-/// Camp keys are requests only; the host owns timing, catches, rolls and the shared purse.
-fn send_camp(
-    keys: Option<Res<ButtonInput<KeyCode>>>,
-    run: Res<Run>,
-    mut out: MessageWriter<CampAction>,
-) {
-    if run.breather <= 0.0 {
-        return;
+/// This player's camp asks go to the host, which owns timing, catches, rolls and the purse.
+fn send_camp(mut asks: MessageReader<CampRequest>, mut out: MessageWriter<CampAction>) {
+    for ask in asks.read() {
+        out.write(match ask.0 {
+            CampAsk::Ready => CampAction::Ready,
+            CampAsk::Fish => CampAction::Fish,
+            CampAsk::Roll => CampAction::Roll,
+            CampAsk::Buy(item) => CampAction::Buy(item.index()),
+        });
     }
-    let Some(keys) = keys else { return };
-    if keys.just_pressed(KeyCode::Enter) {
-        out.write(CampAction::Ready);
-    }
-    if keys.just_pressed(KeyCode::KeyF) {
-        out.write(CampAction::Fish);
-    }
-    if keys.just_pressed(KeyCode::KeyR) {
-        out.write(CampAction::Roll(50));
-    }
-    for (key, item) in [
-        (KeyCode::Numpad1, 0),
-        (KeyCode::Numpad2, 1),
-        (KeyCode::Numpad3, 2),
-        (KeyCode::Numpad4, 3),
-    ] {
-        if keys.just_pressed(key) {
-            out.write(CampAction::Buy(item));
-        }
+}
+
+/// The host's camp in this machine's numbering, where this player is [`party::LOCAL_PLAYER`].
+pub(super) fn camp_of(net: &NetRun, me: u8) -> Camp {
+    let ids = |v: &[u8]| -> Vec<u8> {
+        let mut out: Vec<u8> = v.iter().map(|&p| local_player(p, me)).collect();
+        out.sort_unstable();
+        out
+    };
+    let mut roll: Vec<(u8, u8)> = net
+        .camp_rolls
+        .iter()
+        .map(|&(p, v)| (local_player(p, me), v))
+        .collect();
+    roll.sort_unstable();
+    Camp {
+        ready: ids(&net.camp_ready),
+        fished: ids(&net.camp_fished),
+        fishing_dip: net.fishing_dip,
+        roll,
+        roll_winner: net.camp_roll_winner.map(|p| local_player(p, me)),
+        fire: net.camp_fire.map(Vec3::from_array),
     }
 }
 

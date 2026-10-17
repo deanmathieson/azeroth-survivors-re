@@ -305,7 +305,7 @@ pub(super) fn spawn_enemies(
     world: WorldPoint,
 ) {
     let (standing, everyone) = hero_spots(&heroes);
-    // A co-op Breather after a boss: the horde waits ([`super::strip::breather`]).
+    // A camp after a boss: the horde waits ([`super::campfire`]).
     if standing.is_empty() || !super::strip::may_spawn(&run) {
         return;
     }

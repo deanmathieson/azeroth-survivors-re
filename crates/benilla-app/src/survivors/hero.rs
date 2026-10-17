@@ -672,6 +672,7 @@ const REVIVE_KNOCKBACK: f32 = 8.0;
 pub(super) fn hero_vitals(
     time: Res<Time>,
     mut run: ResMut<Run>,
+    camp: Res<super::campfire::Camp>,
     mut next: ResMut<NextState<Phase>>,
     mut heroes: Query<
         (
@@ -756,6 +757,10 @@ pub(super) fn hero_vitals(
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
+        // Resting by a camp's fire: WoW's Well Rested "Zzz".
+        if super::campfire::rested(&camp, &run, htf.translation) {
+            shown.push(super::campfire::RESTED_SPELL);
+        }
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
         // A spec's form: its stance, aura or shapeshift glow, held all run.
@@ -835,6 +840,7 @@ mod tests {
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
         world.init_resource::<Run>();
+        world.init_resource::<super::super::campfire::Camp>();
         world.init_resource::<NextState<Phase>>();
         world.init_resource::<crate::creature_anim::PlaySeq>();
         world.init_resource::<Messages<FieldChanged>>();
@@ -870,6 +876,29 @@ mod tests {
             world.resource::<NextState<Phase>>(),
             NextState::Pending(Phase::GameOver)
         )
+    }
+
+    #[test]
+    fn heroes_by_the_camp_fire_show_well_rested() {
+        use super::super::campfire::{Camp, RESTED_SPELL};
+        let (mut world, heroes) = vitals_world(&[100.0, 100.0]);
+        world.get_mut::<Transform>(heroes[1]).unwrap().translation = Vec3::new(40.0, 0.0, 0.0);
+        world.resource_mut::<Camp>().fire = Some(Vec3::new(3.0, 0.0, 0.0));
+        world.resource_mut::<Run>().breather = 30.0;
+        vitals(&mut world);
+        let rested = |world: &World, i: usize| {
+            world
+                .get::<Marks>(heroes[i])
+                .unwrap()
+                .spells()
+                .any(|s| s == RESTED_SPELL)
+        };
+        assert!(rested(&world, 0), "by the fire");
+        assert!(!rested(&world, 1), "too far from it");
+        // The camp breaks: the Zzz goes.
+        world.resource_mut::<Run>().breather = 0.0;
+        vitals(&mut world);
+        assert!(!rested(&world, 0));
     }
 
     #[test]

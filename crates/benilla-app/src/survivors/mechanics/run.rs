@@ -324,20 +324,8 @@ pub(crate) fn tick(
     }
 }
 
-/// One hero's own clocks: new transformations granted, bursts running out, and the periodic,
-/// low-health and lethal triggers.
-fn clocks(
-    me: Entity,
-    pos: Vec3,
-    hero: &mut HeroState,
-    dt: f32,
-    show: &mut Show,
-    fires: &mut Vec<Fire>,
-) {
-    sync_legendaries(hero);
-    for spell in std::mem::take(&mut hero.mechanics.flourish) {
-        show.on_hero(me, Some(spell), &[me]);
-    }
+/// `dt` on the hero's running bursts: each one out takes its bonuses off.
+pub(crate) fn wear_bursts(hero: &mut HeroState, dt: f32) {
     let mut ended: Vec<&'static [Bonus]> = Vec::new();
     hero.mechanics.bursts.retain_mut(|b| {
         b.left -= dt;
@@ -356,6 +344,23 @@ fn clocks(
             });
         }
     }
+}
+
+/// One hero's own clocks: new transformations granted, bursts running out, and the periodic,
+/// low-health and lethal triggers.
+fn clocks(
+    me: Entity,
+    pos: Vec3,
+    hero: &mut HeroState,
+    dt: f32,
+    show: &mut Show,
+    fires: &mut Vec<Fire>,
+) {
+    sync_legendaries(hero);
+    for spell in std::mem::take(&mut hero.mechanics.flourish) {
+        show.on_hero(me, Some(spell), &[me]);
+    }
+    wear_bursts(hero, dt);
     if !hero.alive() {
         return;
     }
