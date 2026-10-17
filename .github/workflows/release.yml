@@ -28,7 +28,7 @@ jobs:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@v2
         with:
-          key: friends-release
+          shared-key: friends-release
           save-if: ${{ github.ref == 'refs/heads/progression' }}
       - name: Build the friends executable
         run: cargo build --profile play -p warcraft-survivors --no-default-features --features coop
