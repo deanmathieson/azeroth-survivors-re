@@ -756,6 +756,10 @@ pub(super) fn hero_vitals(
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
+        // A next-cast guarantee held (Presence of Mind, Clearcasting) shows as its buff.
+        if let Some(armed) = hero.mechanics.armed().filter(|a| a.aura != 0) {
+            shown.push(armed.aura);
+        }
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
         // A spec's form: its stance, aura or shapeshift glow, held all run.

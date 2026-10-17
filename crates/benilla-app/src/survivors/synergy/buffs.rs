@@ -493,6 +493,10 @@ pub(in crate::survivors) struct PartyTotem {
     pub owner: Entity,
     pub left: f32,
     pub strength: f32,
+    /// How far it reaches: [`TOTEM_RANGE`], farther with Totemic Mastery.
+    pub reach: f32,
+    /// The ring on the ground showing its reach, with Totemic Mastery.
+    pub ring: Option<Entity>,
 }
 
 /// Where a totem in `slot` stands beside a shaman at `at`.
@@ -526,17 +530,20 @@ pub(super) fn party_totems(
             && totem.left > 0.0
             && everyone
                 .iter()
-                .any(|&(h, at, up)| h == totem.owner && up && hero::reach(at, pos) <= TOTEM_RANGE);
+                .any(|&(h, at, up)| h == totem.owner && up && hero::reach(at, pos) <= totem.reach);
         if !keep {
             commands
                 .entity(e)
                 .remove::<PartyTotem>()
                 .insert(benilla_world::model_fade::DespawnFade::default());
+            if let Some(ring) = totem.ring {
+                commands.entity(ring).try_despawn();
+            }
             continue;
         }
         standing.push((totem.def.key, totem.owner));
         for &(h, at, up) in &everyone {
-            if up && hero::reach(at, pos) <= TOTEM_RANGE {
+            if up && hero::reach(at, pos) <= totem.reach {
                 if let Ok((.., mut ally)) = heroes.get_mut(h) {
                     let (def, strength, owner) = (totem.def, totem.strength, totem.owner);
                     apply(&mut ally.synergy.buffs, def, strength, owner, AURA_LINGER);
@@ -582,11 +589,17 @@ pub(super) fn party_totems(
                 pos,
                 0.0,
             );
+            // Totemic Mastery: a longer reach, ringed on the ground.
+            let reach = TOTEM_RANGE * h.mechanics.totem_reach();
+            let ring = (reach > TOTEM_RANGE)
+                .then(|| super::super::mechanics::totem_ring(&mut commands, &mut run, pos, reach));
             commands.entity(totem).insert(PartyTotem {
                 def,
                 owner: shaman,
                 left: TOTEM_SECS,
                 strength: strength(def, h),
+                reach,
+                ring,
             });
         }
     }
@@ -763,6 +776,47 @@ mod tests {
         super::super::testing::down(&mut w, hs[0]);
         w.run_system_once(party_totems).unwrap();
         assert_eq!(w.query::<&PartyTotem>().iter(&w).count(), 0);
+    }
+
+    /// Totemic Mastery: the shaman's totems reach half again as far, each ringed on the ground,
+    /// and the rings go with the totems.
+    #[test]
+    fn totemic_mastery_lengthens_the_totems_reach_and_rings_it() {
+        use super::super::super::mechanics::{
+            self as m, Effect as Mech, MechanicId, MechanicSpec, Trigger,
+        };
+        let mut w = world(1.0);
+        let hs = heroes(&mut w, &[("Shaman", 0.0), ("Mage", 25.0)]);
+        m::grant(
+            &mut w.get_mut::<HeroState>(hs[0]).unwrap(),
+            MechanicId::Talent(582),
+            [MechanicSpec::new(
+                Trigger::Periodic { every: 60.0 },
+                Mech::TotemReach { mult: 1.5 },
+            )],
+        );
+        w.run_system_once(party_totems).unwrap();
+        let rings: Vec<Entity> = w
+            .query::<&PartyTotem>()
+            .iter(&w)
+            .map(|t| {
+                assert_eq!(t.reach, TOTEM_RANGE * 1.5);
+                t.ring.expect("a ring on the ground")
+            })
+            .collect();
+        assert_eq!(rings.len(), 3);
+        w.run_system_once(party_totems).unwrap();
+        assert_eq!(
+            keys(&w, hs[1]),
+            ["strength_of_earth", "windfury", "mana_spring"],
+            "25 yd off: past the plain reach, inside the longer"
+        );
+        super::super::testing::down(&mut w, hs[0]);
+        w.run_system_once(party_totems).unwrap();
+        assert!(
+            rings.iter().all(|&r| w.get_entity(r).is_err()),
+            "rings fade"
+        );
     }
 
     #[test]

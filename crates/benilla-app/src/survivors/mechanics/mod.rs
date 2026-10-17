@@ -26,7 +26,10 @@
 //!   trigger's blow on ([`Effect::Chain`], [`Effect::Split`], [`Effect::Pierce`],
 //!   [`Effect::Boomerang`], [`Effect::Orbit`]), re-casts ([`Effect::Echo`]), and the hero's own
 //!   ([`Effect::Burst`], [`Effect::HealPulse`], [`Effect::Shield`], [`Effect::CheatDeath`],
-//!   [`Effect::ResetCooldowns`]).
+//!   [`Effect::ResetCooldowns`]), the party's ([`Effect::PartyAura`], [`Effect::BestAllyAura`],
+//!   [`Effect::ShareHeal`]), a next-cast guarantee ([`Effect::NextCast`]: Presence of Mind,
+//!   Clearcasting), the burns' ([`Effect::Ignite`] fed by them, [`Effect::ConsumeDot`] consuming
+//!   and spreading one), [`Effect::Shatter`] on frozen targets, and [`Effect::TotemReach`].
 //! - **Where.** [`Aim::Trigger`] is where the trigger happened: the struck enemy for a hit, crit or
 //!   kill, the hero for anything else. The hero's own effects always land on the hero.
 //! - **Numbers.** Flat numbers (a nova's damage, a heal) are at run level 1: they grow with the
@@ -87,6 +90,24 @@ pub(super) fn plugin(app: &mut App) {
             .run_if(super::party::simulates)
             .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
     );
+}
+
+/// The spell whose ground visual rings a totem's reach under Totemic Mastery
+/// ([`Effect::TotemReach`]).
+pub(crate) const TOTEM_RING: u32 = TRANQUIL_RING;
+/// "Draw Ancient Glyphs", whose ground object is Tranquility's ring of green light
+/// (`tranquility_area.mdx`): the one 1.12 area visual drawn as a ring.
+const TRANQUIL_RING: u32 = 24815;
+
+/// A ring on the ground at `pos`, `radius` across: a totem's reach shown.
+pub(crate) fn totem_ring(
+    commands: &mut Commands,
+    run: &mut super::Run,
+    pos: Vec3,
+    radius: f32,
+) -> Entity {
+    let serial = run.guid();
+    super::units::spawn_area_object(commands, serial, TOTEM_RING, radius, pos)
 }
 
 /// How much a mechanic's flat numbers have grown by run level `level`.
@@ -228,6 +249,65 @@ pub(crate) enum Effect {
     ApplyCc { kind: CcKind, secs: f32 },
     /// Damage over time on the target, `dps` a second for `secs`.
     Dot { school: School, dps: f32, secs: f32 },
+    /// A next-cast guarantee, held on the hero until its next cast spends it ([`Armed`]): that
+    /// cast's blows all crit with `crit`, and its cooldown is `cooldown` of its own (0.5 halves
+    /// it). With `instant`, the ability furthest from ready is ready at once, as Presence of
+    /// Mind's instant cast. `aura` is the buff spell the hero shows while it holds, 0 for none.
+    NextCast {
+        instant: bool,
+        crit: bool,
+        cooldown: f32,
+        aura: u32,
+    },
+    /// Ignite fed by the burns already on its target: a Fire damage over time of `dps` a second
+    /// for `secs`, `per_burn` more of it for each Fire burn the target carries (up to
+    /// [`MAX_FEED`]).
+    Ignite { dps: f32, secs: f32, per_burn: f32 },
+    /// Shatter: a blow on a frozen target (rooted, or chilled to half speed or slower) strikes it
+    /// again for `bonus` of itself.
+    Shatter { bonus: f32 },
+    /// A damage over time of `school` the hero has on the nearest enemy carrying one, consumed:
+    /// its remaining damage strikes at once, `burst` times over, and a fresh one of the same
+    /// strength spreads to up to `spread` enemies within `radius` of it for `secs`. Conflagrate
+    /// on Immolate.
+    ConsumeDot {
+        school: School,
+        burst: f32,
+        spread: u8,
+        radius: f32,
+        secs: f32,
+    },
+    /// Vampiric Embrace's party heal: `share` of the `school` damage the hero dealt since it last
+    /// went off heals every living party member within `radius`, the hero too.
+    ShareHeal {
+        school: School,
+        share: f32,
+        radius: f32,
+    },
+    /// The hero's totems (the party totems, its attack totems and a Healing Stream Totem) reach
+    /// `mult` times as far, their reach ringed on the ground. Nothing to do when it goes off.
+    TotemReach { mult: f32 },
+}
+
+/// A chill this deep (this fraction of speed or slower) freezes its target for Shatter.
+pub(crate) const SHATTER_CHILL: f32 = 0.5;
+/// A Healthstone reaches the allies this near its taker, healing this share of their max health,
+/// with the `Spell.dbc` row of the Minor Healthstone's heal as its visual.
+pub(crate) const HEALTHSTONE_REACH: f32 = 10.0;
+pub(crate) const HEALTHSTONE_SHARE: f32 = 0.3;
+pub(crate) const HEALTHSTONE_SPELL: u32 = 6262;
+
+/// The most Fire burns an [`Effect::Ignite`] feeds on.
+pub(crate) const MAX_FEED: u8 = 5;
+
+/// A next-cast guarantee held on a hero ([`Effect::NextCast`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Armed {
+    pub crit: bool,
+    /// The fraction of its own cooldown the empowered cast keeps.
+    pub cooldown: f32,
+    /// The buff spell shown while it holds, 0 for none.
+    pub aura: u32,
 }
 
 /// Where a mechanic lands.
@@ -434,6 +514,48 @@ impl MechanicSpec {
                 positive("damage per second", dps)?;
                 positive("duration", secs)?;
             }
+            Effect::NextCast {
+                instant,
+                crit,
+                cooldown,
+                ..
+            } => {
+                fraction("kept cooldown", cooldown)?;
+                if !instant && !crit && cooldown >= 1.0 {
+                    return Err("a next-cast guarantee that guarantees nothing".into());
+                }
+            }
+            Effect::Ignite {
+                dps,
+                secs,
+                per_burn,
+            } => {
+                positive("damage per second", dps)?;
+                positive("duration", secs)?;
+                if per_burn < 0.0 || per_burn.is_nan() {
+                    return Err(format!("ignite feed {per_burn}"));
+                }
+            }
+            Effect::Shatter { bonus } => positive("shatter bonus", bonus)?,
+            Effect::ConsumeDot {
+                burst,
+                radius,
+                secs,
+                ..
+            } => {
+                positive("burst", burst)?;
+                positive("spread radius", radius)?;
+                positive("spread duration", secs)?;
+            }
+            Effect::ShareHeal { share, radius, .. } => {
+                fraction("heal share", share)?;
+                positive("radius", radius)?;
+            }
+            Effect::TotemReach { mult } => {
+                if mult <= 1.0 || !mult.is_finite() {
+                    return Err(format!("totem reach {mult} adds nothing"));
+                }
+            }
         }
         match self.at {
             Aim::Trigger | Aim::Hero | Aim::Follow => {}
@@ -514,6 +636,13 @@ pub(crate) struct Mechanics {
     /// The spells and passives learned talents teach, by key: offered to this hero, and taken
     /// at rank 2 ([`super::talents`]).
     taught: Vec<&'static str>,
+    /// A next-cast guarantee waiting on the hero's next cast ([`Effect::NextCast`]).
+    armed: Option<Armed>,
+    /// Damage dealt by school since an [`Effect::ShareHeal`] last went off, kept only for the
+    /// schools one listens to.
+    pooled: [f32; 7],
+    /// A Healthstone just taken, whose heal reaches the allies near ([`run::tick`]).
+    healthstone: bool,
 }
 
 impl Mechanics {
@@ -580,6 +709,71 @@ impl Mechanics {
                     | Trigger::OnKill { .. }
             )
         })
+    }
+
+    /// The next-cast guarantee waiting on the hero's next cast, if one is.
+    pub(crate) fn armed(&self) -> Option<Armed> {
+        self.armed
+    }
+
+    /// A next-cast guarantee armed; one already held keeps the better of each part.
+    pub(crate) fn arm(&mut self, armed: Armed) {
+        self.armed = Some(match self.armed {
+            Some(held) => Armed {
+                crit: held.crit || armed.crit,
+                cooldown: held.cooldown.min(armed.cooldown),
+                aura: if armed.aura != 0 {
+                    armed.aura
+                } else {
+                    held.aura
+                },
+            },
+            None => armed,
+        });
+    }
+
+    /// The next-cast guarantee spent on a cast.
+    pub(crate) fn spend_armed(&mut self) -> Option<Armed> {
+        self.armed.take()
+    }
+
+    /// How many times as far the hero's totems reach: 1 without [`Effect::TotemReach`].
+    pub(crate) fn totem_reach(&self) -> f32 {
+        self.granted
+            .iter()
+            .filter_map(|g| match g.spec.effect {
+                Effect::TotemReach { mult } => Some(mult),
+                _ => None,
+            })
+            .fold(1.0, f32::max)
+    }
+
+    /// `amount` of `school` damage the hero dealt, pooled for an [`Effect::ShareHeal`] that
+    /// listens to the school; dropped otherwise.
+    pub(crate) fn pool(&mut self, school: School, amount: f32) {
+        let listens = self
+            .granted
+            .iter()
+            .any(|g| matches!(g.spec.effect, Effect::ShareHeal { school: s, .. } if s == school));
+        if listens && amount > 0.0 {
+            self.pooled[school as usize] += amount;
+        }
+    }
+
+    /// The `school` damage pooled so far.
+    #[cfg(test)]
+    pub(crate) fn pooled(&self, school: School) -> f32 {
+        self.pooled[school as usize]
+    }
+
+    /// The `school` damage pooled since last asked, emptied.
+    fn drain_pool(&mut self, school: School) -> f32 {
+        std::mem::take(&mut self.pooled[school as usize])
+    }
+
+    /// A Healthstone was taken: its heal reaches the allies near on the next tick.
+    pub(crate) fn share_healthstone(&mut self) {
+        self.healthstone = true;
     }
 
     /// `extra` more casts of ability `key` queued, the first at run second `due`.

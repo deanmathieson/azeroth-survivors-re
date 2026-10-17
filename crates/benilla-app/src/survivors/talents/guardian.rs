@@ -15,13 +15,14 @@
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
-use super::super::abilities::Hit;
+use super::super::abilities::{GroundArea, Hit};
+use super::super::data;
 use super::super::enemies::{self, Enemy};
 use super::super::hero::Hero;
-use super::super::mechanics::level_scale;
+use super::super::mechanics::{chance, level_scale};
 use super::super::units::{self, flat, yaw_toward, Fx, UnitSpec, COLOR_SPELL};
-use super::super::{party, HeroState, Run};
-use super::spec::{Act, FormDef, GuardianDef, HeroSpec, Summon};
+use super::super::{party, HeroState, Rng, Run};
+use super::spec::{Act, FormDef, GuardianDef, HeroSpec, Special, Summon};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::net::{NetEntity, ObjectStore};
 
@@ -45,6 +46,37 @@ pub(in crate::survivors) struct SpecGuardian {
     slot: u8,
     /// Seconds to its next act.
     next: f32,
+    /// Seconds to its next [`Special`] that keeps its own time.
+    special_next: f32,
+}
+
+/// The thickest pack among `foes` (their places) within `range` of `from`: the place with the
+/// most others within `radius` of it, as a Rain of Fire is aimed.
+fn thickest(foes: &[Vec3], from: Vec3, range: f32, radius: f32) -> Option<Vec3> {
+    let near: Vec<Vec3> = foes
+        .iter()
+        .copied()
+        .filter(|p| flat(*p - from).length() <= range)
+        .collect();
+    near.iter()
+        .map(|&p| {
+            let n = near
+                .iter()
+                .filter(|o| flat(**o - p).length() <= radius)
+                .count();
+            (p, n)
+        })
+        .max_by_key(|&(_, n)| n)
+        .map(|(p, _)| p)
+}
+
+/// How far a guardian reaches: a Healing Stream Totem farther with its owner's Totemic Mastery.
+fn reach_of(def: &GuardianDef, owner: &HeroState) -> f32 {
+    if def.act == Act::Heal && def.name.ends_with("Totem") {
+        def.range * owner.mechanics.totem_reach()
+    } else {
+        def.range
+    }
 }
 
 /// Where `slot` of `count` keeps, around its owner: spread in a half ring behind.
@@ -135,6 +167,10 @@ pub(super) fn spawn_guardians(
                 def,
                 slot,
                 next: def.every,
+                special_next: match def.special {
+                    Some(Special::Rain { every, .. } | Special::Aura { every, .. }) => every,
+                    _ => 0.0,
+                },
             });
         }
     }
@@ -143,8 +179,10 @@ pub(super) fn spawn_guardians(
 /// Follow, hunt, strike, cast and heal: see the module doc.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn run_guardians(
+    mut commands: Commands,
     time: Res<Time>,
-    run: Res<Run>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
     world: WorldPoint,
     mut heroes: Query<(Entity, &Transform, &mut HeroState), (With<Hero>, Without<SpecGuardian>)>,
     mut guardians: Query<
@@ -164,6 +202,11 @@ pub(super) fn run_guardians(
     if dt <= 0.0 {
         return;
     }
+    let standing: Vec<Vec3> = foes
+        .iter()
+        .filter(|(.., en)| !en.dead)
+        .map(|(_, at, _)| at.translation)
+        .collect();
     for (me, mut tf, mv, mut g) in &mut guardians {
         let Ok((_, h, owner)) = heroes.get_mut(g.owner) else {
             continue;
@@ -174,14 +217,15 @@ pub(super) fn run_guardians(
         let spot = hpos + heel(g.slot, def.count);
         let away = flat(hpos - pos).length();
         let planted = def.act == Act::Heal;
-        if away > LEASH || (planted && away > def.range) {
+        let range = reach_of(def, &owner);
+        if away > LEASH || (planted && away > range) {
             tf.translation = enemies::ground(&world, spot, hpos.y);
             continue;
         }
         let down = !owner.alive();
         let stats = owner.stats();
-        let power =
-            def.amount * level_scale(run.level) * stats.might * owner.school_mult(def.school);
+        let scale = level_scale(run.level) * stats.might * owner.school_mult(def.school);
+        let power = def.amount * scale;
         // The nearest enemy standing, from `from`, within `reach` of `around`.
         let nearest = |from: Vec3, around: Vec3, reach: f32| {
             foes.iter()
@@ -196,6 +240,7 @@ pub(super) fn run_guardians(
                 .min_by(|a, b| a.2.total_cmp(&b.2))
         };
         g.next = (g.next - dt).max(0.0);
+        g.special_next = (g.special_next - dt).max(0.0);
         let mut dest = (
             spot,
             (stats.speed * 1.2).max(flat(spot - pos).length() * 2.0),
@@ -217,7 +262,22 @@ pub(super) fn run_guardians(
                             if def.spell != 0 {
                                 fx.impact(foe, def.spell);
                             }
-                            hits.write(Hit::direct(g.owner, foe, power, false));
+                            let mut hit = Hit::direct(g.owner, foe, power, false);
+                            // A Treant's blow takes root.
+                            if let Some(Special::Root {
+                                spell,
+                                chance: odds,
+                                secs,
+                            }) = def.special
+                            {
+                                if chance(&mut rng, odds) {
+                                    hit.effect = data::Effect::Root(secs);
+                                    hit.mark = spell;
+                                    hit.mark_dur = secs;
+                                    fx.impact(foe, spell);
+                                }
+                            }
+                            hits.write(hit);
                         }
                     } else {
                         dest = (at, DASH_SPEED);
@@ -234,12 +294,12 @@ pub(super) fn run_guardians(
                     });
                 }
             }
-            Act::Heal if !down && g.next <= 0.0 && away <= def.range => {
+            Act::Heal if !down && g.next <= 0.0 && away <= range => {
                 g.next = def.every;
                 let mut healed = 0.0;
                 let mut targets = Vec::new();
                 for (ally, pos, mut state) in heroes.iter_mut() {
-                    if flat(pos.translation - tf.translation).length() <= def.range {
+                    if flat(pos.translation - tf.translation).length() <= range {
                         healed += party::heal(&mut state, power);
                         targets.push(ally);
                     }
@@ -248,6 +308,55 @@ pub(super) fn run_guardians(
                     owner.healing_done += f64::from(healed);
                 }
                 fx.cast(me, def.spell, &targets, None);
+            }
+            _ => {}
+        }
+        match def.special {
+            Some(Special::Rain {
+                spell,
+                every,
+                radius,
+                dps,
+                secs,
+            }) if !down && g.special_next <= 0.0 => {
+                if let Some(at) = thickest(&standing, pos, def.range + radius, radius) {
+                    g.special_next = every;
+                    fx.cast(me, spell, &[], Some(at));
+                    let serial = run.guid();
+                    let ground = units::spawn_area_object(&mut commands, serial, spell, radius, at);
+                    commands.entity(ground).insert(GroundArea::burning(
+                        g.owner,
+                        dps * scale,
+                        radius,
+                        secs,
+                        def.school,
+                    ));
+                }
+            }
+            Some(Special::Aura {
+                spell,
+                every,
+                radius,
+                damage,
+            }) if !down && g.special_next <= 0.0 => {
+                g.special_next = every;
+                let struck: Vec<Entity> = foes
+                    .iter()
+                    .filter(|(_, at, en)| {
+                        !en.dead && flat(at.translation - pos).length() <= radius + en.radius * 0.5
+                    })
+                    .map(|(e, ..)| e)
+                    .collect();
+                if !struck.is_empty() {
+                    fx.cast(me, spell, &struck, None);
+                    for &foe in &struck {
+                        hits.write(Hit {
+                            color: COLOR_SPELL,
+                            school: Some(def.school),
+                            ..Hit::direct(g.owner, foe, damage * scale, false)
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -328,5 +437,78 @@ mod tests {
             assert_eq!(def.act, Act::Heal);
             assert!(def.range >= 15.0, "{talent} must reach nearby allies");
         }
+    }
+
+    fn guardian_def(talent: u32) -> &'static GuardianDef {
+        match &by_talent(talent).unwrap().summon {
+            Summon::Guardian(def) => def,
+            Summon::Form(_) => panic!("{talent} summons a guardian"),
+        }
+    }
+
+    /// The Doomguard rains fire, the Infernal burns all near it, and Treants root what they hit.
+    #[test]
+    fn spec_guardians_cast_their_signature_spells() {
+        use super::super::spec::{ENTANGLING_ROOTS, IMMOLATION, RAIN_OF_FIRE};
+        assert!(matches!(
+            guardian_def(1282).special,
+            Some(Special::Rain { spell: RAIN_OF_FIRE, radius, dps, .. }) if radius > 0.0 && dps > 0.0
+        ));
+        assert!(matches!(
+            guardian_def(968).special,
+            Some(Special::Aura { spell: IMMOLATION, radius, damage, .. })
+                if radius > 0.0 && damage > 0.0
+        ));
+        assert!(matches!(
+            guardian_def(844).special,
+            Some(Special::Root { spell: ENTANGLING_ROOTS, chance, secs })
+                if chance > 0.0 && chance < 1.0 && secs > 0.0
+        ));
+        assert_eq!(
+            SPECS
+                .iter()
+                .filter(|s| matches!(&s.summon, Summon::Guardian(g) if g.special.is_some()))
+                .count(),
+            3
+        );
+        // Rain of Fire falls on the thickest pack in reach.
+        let foes = [
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(-8.0, 0.0, 0.0),
+            Vec3::new(-9.0, 0.0, 1.0),
+            Vec3::new(-7.5, 0.0, -1.0),
+            Vec3::new(40.0, 0.0, 0.0),
+            Vec3::new(41.0, 0.0, 0.0),
+            Vec3::new(42.0, 0.0, 0.0),
+            Vec3::new(43.0, 0.0, 0.0),
+        ];
+        let at = thickest(&foes, Vec3::ZERO, 20.0, 3.0).unwrap();
+        assert!(
+            at.x < -7.0,
+            "the pack of three in reach, not the four past it: {at}"
+        );
+        assert_eq!(thickest(&foes[4..], Vec3::ZERO, 20.0, 3.0), None);
+    }
+
+    /// Totemic Mastery lengthens a Healing Stream Totem's reach; the Lightwell is no totem.
+    #[test]
+    fn totemic_mastery_lengthens_the_healing_stream_totems_reach() {
+        use super::super::super::mechanics::{
+            self as m, Effect as Mech, MechanicId, MechanicSpec, Trigger,
+        };
+        let totem = guardian_def(590);
+        let well = guardian_def(1637);
+        let mut shaman = HeroState::default();
+        assert_eq!(reach_of(totem, &shaman), totem.range);
+        m::grant(
+            &mut shaman,
+            MechanicId::Talent(582),
+            [MechanicSpec::new(
+                Trigger::Periodic { every: 60.0 },
+                Mech::TotemReach { mult: 1.5 },
+            )],
+        );
+        assert_eq!(reach_of(totem, &shaman), totem.range * 1.5);
+        assert_eq!(reach_of(well, &shaman), well.range);
     }
 }

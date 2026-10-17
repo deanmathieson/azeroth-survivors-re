@@ -142,8 +142,11 @@ pub(crate) static ABILITIES: &[AbilityDef] = &[
     ability!(
         "fireball",
         133,
+        // WoW's Fireball leaves a short burn; each cast's stacks on the last, and feeds Ignite.
         Bolt {
-            damage: 20.0,
+            damage: 18.0,
+            dot: 0.75,
+            duration: 4.0,
             cooldown: 2.4,
             range: 26.0,
             radius: 3.5

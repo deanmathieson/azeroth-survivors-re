@@ -14,6 +14,53 @@ Code: `crates/benilla-app/src/survivors/talents/` (`mechanics.rs` for the audit'
 - **Deep Wounds** is a stacking Physical bleed, **Seal of Command** is a holy-strike proc, and
   **Concussion Blow** is a stunning blow rather than a stat row.
 
+## Talent pass 3: what you look forward to
+
+- **Landmark moments.** The first newly learned 10/20/30-point landmark announces itself with its
+  name in the banner and combat text, and rings that talent's own 1.12 spell sound: the first of
+  its rank-one row, its mechanics' visual spells, the spell it teaches, and for a passive with no
+  visual the spell it is known by (`SOUND_SPELLS`), whose `SpellVisual` kits (cast, impact,
+  precast, state) carry a `SoundEntries` id. The stock level-up cue plays only without the client
+  tables. `landmarks_ring_their_own_spell_sound` holds all 81.
+- **Next-cast guarantees** (`Effect::NextCast`, one mechanic). **Presence of Mind**: every 30 sec
+  the slowest ability is ready at once and the next cast's every blow crits. **Arcane
+  Concentration** and **Omen of Clarity**: a hit may proc **Clearcasting** (2% a rank; 6%), at
+  most once every 3 sec, halving the next cast's cooldown. The held guarantee shows as its buff
+  through the hero's auras, so it replicates; Clearcasting's flash and chime play as it procs.
+- **Fire and frost.** Fireball leaves a short burn (0.75 a second for 4 sec, its direct damage
+  down from 20 to 18 to pay for it) that stacks cast on cast. **Ignite** (`Effect::Ignite`) is fed
+  by the Fire burns on its target, 15% more for each, up to five. **Shatter** (`Effect::Shatter`):
+  a crit (20% a rank) on a frozen target (rooted, or chilled to half speed or slower: Frost Nova,
+  Frostbite, Frostbolt) strikes it again for half. The **Healthstone** card also heals every ally
+  within 10 yd of its taker for 30% of their max health, credited to the taker.
+- **Warlock, warrior, priest.** **Conflagrate** (`Effect::ConsumeDot`): every 10 sec the
+  warlock's burn (Immolate's) on the nearest enemy is consumed for 125% of its remaining damage
+  at once, and spreads afresh to the two nearest enemies within 8 yd for 5 sec. **Shadowform**:
+  +15% Shadow damage and 15% less physical damage taken (every enemy blow is physical).
+  **Shield Slam** keeps its stun; its dispel is not done (enemies carry no buffs to dispel).
+- **Party talents.** **Vampiric Embrace** (`Effect::ShareHeal`): every 2 sec, 15% of the Shadow
+  damage the priest dealt since (blows and ticks) heals the priest and every ally within 40 yd,
+  in place of the old 8% self lifesteal. **Totemic Mastery** (`Effect::TotemReach`): the
+  shaman's party totems reach 30 yd instead of 20, each ringed on the ground (a replicated area
+  object under Tranquility's ring), and a Healing Stream Totem heals half again as far.
+- **Spec guardians** (`Special` in `talents/spec.rs`). The **Doomguard** rains fire on the
+  thickest pack every 10 sec (Rain of Fire, 3 a second for 4 sec, 6 yd); the **Infernal** burns
+  everything within 5 yd for 4 every 2 sec (Immolation); **Treants** root what they strike for
+  2 sec, 30% of their blows (Entangling Roots, its roots on the target).
+- **Tooltips.** "Rank n/m", "Requires n points in <Tree> Talents" and "Requires n points in
+  <prereq>" read as WoW's. A proc names itself: "Your hits have a 10% chance to proc Impact: stuns
+  the target for 1.5 sec." Mechanic talents show their next rank, and the Details column shows a
+  mechanic talent's effect rather than "No effect". The talents whose 1.12 effect was a proc and
+  which were "luck" rows are that proc now, under the spell it set off: Mace Specialization
+  (both), Improved Revenge, Improved Shield Bash, Improved Kick, Improved Counterspell, Improved
+  Concussive Shot and Pyroclasm (a short stun), Entrapment, Frostbite and Improved Nature's Grasp
+  (a root), Aftermath (a daze), Improved Poisons (a poison), Ruthlessness and Initiative (a
+  hastened next cast). Trap Mastery, Improved Enslave Demon and Brutal Impact were no procs.
+  A crowd-control proc marks its target with its spell's state kit.
+
+The numbers are the mode's own and modest: the new procs are crowd control or small, Fireball's
+burn is paid for by its direct damage, and Arcane Concentration no longer recasts every spell.
+
 ## The rule: one name, one thing
 
 A talent that is also a spell (or passive) the run offers never grants a second, separate effect
@@ -74,8 +121,8 @@ nothing in the run shares a name with.
 
 | Talent (id) | Overlap | Resolution |
 |---|---|---|
-| Arcane Concentration (75) | none | Own mechanic (echo) |
-| Presence of Mind (86) | none | Own mechanic (echo) |
+| Arcane Concentration (75) | none | Own mechanic (Clearcasting: next cast's cooldown halved) |
+| Presence of Mind (86) | none | Own mechanic (next cast ready and a crit) |
 | Arcane Power (87) | none | Own mechanic (burst); Arcane capstone |
 | Blast Wave (32) | spell | Teaches the spell |
 | Combustion (36) | legendary name | Own mechanic; legendary renamed; Fire capstone |
@@ -84,8 +131,9 @@ nothing in the run shares a name with.
 | Cold Snap (69) | none | Own mechanic (cooldown reset) |
 | Pyroblast (29) | spell, legendary name | Teaches the spell; legendary renamed |
 | Impact (30) | none | Own mechanic (stun proc) |
-| Ignite (34) | none | Own mechanic (burn proc) |
+| Ignite (34) | none | Own mechanic (burn proc, fed by the target's burns) |
 | Improved Blizzard (63) | none | Own mechanic (chill proc) |
+| Shatter (67) | none | Own mechanic (crits shatter frozen targets) |
 | Sweeping Strikes (133) | spell | Teaches the spell |
 | Last Stand (153) | legendary name | Own mechanic; legendary renamed |
 | Anger Management (137) | none | Own mechanic (aura) |
@@ -131,15 +179,15 @@ nothing in the run shares a name with.
 | Lightwell (1637) | spec summon | The Lightwell guardian; Holy capstone |
 | Blackout (464) | none | Own mechanic (stun proc) |
 | Mind Flay (501) | spell | Teaches the spell |
-| Vampiric Embrace (484) | none | Own mechanic (aura) |
-| Shadowform (521) | spec form | Own aura, shown by the spec; Shadow capstone |
+| Vampiric Embrace (484) | none | Own mechanic (party heal from Shadow damage) |
+| Shadowform (521) | spec form | Own aura (Shadow damage, less physical taken), shown by the spec; Shadow capstone |
 | Elemental Focus (574) | none | Own mechanic (aura) |
 | Elemental Fury (565) | none | Own mechanic (aura) |
 | Elemental Mastery (573) | none | Own mechanic (aura); Elemental capstone |
 | Two-Handed Axes and Maces (617) | none | Own mechanic (aura) |
 | Parry (616) | none | Own mechanic (aura) |
 | Stormstrike (901) | spell | Teaches the spell; Enhancement capstone |
-| Totemic Mastery (582) | none | Own mechanic (aura) |
+| Totemic Mastery (582) | none | Own mechanic (totem reach, ringed) |
 | Nature's Swiftness (591) | none | Own mechanic (aura) |
 | Mana Tide Totem (590) | none | Own mechanic (nova); Restoration capstone |
 | Amplify Curse (1061) | none | Own mechanic (nova) |
@@ -150,8 +198,8 @@ nothing in the run shares a name with.
 | Soul Link (1282) | none | Own mechanic (aura); Demonology capstone |
 | Shadowburn (963) | spell | Teaches the spell |
 | Ruin (967) | none | Own mechanic (aura) |
-| Conflagrate (968) | legendary name | Own mechanic; legendary renamed; Destruction capstone |
-| Omen of Clarity (788) | none | Own mechanic (aura) |
+| Conflagrate (968) | legendary name | Own mechanic (consumes and spreads Immolate); legendary renamed; Destruction capstone |
+| Omen of Clarity (788) | none | Own mechanic (Clearcasting) |
 | Nature's Grace (789) | none | Own mechanic (aura) |
 | Moonkin Form (793) | spec form | Own aura, shown and worn by the spec; Balance capstone |
 | Feral Charge (804) | none | Own mechanic (nova) |
@@ -167,7 +215,7 @@ nothing in the run shares a name with.
 
 The first newly learned 10-, 20-, 30-point landmark (including a 31-point spec capstone) in a
 run announces itself with its rank-one spell name in the HUD banner and floating combat text,
-and plays the stock 1.12 talent-acquisition cue. The run remembers the grant, so the same
+and rings the talent's own 1.12 spell sound. The run remembers the grant, so the same
 landmark cannot announce twice after a respec or replication refresh.
 
 Each tree's capstone (its tier-7 talent, 31 points deep) makes the hero that spec for every run:

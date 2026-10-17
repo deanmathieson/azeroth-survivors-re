@@ -207,6 +207,24 @@ pub(in crate::survivors) fn describe_rank(talent: &Talent, rank: u8) -> String {
         .join(", ")
 }
 
+/// What `rank` ranks of `talent` do, as the Details column says it: its mechanics' lines, else its
+/// stat bonuses, else the spec its capstone makes, else that it does nothing here.
+pub(in crate::survivors) fn rank_text(talent: &Talent, rank: u8) -> String {
+    let mechanics = super::mechanic_description(talent.id, rank);
+    if !mechanics.is_empty() {
+        return mechanics.join(" ");
+    }
+    if !talent.effect().is_empty() {
+        return describe_rank(talent, rank);
+    }
+    let spec = super::spec_lines(talent.id);
+    if spec.is_empty() {
+        "No effect in this mode".to_string()
+    } else {
+        spec.join(" ")
+    }
+}
+
 /// What stands between `alloc` and `talent`'s next rank in its tree, in tooltip words: the
 /// tier's points and the prerequisite, each when unmet. Empty once the talent is open.
 pub(in crate::survivors) fn unmet(

@@ -8,7 +8,7 @@ use super::bonus::School;
 use super::data::{self, AbilityDef, Effect, Kind};
 use super::enemies::{self, Enemy, Loot};
 use super::hero::{self, Hero};
-use super::mechanics::{Proc, ProcKind, Procs};
+use super::mechanics::{Armed, Proc, ProcKind, Procs};
 use super::party;
 use super::synergy;
 use super::units::{self, flat, Fx, Marks, UnitSpec, COLOR_HEAL, COLOR_MELEE, COLOR_SPELL};
@@ -361,7 +361,7 @@ fn cast_for(
     hits: &mut MessageWriter<Hit>,
     procs: &mut Procs,
 ) {
-    let stats = hero.stats();
+    let base_stats = hero.stats();
     let now = run.elapsed;
     let mut foes: Vec<Foe> = enemies
         .iter()
@@ -395,6 +395,9 @@ fn cast_for(
         if hero.abilities[i].cd > 0.0 && !echo {
             continue;
         }
+        // A next-cast guarantee (Presence of Mind, Clearcasting) waits for a cast of its own.
+        let armed = if echo { None } else { hero.mechanics.armed() };
+        let stats = empowered(base_stats, armed);
         let o = &hero.abilities[i];
         let look = look(def, o.level, &speed_of);
         let school = school_of(def.spell);
@@ -701,6 +704,10 @@ fn cast_for(
         };
         if !echo {
             hero.abilities[i].cd = if fired { p.cooldown } else { 0.2 };
+            if let Some(a) = armed.filter(|_| fired) {
+                hero.mechanics.spend_armed();
+                hero.abilities[i].cd = p.cooldown * a.cooldown;
+            }
             if fired {
                 procs.0.push(Proc {
                     owner: me,
@@ -713,6 +720,14 @@ fn cast_for(
                 });
             }
         }
+    }
+}
+
+/// The stats a cast rolls under: a guarantee armed to crit makes every blow of it a crit.
+fn empowered(stats: Stats, armed: Option<Armed>) -> Stats {
+    match armed {
+        Some(a) if a.crit => Stats { crit: 1.0, ..stats },
+        _ => stats,
     }
 }
 
@@ -989,6 +1004,10 @@ pub(super) fn apply_hits(
             fx.number(e, dmg, crit, h.color);
             if let Ok(mut hero) = heroes.get_mut(h.source) {
                 hero.damage_done += f64::from(dmg);
+                // Vampiric Embrace's share of its school, pooled for the party heal.
+                if let Some(school) = h.school {
+                    hero.mechanics.pool(school, dmg);
+                }
                 // A drain heals its dealer, as lifesteal does.
                 if let Effect::Drain(frac) = h.effect {
                     let healed = party::heal(&mut hero, dmg * frac);
@@ -1067,6 +1086,7 @@ pub(super) fn apply_hits(
 
     // The over-time ticks, once a second each, credited by whose they are.
     let mut by: Vec<(Entity, f32)> = Vec::new();
+    let mut by_school: Vec<(Entity, School, f32)> = Vec::new();
     for (e, guid, tf, mut en, mut store, mut marks) in &mut enemies {
         if en.dead || en.dots.is_empty() {
             continue;
@@ -1083,6 +1103,9 @@ pub(super) fn apply_hits(
                 let dps = d.dps * en.debuffs.taken(d.school);
                 dealt += dps;
                 credit(&mut by, d.source, dps);
+                if let Some(school) = d.school {
+                    by_school.push((d.source, school, dps));
+                }
             }
         }
         en.dots.retain(|d| d.left > 0.0);
@@ -1102,6 +1125,12 @@ pub(super) fn apply_hits(
                 marks.clear();
                 marks.flush(e, guid.0, &mut store, &mut fields);
             }
+        }
+    }
+
+    for (source, school, amount) in by_school {
+        if let Ok(mut hero) = heroes.get_mut(source) {
+            hero.mechanics.pool(school, amount);
         }
     }
 
@@ -1219,6 +1248,79 @@ mod tests {
         assert!(close(f64::from(hero(b).hp), 50.5));
         assert!(close(hero(b).healing_done, 0.5));
         assert_eq!(world.get::<Enemy>(foe).unwrap().hp, 1000.0 - 19.0);
+    }
+
+    /// Presence of Mind's guarantee rolls every blow of the cast a crit; Clearcasting's alone
+    /// leaves the crit chance be.
+    #[test]
+    fn a_cast_armed_to_crit_rolls_every_blow_a_crit() {
+        let base = HeroState::default().stats();
+        let armed = Armed {
+            crit: true,
+            cooldown: 1.0,
+            aura: 12043,
+        };
+        assert_eq!(empowered(base, Some(armed)).crit, 1.0);
+        let clearcasting = Armed {
+            crit: false,
+            cooldown: 0.5,
+            aura: 12536,
+        };
+        assert_eq!(empowered(base, Some(clearcasting)).crit, base.crit);
+        assert_eq!(empowered(base, None).crit, base.crit);
+        let mut rng = Rng(3);
+        let sure = empowered(base, Some(armed));
+        assert!((0..50).all(|_| roll(&mut rng, &sure, 10.0).1));
+    }
+
+    /// Vampiric Embrace pools its owner's Shadow damage, the blows' and the ticks', and only it.
+    #[test]
+    fn shadow_damage_pools_for_a_shared_heal() {
+        use super::super::mechanics::{self, Effect as M, MechanicId, MechanicSpec, Trigger};
+        let (mut world, foe) = hits_world();
+        let mut priest = HeroState::default();
+        mechanics::grant(
+            &mut priest,
+            MechanicId::Other("vampiric"),
+            [MechanicSpec::new(
+                Trigger::Periodic { every: 2.0 },
+                M::ShareHeal {
+                    school: School::Shadow,
+                    share: 0.15,
+                    radius: 40.0,
+                },
+            )],
+        );
+        let priest = world.spawn(priest).id();
+        let plain = world.spawn(HeroState::default()).id();
+        world.write_message(Hit {
+            school: Some(School::Shadow),
+            ..Hit::direct(priest, foe, 10.0, false)
+        });
+        world.write_message(Hit {
+            school: Some(School::Fire),
+            ..Hit::direct(priest, foe, 5.0, false)
+        });
+        world.write_message(Hit {
+            dot: 4.0,
+            dot_dur: 3.0,
+            school: Some(School::Shadow),
+            ..Hit::direct(priest, foe, 0.0, false)
+        });
+        world.write_message(Hit {
+            school: Some(School::Shadow),
+            ..Hit::direct(plain, foe, 10.0, false)
+        });
+        world.run_system_once(apply_hits).unwrap();
+        let pooled = |e: Entity| {
+            world
+                .get::<HeroState>(e)
+                .unwrap()
+                .mechanics
+                .pooled(School::Shadow)
+        };
+        assert!((pooled(priest) - 14.0).abs() < 1e-4, "the blow and a tick");
+        assert_eq!(pooled(plain), 0.0, "no Vampiric Embrace, nothing kept");
     }
 
     #[test]

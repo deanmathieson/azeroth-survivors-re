@@ -84,6 +84,34 @@ pub(in crate::survivors) struct GuardianDef {
     pub range: f32,
     /// A `GameObjectDisplayInfo` row rather than a creature's: a planted thing (the Lightwell).
     pub object: bool,
+    /// Its signature spell beside its act: the Doomguard's Rain of Fire, the Infernal's
+    /// Immolation, the Treants' roots.
+    pub special: Option<Special>,
+}
+
+/// A guardian's signature spell, beside its [`Act`]. Damage is at run level 1, and grows as its
+/// act's does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::survivors) enum Special {
+    /// Every `every` seconds, `spell`'s burning ground on the thickest pack within its range,
+    /// `radius` yards across: `dps` of its school a second for `secs`.
+    Rain {
+        spell: u32,
+        every: f32,
+        radius: f32,
+        dps: f32,
+        secs: f32,
+    },
+    /// Every `every` seconds, `damage` of its school to every enemy within `radius` of it, under
+    /// `spell`'s visual: an aura it wears.
+    Aura {
+        spell: u32,
+        every: f32,
+        radius: f32,
+        damage: f32,
+    },
+    /// Its blows root what they strike for `secs`, `chance` of the time, under `spell`'s roots.
+    Root { spell: u32, chance: f32, secs: f32 },
 }
 
 /// A stance, aura or shapeshift held all run.
@@ -254,7 +282,19 @@ const fn guardian(
         amount,
         range,
         object: false,
+        special: None,
     })
+}
+
+/// `summon`, a guardian, with its signature `special`.
+const fn with_special(summon: Summon, special: Special) -> Summon {
+    match summon {
+        Summon::Guardian(g) => Summon::Guardian(GuardianDef {
+            special: Some(special),
+            ..g
+        }),
+        form => form,
+    }
 }
 
 /// The 27 specs, class by class in `data::CLASSES` order and each class's trees in tab order.
@@ -536,6 +576,7 @@ pub(in crate::survivors) static SPECS: &[SpecDef] = &[
             amount: 14.0,
             range: 15.0,
             object: true,
+            special: None,
         }),
     },
     SpecDef {
@@ -688,17 +729,26 @@ pub(in crate::survivors) static SPECS: &[SpecDef] = &[
         title: "Demonology Warlock",
         start: "death_coil",
         start_name: "Death Coil",
-        summon: guardian(
-            "Doomguard",
-            1912,
-            0.8,
-            1,
-            Act::Melee,
-            0,
-            School::Shadow,
-            1.6,
-            30.0,
-            16.0,
+        summon: with_special(
+            guardian(
+                "Doomguard",
+                1912,
+                0.8,
+                1,
+                Act::Melee,
+                0,
+                School::Shadow,
+                1.6,
+                30.0,
+                16.0,
+            ),
+            Special::Rain {
+                spell: RAIN_OF_FIRE,
+                every: 10.0,
+                radius: 6.0,
+                dps: 3.0,
+                secs: 4.0,
+            },
         ),
     },
     SpecDef {
@@ -707,17 +757,25 @@ pub(in crate::survivors) static SPECS: &[SpecDef] = &[
         title: "Destruction Warlock",
         start: "immolate",
         start_name: "Immolate",
-        summon: guardian(
-            "Infernal",
-            169,
-            0.7,
-            1,
-            Act::Melee,
-            0,
-            School::Fire,
-            1.8,
-            34.0,
-            16.0,
+        summon: with_special(
+            guardian(
+                "Infernal",
+                169,
+                0.7,
+                1,
+                Act::Melee,
+                0,
+                School::Fire,
+                1.8,
+                34.0,
+                16.0,
+            ),
+            Special::Aura {
+                spell: IMMOLATION,
+                every: 2.0,
+                radius: 5.0,
+                damage: 4.0,
+            },
         ),
     },
     // --- Druid ---
@@ -752,17 +810,24 @@ pub(in crate::survivors) static SPECS: &[SpecDef] = &[
         title: "Restoration Druid",
         start: "insect_swarm",
         start_name: "Insect Swarm",
-        summon: guardian(
-            "Treant",
-            TREANT,
-            TREANT_SCALE,
-            3,
-            Act::Melee,
-            0,
-            School::Nature,
-            1.4,
-            10.0,
-            14.0,
+        summon: with_special(
+            guardian(
+                "Treant",
+                TREANT,
+                TREANT_SCALE,
+                3,
+                Act::Melee,
+                0,
+                School::Nature,
+                1.4,
+                10.0,
+                14.0,
+            ),
+            Special::Root {
+                spell: ENTANGLING_ROOTS,
+                chance: 0.3,
+                secs: 2.0,
+            },
         ),
     },
 ];
@@ -778,6 +843,11 @@ const FELHUNTER: u32 = 850;
 /// A young ancient protector: the treant.
 const TREANT: u32 = 860;
 const TREANT_SCALE: f32 = 0.45;
+/// The Doomguard's Rain of Fire (rank 1), the Infernal's Immolation (the burn its aura deals; the
+/// aura's own row has no visual), and the Treants' Entangling Roots (rank 1).
+pub(in crate::survivors) const RAIN_OF_FIRE: u32 = 5740;
+pub(in crate::survivors) const IMMOLATION: u32 = 20153;
+pub(in crate::survivors) const ENTANGLING_ROOTS: u32 = 339;
 const ARCANE_NAME: &str = "Mana Fiend";
 const ARCANE_DISPLAY: u32 = 14252;
 const ARCANE_SCALE: f32 = 0.5;

@@ -32,15 +32,15 @@ use super::party::{HeroState, LocalHero};
 use super::profile::{slug, Profile};
 use super::{data, hud, Selection};
 use crate::combat_text::CombatTextSpawn;
-use crate::sound::SoundCue;
+use crate::sound::{KitCue, SoundCue};
 
 pub(super) use progress::{add_xp, earned_points, xp_for_points, TalentDevXp};
 use rules::{bonuses, can_learn, can_unlearn};
 pub(super) use rules::{Allocation, Why, MAX_POINTS, POINTS_PER_TIER};
 pub(super) use save::TalentSave;
 pub(super) use tab::{
-    check_learn, check_reset, check_unlearn, describe_rank, locked_reasons, shade, unmet, why_text,
-    TalentAction, TalentArt, TalentFocus, TalentShade, TalentSlot,
+    check_learn, check_reset, check_unlearn, describe_rank, locked_reasons, rank_text, shade,
+    unmet, why_text, TalentAction, TalentArt, TalentFocus, TalentShade, TalentSlot,
 };
 
 pub(in crate::survivors) fn mechanic_description(talent: u32, rank: u8) -> Vec<String> {
@@ -122,6 +122,10 @@ fn grant_talents(
     mut run: Option<ResMut<super::Run>>,
     mut text: Option<MessageWriter<CombatTextSpawn>>,
     mut cues: Option<MessageWriter<SoundCue>>,
+    mut kits: Option<MessageWriter<KitCue>>,
+    catalog: Option<Res<TalentCatalog>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    visuals: Option<Res<crate::creature_anim::SpellVisuals>>,
     profile: Option<Res<Profile>>,
     selection: Res<Selection>,
     phase: Res<State<super::Phase>>,
@@ -161,8 +165,25 @@ fn grant_talents(
                 category: 4,
                 color: Some(super::units::COLOR_SPELL),
             });
-            // The 1.12 level-up cue is the game's stock talent-acquisition sound.
-            cues.write(SoundCue::flat("LEVELUPSOUND"));
+            // The talent's own 1.12 spell sound; the stock level-up cue only without the tables.
+            let rank_one = catalog
+                .as_deref()
+                .and_then(|c| c.talent(id))
+                .and_then(|t| t.spells.first().copied());
+            let sound = match (spells.as_deref(), visuals.as_deref()) {
+                (Some(spells), Some(visuals)) => {
+                    milestone_sound(id, rank_one, &spells.catalog, &visuals.0)
+                }
+                _ => None,
+            };
+            match (sound, kits.as_mut()) {
+                (Some(kit), Some(kits)) => {
+                    kits.write(KitCue { kit, at: None });
+                }
+                _ => {
+                    cues.write(SoundCue::flat("LEVELUPSOUND"));
+                }
+            }
         }
         let spec = grant_learned(&mut hero, ranks);
         match (spec, had) {
@@ -177,6 +198,49 @@ fn grant_talents(
         }
         commands.entity(e).insert(TalentsGranted(ranks.to_vec()));
     }
+}
+
+/// The `SoundEntries` id a landmark talent's moment rings: the sound of the first of its spells
+/// whose visual kits carry one, its rank-one `Spell.dbc` row first, then its mechanics' visual
+/// spells, then the spell it teaches.
+pub(super) fn milestone_sound(
+    talent: u32,
+    rank_one: Option<u32>,
+    spells: &benilla_formats::SpellCatalog,
+    visuals: &benilla_formats::SpellVisualCatalog,
+) -> Option<u32> {
+    let entry = mechanics::entry(talent);
+    let taught = match entry.and_then(|m| m.teaches) {
+        Some(mechanics::Teach::Spell(key)) => Some(data::ability(key).spell),
+        _ => None,
+    };
+    let known = mechanics::SOUND_SPELLS
+        .iter()
+        .filter(|(t, _)| *t == talent)
+        .map(|(_, spell)| *spell);
+    rank_one
+        .into_iter()
+        .chain(
+            entry
+                .into_iter()
+                .flat_map(|m| m.specs.iter().filter_map(|s| s.visual)),
+        )
+        .chain(taught)
+        .chain(known)
+        .find_map(|spell| spell_sound(spell, spells, visuals))
+}
+
+/// The sound `spell`'s visual rings: its cast kit's, else its impact's, precast's or state's.
+pub(super) fn spell_sound(
+    spell: u32,
+    spells: &benilla_formats::SpellCatalog,
+    visuals: &benilla_formats::SpellVisualCatalog,
+) -> Option<u32> {
+    let stages = visuals.stages(spells.get(spell)?.visual)?;
+    [stages.cast, stages.impact, stages.precast, stages.state]
+        .into_iter()
+        .filter(|&k| k != 0)
+        .find_map(|k| visuals.kit(k).and_then(|kit| kit.sound))
 }
 
 /// The first newly present landmark is the run's announcement; later frames retain the record in
@@ -1161,6 +1225,98 @@ mod tests {
                 .map(|s| Bonus::school(s, b.school_damage(s)).describe()),
         );
         out.join(", ")
+    }
+
+    /// Every landmark's moment rings its own 1.12 spell's sound, never the stock level-up cue.
+    #[test]
+    fn landmarks_ring_their_own_spell_sound() {
+        let Some((_, cat)) = client() else { return };
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("spells");
+        let visuals = benilla_formats::load_spell_visual_catalog(&mut chain).expect("visuals");
+        let mut silent = Vec::new();
+        for &(_, ids) in mechanics::MILESTONES {
+            for id in ids {
+                let t = cat.talent(id).expect("a landmark talent");
+                if milestone_sound(id, t.spells.first().copied(), &spells, &visuals).is_none() {
+                    silent.push(format!("{id} {}", t.name));
+                }
+            }
+        }
+        assert!(silent.is_empty(), "{silent:#?}");
+        for &(talent, spell) in mechanics::SOUND_SPELLS {
+            assert!(spells.get(spell).is_some(), "{talent}: no spell {spell}");
+        }
+    }
+
+    /// The spells this talent pass names, by their `Spell.dbc` names.
+    #[test]
+    fn talent_pass_spell_ids_are_real() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("spells");
+        let want: &[(u32, &str)] = &[
+            (mechanics::CLEARCASTING, "Clearcasting"),
+            (mechanics::CLEARCASTING_DRUID, "Clearcasting"),
+            (mechanics::SHATTER, "Frostbolt"),
+            (mechanics::IGNITE, "Ignite"),
+            (12043, "Presence of Mind"),
+            (17962, "Conflagrate"),
+            (15286, "Vampiric Embrace"),
+            (15473, "Shadowform"),
+            (16189, "Totemic Mastery"),
+            (
+                super::super::mechanics::HEALTHSTONE_SPELL,
+                "Minor Healthstone",
+            ),
+            (super::super::mechanics::TOTEM_RING, "Draw Ancient Glyphs"),
+            (spec::RAIN_OF_FIRE, "Rain of Fire"),
+            (spec::IMMOLATION, "Immolation"),
+            (spec::ENTANGLING_ROOTS, "Entangling Roots"),
+            (5530, "Mace Stun Effect"),
+            (12798, "Revenge Stun"),
+            (18498, "Shield Bash - Silenced"),
+            (19410, "Improved Concussive Shot"),
+            (19185, "Entrapment"),
+            (2818, "Deadly Poison"),
+            (18425, "Kick - Silenced"),
+            (18469, "Counterspell - Silenced"),
+            (12494, "Frostbite"),
+            (18118, "Aftermath"),
+            (18093, "Pyroclasm"),
+            (19975, "Entangling Roots"),
+            (14156, "Ruthlessness"),
+            (13976, "Initiative"),
+        ];
+        let bad: Vec<String> = want
+            .iter()
+            .filter(|(id, name)| spells.get(*id).map(|d| d.name.as_str()) != Some(*name))
+            .map(|(id, name)| {
+                format!(
+                    "{id}: want {name}, is {:?}",
+                    spells.get(*id).map(|d| &d.name)
+                )
+            })
+            .collect();
+        assert!(bad.is_empty(), "{bad:#?}");
+    }
+
+    /// A talent whose 1.12 effect was a proc no longer reads as "luck": it is its proc.
+    #[test]
+    fn proc_talents_are_procs_not_luck() {
+        // Not procs in 1.12: Trap Mastery, Improved Enslave Demon, Brutal Impact.
+        const NOT_PROCS: &[u32] = &[1322, 1283, 797];
+        let lucky: Vec<String> = effects::EFFECTS
+            .iter()
+            .filter(|(id, _, per_rank)| {
+                per_rank.iter().any(|b| b.stat == StatKey::Luck)
+                    && mechanics::entry(*id).is_none()
+                    && !NOT_PROCS.contains(id)
+            })
+            .map(|(id, name, _)| format!("{id} {name}"))
+            .collect();
+        assert!(lucky.is_empty(), "{lucky:#?}");
     }
 
     #[test]
