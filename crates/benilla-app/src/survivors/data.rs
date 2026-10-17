@@ -2943,6 +2943,34 @@ pub(crate) struct MapDef {
     bosses: &'static [Foe],
 }
 
+impl MapDef {
+    /// Ragnaros's arena deliberately includes walkable MLIQ magma; the other MC rooms keep their
+    /// pools as scenery until their encounter design calls for them.
+    pub(crate) fn lava_hazard(&self) -> bool {
+        self.name == "Molten Core: Ragnaros' Lair"
+    }
+}
+
+// CreatureDisplayInfo rows from the 1.12 client: Molten Giant 8269, Firelord 12231, Lava Surger
+// 12239, Core Hound 12168, Flamewaker 12030 and Ancient Core Hound 12189.
+const MC_FOES: &[Foe] = &[
+    giant("Molten Giant", 8269, 62, 3.4, 1.0),
+    foe("Firelord", 12231, 62, 4.2, 1.1),
+    foe("Lava Surger", 12239, 62, 5.2, 0.9),
+    giant("Core Hound", 12168, 61, 4.4, 0.9),
+    foe("Flamewaker", 12030, 62, 4.2, 1.1),
+    giant("Ancient Core Hound", 12189, 62, 4.0, 0.9),
+];
+
+const MC_BOSSES: &[Foe] = &[
+    giant("Molten Giant", 8269, 62, 3.8, 1.35),
+    foe("Firelord", 12231, 62, 4.4, 2.0),
+    giant("Lava Surger", 12239, 62, 5.0, 1.2),
+    giant("Ancient Core Hound", 12189, 62, 4.0, 1.1),
+    foe("Flamewaker", 12030, 62, 4.2, 2.0),
+    giant("Molten Giant", 8269, 62, 3.6, 1.45),
+];
+
 pub(crate) static MAPS: &[MapDef] = &[
     MapDef {
         name: "The Barrens",
@@ -3503,6 +3531,116 @@ pub(crate) static MAPS: &[MapDef] = &[
             foe("Kel'Thuzad", 15945, 63, 4.4, 2.1),
         ],
     },
+    MapDef {
+        name: "Molten Core: Raid Start",
+        zone: "Molten Core",
+        map: 409,
+        center: [1080.0, -480.0, -108.2],
+        floor: -108.2,
+        leash: 14.0,
+        victory: "The Core's entrance is secure.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Lucifron's Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [1096.0, -732.0, -149.1],
+        floor: -149.1,
+        leash: 45.0,
+        victory: "Lucifron's cavern falls silent.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Magmadar's Lair",
+        zone: "Molten Core",
+        map: 409,
+        center: [1112.0, -1008.0, -187.3],
+        floor: -187.3,
+        leash: 24.0,
+        victory: "Magmadar's lair is clear.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: South-centre Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [868.0, -1008.0, -196.4],
+        floor: -196.4,
+        leash: 34.0,
+        victory: "The south cavern cools.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: West Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [732.0, -520.0, -217.0],
+        floor: -217.0,
+        leash: 40.0,
+        victory: "The west cavern is clear.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: North-west Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [644.0, -816.0, -208.5],
+        floor: -208.5,
+        leash: 45.0,
+        victory: "The north-west cavern is clear.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Centre Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [892.0, -600.0, -203.6],
+        floor: -203.6,
+        leash: 34.0,
+        victory: "The centre cavern is clear.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Majordomo's Camp",
+        zone: "Molten Core",
+        map: 409,
+        center: [736.0, -1168.0, -120.4],
+        floor: -120.4,
+        leash: 30.0,
+        victory: "Majordomo's camp is broken.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Ragnaros's Dry Ledge",
+        zone: "Molten Core",
+        map: 409,
+        center: [844.0, -772.0, -226.0],
+        floor: -226.0,
+        leash: 16.0,
+        victory: "The dry ledge holds.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
+    MapDef {
+        name: "Molten Core: Ragnaros' Lair",
+        zone: "Molten Core",
+        map: 409,
+        center: [828.0, -852.0, -229.0],
+        floor: -229.0,
+        leash: 30.0,
+        victory: "Ragnaros is driven back into the lava.",
+        foes: MC_FOES,
+        bosses: MC_BOSSES,
+    },
 ];
 
 /// A battleground's horde and bosses with their numbers.
@@ -3682,6 +3820,26 @@ mod arena_probe {
                 "direction {i} escapes the pit: {distance} yd"
             );
         }
+    }
+
+    #[test]
+    fn molten_core_roster_uses_client_creature_display_rows() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
+        for foe in super::MC_FOES.iter().chain(super::MC_BOSSES) {
+            assert!(
+                creatures.display_scale(foe.display).is_some(),
+                "{} display {} is not a 1.12 CreatureDisplayInfo row",
+                foe.name,
+                foe.display
+            );
+        }
+        let ragnaros = MAPS
+            .iter()
+            .find(|m| m.name == "Molten Core: Ragnaros' Lair")
+            .expect("MC lava arena");
+        assert!(ragnaros.lava_hazard());
     }
 
     /// MÃ¶ller-Trumbore: the distance along `direction` to `tri`, either face.

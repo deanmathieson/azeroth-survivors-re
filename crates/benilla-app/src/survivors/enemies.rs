@@ -245,6 +245,19 @@ pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p
 }
 
+/// The clearance above a known stage or hero floor that a spawn probe starts from.  It stays under
+/// a cave roof, unlike the old 64 yd outdoor probe, while still clearing a floor-plane roundoff.
+const GROUND_PROBE_LIFT: f32 = 4.0;
+
+fn collision_ground_y(collide: &WorldCollision, p: Vec3, fallback: f32) -> Option<f32> {
+    let reference = p.y.max(fallback);
+    let from = p.with_y(reference + GROUND_PROBE_LIFT);
+    collide
+        .ray_body(from, Dir3::NEG_Y, 128.0)
+        .map(|hit| from.y - hit.distance)
+        .filter(|&y| y <= reference + f32::EPSILON)
+}
+
 /// Ground a walking body on collision first, falling back to terrain while the collider streams.
 pub(super) fn ground_on_collision(
     collide: Option<&WorldCollision>,
@@ -252,10 +265,10 @@ pub(super) fn ground_on_collision(
     mut p: Vec3,
     fallback: f32,
 ) -> Vec3 {
-    let from = p.with_y(p.y.max(fallback) + 64.0);
+    // The reference point is already a floor (the hero or MapDef floor).  Beginning just above it
+    // keeps a WMO ceiling out of the ray, so its nearest hit is the floor below the reference.
     p.y = collide
-        .and_then(|collide| collide.ray_body(from, Dir3::NEG_Y, 128.0))
-        .map(|hit| from.y - hit.distance)
+        .and_then(|collide| collision_ground_y(collide, p, fallback))
         .or_else(|| world.terrain_height_under(p))
         .unwrap_or(fallback);
     p
@@ -899,6 +912,7 @@ pub(super) fn still_gems(
 
 #[cfg(test)]
 mod tests {
+    use avian3d::prelude::{Collider, PhysicsPlugins, RigidBody};
     use bevy::ecs::system::RunSystemOnce;
 
     use super::super::bonus::{Bonus, StatKey};
@@ -916,6 +930,50 @@ mod tests {
             hidden: false,
             threat: 1.0,
         }
+    }
+
+    #[test]
+    fn a_cave_probe_starts_under_the_ceiling_and_chooses_the_floor() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::transform::TransformPlugin,
+            bevy::asset::AssetPlugin::default(),
+            bevy::scene::ScenePlugin,
+            PhysicsPlugins::new(bevy::app::PostUpdate),
+        ));
+        app.init_asset::<Mesh>();
+        app.init_resource::<benilla_world::collision::MoverTraceExclusions>();
+        let quad = |y| {
+            (
+                vec![
+                    Vec3::new(-5.0, y, -5.0),
+                    Vec3::new(5.0, y, -5.0),
+                    Vec3::new(5.0, y, 5.0),
+                    Vec3::new(-5.0, y, 5.0),
+                ],
+                vec![[0, 2, 1], [0, 3, 2]],
+            )
+        };
+        for y in [0.0, 32.0] {
+            let (verts, tris) = quad(y);
+            app.world_mut().spawn((
+                RigidBody::Static,
+                Collider::trimesh(verts, tris),
+                Transform::default(),
+            ));
+        }
+        app.finish();
+        app.cleanup();
+        app.update();
+
+        let ground = app
+            .world_mut()
+            .run_system_once(|collide: WorldCollision| {
+                collision_ground_y(&collide, Vec3::ZERO, 0.0)
+            })
+            .expect("ground probe runs");
+        assert_eq!(ground, Some(0.0), "the 32 yd roof is never considered");
     }
 
     #[test]

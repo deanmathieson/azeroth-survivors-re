@@ -481,6 +481,17 @@ pub fn liquid_at<'a>(
         .min_by(|a, b| a.surface_z.total_cmp(&b.surface_z))
 }
 
+/// Whether `wow` is in magma for this liquid claim.  A liquid surface above the feet is the
+/// client's swim-volume test; survivors uses the same MLIQ answer for its lava hazard.
+pub fn is_lava_at<'a>(
+    liquids: impl Iterator<Item = &'a WaterChunkInfo>,
+    wow: [f32; 3],
+    claim: LiquidClaim,
+) -> bool {
+    liquid_at(liquids, wow, claim)
+        .is_some_and(|hit| hit.kind == LiquidKind::Magma && wow[2] <= hit.surface_z)
+}
+
 /// Every loaded footprint containing this WoW XY, one line each: the `/liquid` chat instrument.
 /// Each line names the surface's owner and floor, whether the claim admits it, the cell and height
 /// sampled and the surface's Z range, so a wrong claim and a wrong height read apart.
@@ -1221,6 +1232,18 @@ mod tests {
             water_surface_at([&lava].into_iter(), here, inside(1)).is_none(),
             "magma must not read as water"
         );
+    }
+
+    #[test]
+    fn synthetic_mliq_magma_burns_only_below_its_surface() {
+        let lava = wmo_info(1, LiquidKind::Magma, 6.0);
+        assert!(is_lava_at([&lava].into_iter(), [5.0, 5.0, 0.0], inside(1)));
+        assert!(!is_lava_at([&lava].into_iter(), [5.0, 5.0, 6.1], inside(1)));
+        assert!(!is_lava_at(
+            [&lava].into_iter(),
+            [50.0, 5.0, 0.0],
+            inside(1)
+        ));
     }
 
     /// Containment tests the cells, not the box, which spans dry ground.

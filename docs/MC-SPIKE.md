@@ -56,6 +56,12 @@ To list more rooms: `cargo test -p benilla-formats --test molten_core -- --ignor
 6. **Unverified until a play build:** portal culling across all 12 groups, the minimap (WMO-only maps have no ADT minimap tiles, so expect it to be blank), and frame time with a full horde.
 7. **Moving between rooms** stays on map 409. Changing stage repositions the hero with no worldport, so there is no loading screen between pulls.
 
+## Camera check still required
+
+Do not change the camera before a play build. Check the classic top-down view in Magmadar's Lair
+(27 yd clearance), West Cavern / Garr's room (30 yd), Centre Cavern (34 yd), and Lucifron's
+Cavern (54 yd). The low-clearance rooms may need a lower pitch or a camera-only ceiling fade.
+
 **Estimate: about 3–5 days** to MC arenas you can play: `MapDef` rows (0.5 day), the ground probe (1 day), lava damage (1–2 days), the camera check (0.5–1 day), and an M0 play build with screenshots plus spawn verification (0.5 day). The map-0 fallback needs only the rows (about 1 day), but it gives worse rooms (below).
 
 ## The fallback on map 0, checked against the loaded ADT tiles and WMOs

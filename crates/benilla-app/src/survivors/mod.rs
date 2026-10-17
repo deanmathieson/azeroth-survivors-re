@@ -170,6 +170,7 @@ impl Plugin for SurvivorsPlugin {
                     strip::breather,
                     treasure::drop_boss_chests,
                     enemies::collect_gems,
+                    hero::lava_hazard,
                     hero::hero_vitals,
                     party::revive_downed,
                     party::open_banked_picks,

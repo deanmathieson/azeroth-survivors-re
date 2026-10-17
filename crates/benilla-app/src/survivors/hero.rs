@@ -3,7 +3,7 @@
 
 use benilla_world::collision::WorldCollision;
 use benilla_world::view::WorldCamera;
-use benilla_world::world_point::WorldPoint;
+use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
@@ -17,6 +17,7 @@ use super::wowcam::{self, WowFrame};
 use super::{HeroState, LocalHero, Phase, Run, Selection};
 use crate::creature_anim::{ease_strafe_yaw, move_flags, strafe_body_offset, MovementState};
 use crate::net::{FieldChanged, Guid, ObjectStore};
+use benilla_assets::coords::bevy_to_wow;
 use benilla_protocol::messages::ObjectFields;
 
 #[derive(Component, Default)]
@@ -30,6 +31,18 @@ pub(super) struct Hero {
 
 /// The body radius enemies stop at.
 pub(super) const HERO_RADIUS: f32 = 0.7;
+
+/// Molten Core's lava takes eight percent of a hero's maximum health each second.
+const LAVA_DAMAGE_PER_SEC: f32 = 0.08;
+/// Fireball supplies both the client fire impact and its sound while a hero burns.
+const LAVA_BURN_SPELL: u32 = 133;
+
+/// Held only while a hero's feet are in a stage's lava, to mark the burning body and throttle its
+/// impact visual and sound.
+#[derive(Component)]
+pub(super) struct LavaBurning {
+    fx_t: f32,
+}
 
 /// The locked view's tilt.
 const FIXED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
@@ -663,6 +676,52 @@ pub(super) fn hurt_hero(hero: &mut HeroState, raw: f32) -> f32 {
     dmg
 }
 
+/// Lava is environmental damage, not a physical hit: armour and enemy-only mitigation do not
+/// dilute its advertised share of maximum health.
+fn hurt_lava(hero: &mut HeroState, dt: f32) -> f32 {
+    if hero.dead_t.is_some() {
+        return 0.0;
+    }
+    let damage = hero.stats().max_hp * LAVA_DAMAGE_PER_SEC * dt;
+    hero.hp -= damage;
+    hero.damage_taken += f64::from(damage);
+    damage
+}
+
+/// Burns heroes, never enemies, only in stages that explicitly turn lava into a hazard.
+pub(super) fn lava_hazard(
+    mut commands: Commands,
+    time: Res<Time>,
+    selection: Res<Selection>,
+    points: WorldPoint,
+    mut heroes: Query<(Entity, &Transform, &mut HeroState, Option<&mut LavaBurning>), With<Hero>>,
+    mut fx: Fx,
+) {
+    let enabled = selection.stage_def().lava_hazard();
+    for (entity, tf, mut hero, burning) in &mut heroes {
+        let in_lava =
+            enabled && points.is_lava_at(Subject::Unit(entity), bevy_to_wow(tf.translation));
+        if !in_lava {
+            commands.entity(entity).remove::<LavaBurning>();
+            continue;
+        }
+        hurt_lava(&mut hero, time.delta_secs());
+        match burning {
+            Some(mut burning) => {
+                burning.fx_t -= time.delta_secs();
+                if burning.fx_t <= 0.0 {
+                    burning.fx_t = 1.0;
+                    fx.cast(entity, LAVA_BURN_SPELL, &[entity], None);
+                }
+            }
+            None => {
+                commands.entity(entity).insert(LavaBurning { fx_t: 1.0 });
+                fx.cast(entity, LAVA_BURN_SPELL, &[entity], None);
+            }
+        }
+    }
+}
+
 /// How far an extra life throws the crowd clear, in yards.
 const REVIVE_KNOCKBACK: f32 = 8.0;
 
@@ -682,6 +741,7 @@ pub(super) fn hero_vitals(
             &mut Marks,
             &mut HeroState,
             Option<&super::talents::HeroSpec>,
+            Has<LavaBurning>,
         ),
         With<Hero>,
     >,
@@ -694,9 +754,9 @@ pub(super) fn hero_vitals(
         return;
     }
     // The whole party down: the deaths play out with the clock stopped, then the run is lost.
-    if party::all_down(heroes.iter().map(|(.., hero, _)| hero)) {
+    if party::all_down(heroes.iter().map(|(_, _, _, _, _, hero, ..)| hero)) {
         let mut over = true;
-        for (.., mut hero, _) in &mut heroes {
+        for (_, _, _, _, _, mut hero, ..) in &mut heroes {
             if let Some(t) = hero.dead_t.as_mut() {
                 *t += dt;
                 over &= *t > 3.0;
@@ -711,7 +771,7 @@ pub(super) fn hero_vitals(
     // A hero getting up or falling this frame holds victory off a frame, as it always has.
     let mut eventful = false;
     let mut standing = Vec::new();
-    for (entity, guid, htf, mut store, mut marks, mut hero, spec) in &mut heroes {
+    for (entity, guid, htf, mut store, mut marks, mut hero, spec, burning) in &mut heroes {
         // Fallen while others fight on: the death plays out.
         if let Some(t) = hero.dead_t.as_mut() {
             *t += dt;
@@ -755,6 +815,9 @@ pub(super) fn hero_vitals(
         }
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
+        }
+        if burning {
+            shown.push(LAVA_BURN_SPELL);
         }
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
@@ -870,6 +933,16 @@ mod tests {
             world.resource::<NextState<Phase>>(),
             NextState::Pending(Phase::GameOver)
         )
+    }
+
+    #[test]
+    fn lava_takes_eight_percent_of_maximum_health_per_second() {
+        let mut hero = HeroState::default();
+        let max = hero.stats().max_hp;
+        hero.hp = max;
+        assert_eq!(hurt_lava(&mut hero, 1.0), max * LAVA_DAMAGE_PER_SEC);
+        assert_eq!(hero.hp, max * (1.0 - LAVA_DAMAGE_PER_SEC));
+        assert_eq!(hero.damage_taken, f64::from(max * LAVA_DAMAGE_PER_SEC));
     }
 
     #[test]
