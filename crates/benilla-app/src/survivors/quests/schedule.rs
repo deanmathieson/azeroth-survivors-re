@@ -215,7 +215,9 @@ mod tests {
         assert!(!fits(princess, roster, 0.0, 150.0));
         // Every giver of the default rhythm has something to offer in every zone.
         for map in 0..data::MAPS.len() {
-            let zone = for_map(map).unwrap();
+            let Some(zone) = for_map(map) else {
+                continue; // MC stages have no quest shell until the raid milestone.
+            };
             let roster = &data::roster(map).enemies;
             for t in giver_times(FIRST_GIVER_SECS, GIVER_EVERY_SECS, &boss_times(map)) {
                 assert!(
@@ -225,7 +227,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(ZONES.len(), data::MAPS.len());
+        assert_eq!(
+            ZONES.len(),
+            data::MAPS.iter().filter(|m| m.map != 409).count()
+        );
     }
 
     #[test]

@@ -186,7 +186,8 @@ mod tests {
         let mut chain = benilla_formats::open_chain(&data).unwrap();
         let areas = benilla_formats::load_area_sound_catalog(&mut chain).unwrap();
         let mut missing = Vec::new();
-        for m in super::super::data::MAPS {
+        // Molten Core (map 409) is WMO-only: no ADT terrain, so no `AreaTable` id to read here.
+        for m in super::super::data::MAPS.iter().filter(|m| m.map != 409) {
             let dir = match m.map {
                 0 => "Azeroth",
                 1 => "Kalimdor",

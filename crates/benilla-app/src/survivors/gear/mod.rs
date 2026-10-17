@@ -435,7 +435,10 @@ mod tests {
 
     #[test]
     fn drops_line_up_with_maps_and_rosters() {
-        assert_eq!(drops::ZONES.len(), MAPS.len());
+        assert_eq!(
+            drops::ZONES.len(),
+            MAPS.iter().filter(|m| m.map != 409).count()
+        );
         for (m, zone) in drops::ZONES.iter().enumerate() {
             assert_eq!(zone.map, MAPS[m].name, "zone {m} is out of order");
             let bosses = &roster(m).bosses;

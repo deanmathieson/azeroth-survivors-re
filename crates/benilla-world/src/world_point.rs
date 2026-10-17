@@ -8,8 +8,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::liquid::{
-    camera_claim, describe_at, liquid_at, player_claim, unit_claim, water_surface_at, LiquidClaim,
-    LiquidHit, LiquidSoundSource, RoomPlacements, Underwater, WaterChunkInfo,
+    camera_claim, describe_at, is_lava_at, liquid_at, player_claim, unit_claim, water_surface_at,
+    LiquidClaim, LiquidHit, LiquidSoundSource, RoomPlacements, Underwater, WaterChunkInfo,
 };
 use crate::surface::SurfaceUnderfoot;
 use crate::terrain_stream::CurrentArea;
@@ -108,6 +108,13 @@ impl WorldPoint<'_, '_> {
     /// The liquid at `wow` for this subject, nearest surface first, lava and slime included.
     pub fn liquid_at(&self, who: Subject, wow: [f32; 3]) -> Option<LiquidHit> {
         liquid_at(self.over(wow), wow, self.claim(who))
+    }
+
+    /// Whether `who`'s feet are in lava at this WoW-space position.  WMO MLIQ magma and ADT
+    /// magma share this query, while the room claim prevents a neighbouring building's pool from
+    /// answering.
+    pub fn is_lava_at(&self, who: Subject, wow: [f32; 3]) -> bool {
+        is_lava_at(self.over(wow), wow, self.claim(who))
     }
 
     /// The water surface height at `wow`: [`Self::liquid_at`] without magma and slime.

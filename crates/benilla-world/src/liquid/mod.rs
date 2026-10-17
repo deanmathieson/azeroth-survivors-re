@@ -39,9 +39,9 @@ mod surface;
 
 // The submodules are private: this list is everything the rest of the client may name.
 pub use query::{
-    camera_claim, describe_at, liquid_at, player_claim, surfaces_at, unit_claim, water_surface_at,
-    EyeLiquid, FoamPatch, LiquidClaim, LiquidHit, LiquidSource, RoomPlacements, SubmergedEye,
-    Underwater, WaterChunkInfo, WmoPool,
+    camera_claim, describe_at, is_lava_at, liquid_at, player_claim, surfaces_at, unit_claim,
+    water_surface_at, EyeLiquid, FoamPatch, LiquidClaim, LiquidHit, LiquidSource, RoomPlacements,
+    SubmergedEye, Underwater, WaterChunkInfo, WmoPool,
 };
 pub(crate) use spatial::{maintain_water_index, WaterIndex};
 pub(crate) use surface::{

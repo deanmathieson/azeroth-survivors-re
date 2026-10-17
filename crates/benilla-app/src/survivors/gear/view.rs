@@ -229,7 +229,7 @@ mod tests {
         let class = 3;
         let mut gear = GearSave::default();
         let rows = zone_rows(class, &gear);
-        assert_eq!(rows.len(), MAPS.len());
+        assert_eq!(rows.len(), MAPS.iter().filter(|m| m.map != 409).count());
         for (m, row) in rows.iter().enumerate() {
             assert_eq!((row.map, row.name), (m, MAPS[m].name));
             assert_eq!(row.collected, 0);
