@@ -1057,6 +1057,34 @@
       <ul class="bag" data-bag>
         <!-- Epic -->
         <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Talents That Sing</h3>
+            <p class="split"><span>Talents</span><span>v0.3.5</span></p>
+            <ul class="lines fx">
+              <li>Equip: Milestone talents play their real spell sound. Presence of Mind works (instant cast, guaranteed crit), and Clearcasting procs.</li>
+              <li>Chance on hit: Fireball's burn feeds Ignite, Shatter shatters, and Conflagrate eats your burns and spreads them.</li>
+              <li>Use: Healthstones heal allies, Vampiric Embrace heals the party, and Shadowform is real. The Doomguard rains fire, the Infernal burns and Treants root.</li>
+              <li>Equip: 14 old "luck" talents are real procs now: Improved Kick, Pyroclasm, Frostbite, Entrapment and friends.</li>
+            </ul>
+            <p class="flavor">"You will hear Presence of Mind. Then you will feel it."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
+          <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span>
+          <div class="tip">
+            <h3 class="name">Campfire</h3>
+            <p class="split"><span>Party</span><span>After each boss</span></p>
+            <ul class="lines fx">
+              <li>Use: After each boss the party camps at a real campfire and gets Well Rested. Zzz.</li>
+              <li>Use: A goblin merchant sells Reroll Tokens, Healthstones, Elixir of the Mongoose and Elixir of Fortitude.</li>
+              <li>Equip: Fish a fish school for Well Fed, then "Roll for the cache".</li>
+              <li>Equip: A ready check, then the Horn of Echeyakee sends you back in.</li>
+            </ul>
+            <p class="flavor">"Five more minutes by the fire, the horde says. It is lying."</p>
+          </div>
+        </li>
+        <li class="item q-epic" data-quality="epic">
           <span class="slot" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-party"/></svg></span>
           <div class="tip">
             <h3 class="name">Online Co-op</h3>
@@ -1543,8 +1571,8 @@
 
           <p class="ql-zone" id="z-next">Coming Up</p>
           <ul aria-labelledby="z-next">
-            <li><a class="quest d-yellow" href="#q-sing"><span class="lvl">[58]</span><span class="qn">Talents That Sing <span class="qtag">(In progress)</span></span></a></li>
-            <li><a class="quest d-orange" href="#q-camp"><span class="lvl">[60]</span><span class="qn">Campfire Stories <span class="qtag">(Group)</span></span></a></li>
+            <li><a class="quest d-yellow" href="#q-sing"><span class="lvl">[58]</span><span class="qn">Talents That Sing <span class="qtag">(Complete)</span></span></a></li>
+            <li><a class="quest d-orange" href="#q-camp"><span class="lvl">[60]</span><span class="qn">Campfire Stories <span class="qtag">(Complete)</span></span></a></li>
             <li><a class="quest d-orange" href="#q-mc"><span class="lvl">[60]</span><span class="qn">Raid: Molten Core <span class="qtag">(Raid)</span></span></a></li>
           </ul>
 
@@ -1726,62 +1754,62 @@
           </article>
 
           <article class="qd" id="q-sing" tabindex="-1" aria-labelledby="q-sing-t">
-            <h3 id="q-sing-t">Talents That Sing</h3>
-            <p class="qmeta">Level 58 &middot; In progress</p>
-            <p class="qtext">Some talents still just add a flat percentage. Nobody ever bragged about a flat percentage. Teach them the signature moves, and give them proper WoW tooltips while you're at it.</p>
+            <h3 id="q-sing-t">Talents That Sing (Complete)</h3>
+            <p class="qmeta">Level 58 &middot; v0.3.5</p>
+            <p class="qtext">Some talents only added a flat percentage. Nobody ever bragged about a flat percentage. You taught them their signature moves, and now they sound like it too.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- Fireball burn into Ignite: 0/1</li>
-              <li>- Frost Nova shatter: 0/1</li>
-              <li>- Conflagrate: 0/1</li>
-              <li>- Shadowform: 0/1</li>
-              <li>- Doomguard Rain of Fire: 0/1</li>
-              <li>- Treant roots: 0/1</li>
-              <li>- WoW-style talent tooltips: 0/1</li>
+              <li class="done">- Milestone talents play their real spell sound: 1/1</li>
+              <li class="done">- Presence of Mind and Clearcasting: 1/1</li>
+              <li class="done">- Fireball burn into Ignite, Shatter and Conflagrate: 1/1</li>
+              <li class="done">- Healthstones, Vampiric Embrace and Shadowform: 1/1</li>
+              <li class="done">- Doomguard Rain of Fire, Infernal burn, Treant roots: 1/1</li>
+              <li class="done">- "Luck" talents turned into real procs: 14/14</li>
             </ul>
             <h4>Rewards:</h4>
-            <p class="qsub">You will receive:</p>
+            <p class="qsub">You receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span><span><span class="rw-name">Signature Moves</span><span class="rw-text">Talents that look and feel like the ones you remember.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-nova"/></svg></span><span><span class="rw-name">Signature Moves</span><span class="rw-text">Talents that look, feel and sound like the ones you remember.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-camp" tabindex="-1" aria-labelledby="q-camp-t">
-            <h3 id="q-camp-t">Campfire Stories</h3>
-            <p class="qmeta">Level 60 &middot; Group &middot; Coming up &middot; Epic quest</p>
-            <p class="qtext">After each boss, the horde backs off. The party gathers at a campfire for 45 to 60 seconds: full-size picks, a goblin vendor, side bets and a few games. Then the war horn sounds, and everyone pretends they were ready.</p>
+            <h3 id="q-camp-t">Campfire Stories (Complete)</h3>
+            <p class="qmeta">Level 60 &middot; Group &middot; v0.3.5</p>
+            <p class="qtext">After each boss the horde backs off and the party makes camp at a real campfire. Rest, shop, fish, roll for the cache, ready up. Then the Horn of Echeyakee sounds, and everyone pretends they were ready.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- The horde backs off after each boss: 0/1</li>
-              <li>- A campfire with full-size picks: 0/1</li>
-              <li>- A goblin vendor: 0/1</li>
-              <li>- Side bets: 0/1</li>
-              <li>- Mini games: fishing, cooking for Well Fed, Darkmoon Whack-a-Gnoll, duels and /roll-offs: 0/1</li>
-              <li>- The war horn: 0/1</li>
+              <li class="done">- Camp after every boss: 1/1</li>
+              <li class="done">- Well Rested at the fire: 1/1</li>
+              <li class="done">- A goblin merchant: 1/1</li>
+              <li class="done">- Fishing for Well Fed: 1/1</li>
+              <li class="done">- Roll for the cache: 1/1</li>
+              <li class="done">- Ready check, then the Horn of Echeyakee: 1/1</li>
             </ul>
             <h4>Rewards:</h4>
-            <p class="qsub">You will receive:</p>
+            <p class="qsub">You receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The Campfire</span><span class="rw-text">A minute of peace between bosses, full-size picks and a goblin who will sell you things.</span></span></li>
-              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-dice"/></svg></span><span><span class="rw-name">Camp Games</span><span class="rw-text">Fishing, cooking for Well Fed, Darkmoon Whack-a-Gnoll, duels and /roll-offs. Somebody will lose the duel and blame lag.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The Campfire</span><span class="rw-text">Well Rested Zzz and a goblin selling Reroll Tokens, Healthstones and elixirs.</span></span></li>
+              <li class="rw"><span class="slot q-rare" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-dice"/></svg></span><span><span class="rw-name">Camp Life</span><span class="rw-text">Fishing a fish school for Well Fed, and a roll for the cache. Somebody will lose the roll and blame lag.</span></span></li>
             </ul>
           </article>
 
           <article class="qd" id="q-mc" tabindex="-1" aria-labelledby="q-mc-t">
             <h3 id="q-mc-t">Raid: Molten Core</h3>
-            <p class="qmeta">Level 60 &middot; Raid &middot; Coming up &middot; Epic quest</p>
-            <p class="qtext">Deep beneath Blackrock Mountain, the first raid waits. Before anyone sets foot inside, the engine must prove it can take the heat. Then come the boss mechanics and the Tier 1 sets. Clear your calendar and tell everyone it'll only take an hour.</p>
+            <p class="qmeta">Level 60 &middot; Raid &middot; In progress &middot; Epic quest</p>
+            <p class="qtext">Deep beneath Blackrock Mountain, the first raid waits. The engine has proved it can take the heat: the real Molten Core instance loads. Three of its stages are already playable early, behind the zone unlocks. The bosses and their mechanics come next. Clear your calendar and tell everyone it'll only take an hour.</p>
             <h4>Objectives:</h4>
             <ul class="objectives">
-              <li>- Engine check: 0/1</li>
-              <li>- Boss mechanics library: 0/1</li>
+              <li class="done">- Engine check (the real MC instance loads): 1/1</li>
+              <li class="done">- Playable stages: Lucifron's Cavern, Magmadar's Lair, Ragnaros' Lair: 3/3</li>
+              <li>- Bosses and their mechanics: 0/1</li>
               <li>- Tier 1 sets with set bonuses: 0/1</li>
               <li class="done">- Need/Greed loot (already in for boss loot): 1/1</li>
             </ul>
             <h4>Rewards:</h4>
             <p class="qsub">You will receive:</p>
             <ul class="rewards">
-              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The First Raid</span><span class="rw-text">Molten Core, with bosses built on a shared mechanics library.</span></span></li>
+              <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-flame"/></svg></span><span><span class="rw-name">The First Raid</span><span class="rw-text">Molten Core with its bosses. Meanwhile the lava in Ragnaros' Lair already burns. Don't stand in it.</span></span></li>
               <li class="rw"><span class="slot q-epic" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#g-helm"/></svg></span><span><span class="rw-name">Tier 1 Sets</span><span class="rw-text">Class sets with real set bonuses. Yes, you'll want the shoulders.</span></span></li>
             </ul>
           </article>
@@ -1906,7 +1934,7 @@
             <ul class="objectives">
               <li class="done">- Fresh play build: 1/1</li>
               <li class="done">- Online co-op live: 1/1</li>
-              <li class="done">- New loot in the bags: 26/26</li>
+              <li class="done">- New loot in the bags: 28/28</li>
               <li class="done">- Faire booth open for business: 1/1</li>
             </ul>
             <h4>Rewards:</h4>
@@ -2044,7 +2072,7 @@
       <p class="murlocs">No murlocs were harmed. Several were kited.</p>
       <p>The original <em>Azeroth Survivors</em> is a free fan game by Aethus. Play it in the browser at <a href="https://wow.aethus.pl/">wow.aethus.pl</a>. This fork builds on OutThisLife's open-source rebuild and the benilla and wenilla engine projects, under the MIT or Apache 2.0 licence.</p>
       <p>A fan project, not affiliated with or endorsed by Blizzard Entertainment. No Blizzard files are included. Screenshots show World of Warcraft art rendered from a user-supplied client; that art is &#xA9; Blizzard Entertainment.</p>
-      <p class="nerd"><span>Patch notes for nerds:</span> 391 tests pass, clippy is clean and the play build is good to go on the <code>progression</code> branch. Save format v4 is live, with older saves migrated forward. v0.3.2: a treasure reward that could be picked forever is fixed (sorry, farmers), and double-clicking the exe now works. v0.3.4: levelling retuned (about level 25 at 6 minutes, 52 to 55 at 15), Rare/Epic cards give +2/+3 ranks, a character-select-style main menu with a resource bar, co-op friends show their own hero, mounts and hats, a non-pausing Esc menu in co-op, better hat fitting, a Need/Greed/Pass frame with class-aware Need and item tooltips, a fix for the hero vanishing on fast clicks, and less slowdown when collecting loot.</p>
+      <p class="nerd"><span>Patch notes for nerds:</span> 391 tests pass, clippy is clean and the play build is good to go on the <code>progression</code> branch. Save format v4 is live, with older saves migrated forward. v0.3.2: a treasure reward that could be picked forever is fixed (sorry, farmers), and double-clicking the exe now works. v0.3.4: levelling retuned (about level 25 at 6 minutes, 52 to 55 at 15), Rare/Epic cards give +2/+3 ranks, a character-select-style main menu with a resource bar, co-op friends show their own hero, mounts and hats, a non-pausing Esc menu in co-op, better hat fitting, a Need/Greed/Pass frame with class-aware Need and item tooltips, a fix for the hero vanishing on fast clicks, and less slowdown when collecting loot. v0.3.5: milestone talents play their real spell sounds, 14 "luck" talents became real procs, Presence of Mind, Clearcasting, Ignite, Shatter, Conflagrate, Healthstones, Vampiric Embrace, Shadowform and the Doomguard, Infernal and Treant summons all work, the post-boss campfire is in, and the real Molten Core instance loads with three early stages.</p>
       <p class="updated">Last updated: 16 Oct 2026 &middot; Built for &lt;Toast House&gt; &middot; <a href="https://github.com/deanmathieson/azeroth-survivors-re/tree/progression">Code on GitHub</a> &middot; <a href="#top">Back to top</a></p>
     </footer>
 
