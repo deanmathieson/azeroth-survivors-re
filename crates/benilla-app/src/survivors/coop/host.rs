@@ -18,6 +18,7 @@ use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
 use super::super::profile::Profile;
+use super::super::raid::{Telegraph, Yelled};
 use super::super::run_options::RunOptions;
 use super::super::synergy;
 use super::super::talents::{self, HeroSpec};
@@ -91,7 +92,7 @@ pub(super) fn plugin(app: &mut App) {
                 .run_if(|l: Res<crate::loading_screen::LoadingScreen>| !l.covering()),
             drop_departed,
             serve_hands,
-            tag.run_if(hosting_run),
+            (tag, tag_telegraphs).run_if(hosting_run),
             lobby,
         )
             .run_if(hosting),
@@ -106,6 +107,7 @@ pub(super) fn plugin(app: &mut App) {
                 sync_run,
                 sync_slow,
                 relay_fx,
+                relay_yells,
             )
                 .run_if(hosting_run),
             tick,
@@ -621,13 +623,9 @@ fn drop_departed(
 /// Where `def` stands in the stage's roster: `(boss, index)`.
 pub(super) fn roster_index(stage: usize, def: &data::EnemyDef) -> (bool, u16) {
     let roster = data::roster(stage);
-    let same = |list: &[data::EnemyDef]| list.iter().position(|d| std::ptr::eq(d, def));
     let named = |list: &[data::EnemyDef]| list.iter().position(|d| d.name == def.name);
-    if let Some(i) = same(&roster.bosses) {
-        return (true, i as u16);
-    }
-    if let Some(i) = same(&roster.enemies) {
-        return (false, i as u16);
+    if let Some((boss, i)) = roster.index_of(def) {
+        return (boss, i as u16);
     }
     // A def from outside this roster: its namesake, else the roster's first.
     match named(&roster.bosses) {
@@ -680,6 +678,7 @@ pub(super) fn tag(
                 build_of(hero),
                 stats_of(hero),
                 buffs_of(hero),
+                NetRaid::of(&hero.raid),
             ));
             if !described {
                 let look = selection.look.and_then(|i| selection.looks.get(i));
@@ -764,10 +763,47 @@ fn vitals_of(hero: &HeroState) -> NetVitals {
     }
 }
 
-pub(super) fn sync_heroes(mut q: Query<(&HeroState, &mut NetVitals, &mut NetBuild)>) {
-    for (hero, mut vitals, mut build) in &mut q {
+pub(super) fn sync_heroes(
+    mut q: Query<(
+        &HeroState,
+        &mut NetVitals,
+        &mut NetBuild,
+        Option<&mut NetRaid>,
+    )>,
+) {
+    for (hero, mut vitals, mut build, raid) in &mut q {
         vitals.set_if_neq(vitals_of(hero));
         build.set_if_neq(build_of(hero));
+        if let Some(mut raid) = raid {
+            raid.set_if_neq(NetRaid::of(&hero.raid));
+        }
+    }
+}
+
+/// A raid boss's telegraphs replicate as they are laid, so every screen draws the same warning
+/// at the same time ([`super::super::raid`]).
+pub(super) fn tag_telegraphs(
+    mut commands: Commands,
+    fresh: Query<Entity, (With<Telegraph>, Without<Replicated>)>,
+) {
+    for e in &fresh {
+        commands.entity(e).try_insert(Replicated);
+    }
+}
+
+/// A boss's yells, for the clients to show and sound.
+pub(super) fn relay_yells(
+    mut yells: MessageReader<Yelled>,
+    mut out: MessageWriter<ToClients<NetYell>>,
+) {
+    for y in yells.read() {
+        out.write(ToClients {
+            targets: SendTargets::CLIENTS_ONLY,
+            message: NetYell {
+                text: y.text.clone(),
+                sound: y.sound,
+            },
+        });
     }
 }
 

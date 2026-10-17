@@ -189,6 +189,9 @@ pub(super) struct HeroState {
     /// Its part in a party's play ([`super::synergy`]): the group buffs on it, its resurrection,
     /// soulstone and ankh, and its tank stance and taunt.
     pub(super) synergy: super::synergy::HeroSynergy,
+    /// Its part in a raid boss's fight ([`super::raid`]): its debuffs, fear, and the forced moves
+    /// the host sent it.
+    pub(super) raid: super::raid::HeroRaid,
 }
 
 impl Default for HeroState {
@@ -230,6 +233,7 @@ impl Default for HeroState {
             jewelry: jewelry::Jewelry::default(),
             mechanics: Default::default(),
             synergy: Default::default(),
+            raid: Default::default(),
         }
     }
 }
@@ -759,14 +763,37 @@ pub(super) fn follow_leader(
     collide: Option<benilla_world::collision::WorldCollision>,
     world: benilla_world::world_point::WorldPoint,
     leader: Query<&Transform, (With<LocalHero>, Without<Bot>)>,
-    mut bots: Query<(&mut Transform, &mut MovementState, &HeroState), With<Bot>>,
+    mut bots: Query<
+        (
+            &mut Transform,
+            &mut MovementState,
+            &HeroState,
+            Option<&mut super::raid::Walk>,
+        ),
+        With<Bot>,
+    >,
 ) {
     let dt = time.delta_secs();
     let Ok(lead) = leader.single() else { return };
     let extras = party.size.saturating_sub(1);
-    for (mut tf, mut mv, hero) in &mut bots {
+    for (mut tf, mut mv, hero, walk) in &mut bots {
         let mut speed = 0.0;
-        if hero.alive() && dt > 0.0 {
+        // A raid boss's fear, knockback or mind control moves the bot for it.
+        let forced = walk
+            .and_then(|mut w| w.step(&hero.raid, dt))
+            .filter(|_| hero.alive());
+        if let Some(v) = forced {
+            speed = v.length();
+            if speed > 0.0 {
+                tf.translation = super::enemies::ground_on_collision(
+                    collide.as_ref(),
+                    &world,
+                    tf.translation + v * dt,
+                    selection.stage_def().floor,
+                );
+                tf.rotation = Quat::from_rotation_y(yaw_toward(v));
+            }
+        } else if hero.alive() && dt > 0.0 {
             let to = flat(follow_spot(lead.translation, hero.player, extras) - tf.translation);
             let gap = to.length();
             if gap > FOLLOW_SLACK {

@@ -2974,6 +2974,31 @@ const MC_BOSSES: &[Foe] = &[
     giant("Molten Giant", 8269, 62, 3.6, 1.45),
 ];
 
+/// Lucifron (`CreatureDisplayInfo` 13031, the black Flamewaker salamander) closes his cavern's
+/// roster, a scripted raid boss ([`super::raid`]).
+const MC_LUCIFRON_BOSSES: &[Foe] = &[
+    giant("Molten Giant", 8269, 62, 3.8, 1.35),
+    foe("Firelord", 12231, 62, 4.4, 2.0),
+    giant("Lava Surger", 12239, 62, 5.0, 1.2),
+    giant("Ancient Core Hound", 12189, 62, 4.0, 1.1),
+    foe("Flamewaker", 12030, 62, 4.2, 2.0),
+    foe("Lucifron", 13031, 63, 4.6, 2.4),
+];
+
+/// Magmadar (`CreatureDisplayInfo` 10193, the great core hound) closes his lair's roster.
+const MC_MAGMADAR_BOSSES: &[Foe] = &[
+    giant("Molten Giant", 8269, 62, 3.8, 1.35),
+    foe("Firelord", 12231, 62, 4.4, 2.0),
+    giant("Lava Surger", 12239, 62, 5.0, 1.2),
+    giant("Ancient Core Hound", 12189, 62, 4.0, 1.1),
+    foe("Flamewaker", 12030, 62, 4.2, 2.0),
+    giant("Magmadar", 10193, 63, 5.0, 1.8),
+];
+
+/// The adds raid scripts call in, by name ([`super::raid::Does::Adds`]): Lucifron's Flamewaker
+/// Protectors (`CreatureDisplayInfo` 12029, the larger black salamander).
+const MC_ADDS: &[Foe] = &[foe("Flamewaker Protector", 12029, 62, 4.4, 2.0)];
+
 pub(crate) static MAPS: &[MapDef] = &[
     MapDef {
         name: "The Barrens",
@@ -3554,7 +3579,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         leash: 45.0,
         victory: "Lucifron's cavern falls silent.",
         foes: MC_FOES,
-        bosses: MC_BOSSES,
+        bosses: MC_LUCIFRON_BOSSES,
     },
     MapDef {
         name: "Molten Core: Magmadar's Lair",
@@ -3565,7 +3590,7 @@ pub(crate) static MAPS: &[MapDef] = &[
         leash: 24.0,
         victory: "Magmadar's lair is clear.",
         foes: MC_FOES,
-        bosses: MC_BOSSES,
+        bosses: MC_MAGMADAR_BOSSES,
     },
     MapDef {
         name: "Molten Core: South-centre Cavern",
@@ -3650,6 +3675,30 @@ pub(crate) static MAPS: &[MapDef] = &[
 pub(crate) struct Roster {
     pub enemies: Vec<EnemyDef>,
     pub bosses: Vec<EnemyDef>,
+    /// What raid scripts call in on this battleground ([`super::raid`]), never on the clock.
+    pub adds: Vec<EnemyDef>,
+}
+
+impl Roster {
+    /// The kind at `index` of the horde (`boss` false) or the bosses; past the horde, the adds,
+    /// numbered on from it as [`Roster::index_of`] numbers them.
+    pub(crate) fn kind(&self, boss: bool, index: usize) -> Option<&EnemyDef> {
+        if boss {
+            return self.bosses.get(index);
+        }
+        self.enemies
+            .get(index)
+            .or_else(|| self.adds.get(index.checked_sub(self.enemies.len())?))
+    }
+
+    /// Where `def` stands in the roster, `(boss, index)`, as [`Roster::kind`] reads it back.
+    pub(crate) fn index_of(&self, def: &EnemyDef) -> Option<(bool, usize)> {
+        let same = |list: &[EnemyDef]| list.iter().position(|d| std::ptr::eq(d, def));
+        same(&self.bosses)
+            .map(|i| (true, i))
+            .or_else(|| same(&self.enemies).map(|i| (false, i)))
+            .or_else(|| same(&self.adds).map(|i| (false, self.enemies.len() + i)))
+    }
 }
 
 static ROSTERS: std::sync::LazyLock<Vec<Roster>> = std::sync::LazyLock::new(|| {
@@ -3659,11 +3708,18 @@ static ROSTERS: std::sync::LazyLock<Vec<Roster>> = std::sync::LazyLock::new(|| {
                 Roster {
                     enemies: ENEMIES.to_vec(),
                     bosses: BOSSES.to_vec(),
+                    adds: Vec::new(),
                 }
             } else {
                 Roster {
                     enemies: ladder(m.foes, ENEMIES),
                     bosses: ladder(m.bosses, BOSSES),
+                    // Numbered at the ladder's first boss rung: an add, not a boss.
+                    adds: if m.map == 409 {
+                        ladder(MC_ADDS, BOSSES)
+                    } else {
+                        Vec::new()
+                    },
                 }
             }
         })
@@ -3830,7 +3886,13 @@ mod arena_probe {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let creatures = benilla_formats::load_creature_catalog(&mut chain).expect("creatures");
-        for foe in super::MC_FOES.iter().chain(super::MC_BOSSES) {
+        for foe in super::MC_FOES
+            .iter()
+            .chain(super::MC_BOSSES)
+            .chain(super::MC_LUCIFRON_BOSSES)
+            .chain(super::MC_MAGMADAR_BOSSES)
+            .chain(super::MC_ADDS)
+        {
             assert!(
                 creatures.display_scale(foe.display).is_some(),
                 "{} display {} is not a 1.12 CreatureDisplayInfo row",

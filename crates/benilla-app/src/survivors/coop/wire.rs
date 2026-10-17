@@ -14,6 +14,7 @@ use super::super::gear::Slot;
 use super::super::hand::Struck;
 use super::super::hud::Choice;
 use super::super::party::HandDecision;
+use super::super::raid::{ForcedMove, HeroRaid};
 use super::super::Overcharge;
 
 /// An entity inside a message, packed as replicon packs its own.
@@ -146,7 +147,37 @@ pub(in crate::survivors) struct NetStats {
     pub(in crate::survivors) downs: u32,
 }
 
-/// An enemy's kind (its place in the stage's roster) and rank, sent once.
+/// A hero's part in a raid boss's fight that its own machine plays: the latest forced move (fear,
+/// knockback, mind control) by its count, and the seconds of fear or mind control left, in tenths
+/// (a dispel ends one early). Its debuffs travel as its auras ([`NetAuras`]).
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::survivors) struct NetRaid {
+    pub(in crate::survivors) moves: u16,
+    pub(in crate::survivors) last: Option<ForcedMove>,
+    pub(in crate::survivors) left_tenths: u16,
+}
+
+impl NetRaid {
+    pub(in crate::survivors) fn of(raid: &HeroRaid) -> Self {
+        Self {
+            moves: raid.moves,
+            last: raid.last_move,
+            left_tenths: (raid.forced_left.max(0.0) * 10.0)
+                .ceil()
+                .min(f32::from(u16::MAX)) as u16,
+        }
+    }
+
+    /// Into the mirror hero's raid part, which its walk reads.
+    pub(in crate::survivors) fn apply(&self, raid: &mut HeroRaid) {
+        raid.moves = self.moves;
+        raid.last_move = self.last;
+        raid.forced_left = f32::from(self.left_tenths) / 10.0;
+    }
+}
+
+/// An enemy's kind (its place in the stage's roster) and rank, sent once. A raid add is numbered on
+/// past the horde ([`data::Roster::kind`]).
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub(in crate::survivors) struct NetEnemy {
     pub(in crate::survivors) boss: bool,
@@ -413,6 +444,13 @@ pub(in crate::survivors) enum RunPhase {
 pub(in crate::survivors) struct Hand {
     pub(in crate::survivors) choices: Vec<WireChoice>,
     pub(in crate::survivors) build: NetBuild,
+}
+
+/// A boss's yell or emote: its text and its sound's place in [`super::super::raid::SOUNDS`].
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct NetYell {
+    pub(in crate::survivors) text: String,
+    pub(in crate::survivors) sound: u8,
 }
 
 /// A cast edge's kind, as [`crate::creature_anim::CastEventKind`].
@@ -713,6 +751,17 @@ mod tests {
         };
         assert_eq!(round(&fx), fx);
         assert_eq!(fx.entities().len(), 3);
+        // A raid's forced move and yell, lean.
+        let mut raid = HeroRaid::default();
+        raid.knock(Vec3::NEG_Z, 12.0);
+        let net = NetRaid::of(&raid);
+        assert_eq!(round(&net), net);
+        assert!(size(&net) <= 24);
+        let yell = NetYell {
+            text: "Lucifron goes into a berserker rage!".into(),
+            sound: 0,
+        };
+        assert_eq!(round(&yell), yell);
     }
 
     #[test]

@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 11;
+pub(super) const PROTOCOL: u32 = 12;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -170,6 +170,8 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetAuras>()
         .replicate::<NetStats>()
         .replicate::<NetBuffs>()
+        .replicate::<NetRaid>()
+        .replicate::<super::raid::Telegraph>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<Cosmetics>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
@@ -184,6 +186,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_server_message::<StartRun>(Channel::Ordered)
         .add_server_message::<RunPhase>(Channel::Ordered)
         .add_server_message::<Hand>(Channel::Ordered)
+        .add_server_message::<NetYell>(Channel::Ordered)
         .add_mapped_server_message::<NetFx>(Channel::Unreliable);
     social::protocol(app);
 }

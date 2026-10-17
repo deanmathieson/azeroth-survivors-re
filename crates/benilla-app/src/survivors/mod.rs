@@ -36,6 +36,7 @@ mod partyui;
 mod profile;
 mod quests;
 mod racials;
+mod raid;
 mod rewards;
 mod run_options;
 mod settings;
@@ -97,6 +98,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(menu::plugin)
             .add_plugins(hud::notes_plugin)
             .add_plugins(mechanics::plugin)
+            .add_plugins(raid::plugin)
             .add_plugins(synergy::plugin)
             .add_plugins(sfx::plugin)
             .add_plugins(bossbar::plugin)

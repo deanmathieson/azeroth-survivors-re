@@ -307,7 +307,8 @@ pub(super) fn cast_abilities(
         .collect();
     let mut supports = Vec::new();
     for (me, htf, mut hero) in &mut heroes {
-        if hero.alive() {
+        // Feared or mind-controlled by a raid boss, the auto-casts wait ([`super::raid`]).
+        if hero.alive() && hero.raid.can_cast() {
             cast_for(
                 me,
                 htf.translation,
@@ -363,6 +364,8 @@ fn cast_for(
 ) {
     let base_stats = hero.stats();
     let now = run.elapsed;
+    // A raid curse slows the cooldowns' turn ([`super::raid::HeroRaid::cooldown_rate`]).
+    let rate = hero.raid.cooldown_rate();
     let mut foes: Vec<Foe> = enemies
         .iter()
         .filter(|(_, _, e)| !e.dead)
@@ -391,7 +394,7 @@ fn cast_for(
         let def = hero.abilities[i].def;
         // An echo leaves the cooldown to run as it was.
         let echo = hero.mechanics.take_echo(def.key, now);
-        hero.abilities[i].cd -= dt;
+        hero.abilities[i].cd -= dt * rate;
         if hero.abilities[i].cd > 0.0 && !echo {
             continue;
         }

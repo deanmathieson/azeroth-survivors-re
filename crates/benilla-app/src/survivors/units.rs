@@ -325,6 +325,16 @@ impl Marks {
         }
     }
 
+    /// Stop showing `spell`, if it is shown.
+    pub fn remove(&mut self, spell: u32) {
+        for slot in &mut self.slots {
+            if spell != 0 && slot.0 == spell {
+                *slot = (0, 0.0);
+                self.dirty = true;
+            }
+        }
+    }
+
     /// Exactly these spells, held until changed.
     pub fn set(&mut self, spells: &[u32]) {
         let mut want = [(0u32, f32::INFINITY); 8];

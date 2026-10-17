@@ -264,11 +264,20 @@ pub(super) fn drive_hero(
     auto: Option<Res<super::auto::Auto>>,
     mut frame: ResMut<WowFrame>,
     mut player: ResMut<crate::player::Player>,
-    mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero, &HeroState), With<LocalHero>>,
+    mut hero: Query<
+        (
+            &mut Transform,
+            &mut MovementState,
+            &mut Hero,
+            &HeroState,
+            Option<&mut super::raid::Walk>,
+        ),
+        With<LocalHero>,
+    >,
 ) {
     let (points, collide, capsule, loading) = (&world.0, &world.1, &world.2 .0, &world.3);
     let focus = match hero.single_mut() {
-        Ok((mut tf, mut mv, mut hm, me)) => {
+        Ok((mut tf, mut mv, mut hm, me, walk)) => {
             let dt = time.delta_secs();
             let playing = *phase.get() == Phase::Playing && me.dead_t.is_none();
             let wow = view::wow_in_play(*phase.get(), view.mode, auto.is_some());
@@ -297,6 +306,14 @@ pub(super) fn drive_hero(
                 }
                 let auto = auto.as_deref().filter(|_| playing);
                 walk_classic(&keys, &aim, auto, playing, speed, dt, &mut tf, &mut hm)
+            };
+            // A raid boss's fear, knockback or mind control moves the hero for it.
+            let forced = walk
+                .and_then(|mut w| w.step(&me.raid, dt))
+                .filter(|_| playing);
+            let (vel, flags, pace) = match forced {
+                Some(v) => forced_gait(&mut tf, &mut hm, v),
+                None => (vel, flags, pace),
             };
             // Space hops: WoW's jump keeps its launch; the classic hop steers in the air.
             let jump = playing && keys.just_pressed(KeyCode::Space);
@@ -357,6 +374,17 @@ pub(super) fn drive_hero(
     player.settling = false;
     player.world_stale = false;
     player.pos = focus;
+}
+
+/// A forced move's velocity as the walk shows it: a run along it, facing it, or standing held.
+/// Returns the velocity, the movement word and the pace.
+pub(super) fn forced_gait(tf: &mut Transform, hm: &mut Hero, v: Vec3) -> (Vec3, u32, f32) {
+    if v == Vec3::ZERO {
+        return (Vec3::ZERO, 0, 0.0);
+    }
+    hm.face = yaw_toward(v);
+    tf.rotation = Quat::from_rotation_y(hm.face);
+    (v, move_flags::FORWARD, v.length())
 }
 
 /// WoW's keys: the keyboard turn, the walk along the facing (backpedalling slower), and the model
@@ -828,6 +856,8 @@ pub(super) fn hero_vitals(
         if burning {
             shown.push(LAVA_BURN_SPELL);
         }
+        // A raid boss's debuffs on it: curses, doom, mind control, stacks.
+        super::raid::show_debuffs(&hero, &mut shown);
         // Then its part in the party: its stance, a soulstone, the group buffs on it.
         super::synergy::auras(&hero, &mut shown);
         // A spec's form: its stance, aura or shapeshift glow, held all run.

@@ -17,6 +17,7 @@ use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandOutbox};
 use super::super::partyui::{self, FillPartyView, HeroRead, PartyView};
 use super::super::profile::Profile;
+use super::super::raid::Yelled;
 use super::super::run_options::RunOptions;
 use super::super::synergy::{self, PartyBuff};
 use super::super::talents;
@@ -64,6 +65,7 @@ pub(super) fn plugin(app: &mut App) {
                     copy_run,
                     receive_hands,
                     play_fx,
+                    receive_yells,
                 )
                     .chain()
                     .run_if(joined),
@@ -471,7 +473,7 @@ fn materialize(
             } else {
                 &roster.enemies
             };
-            let Some(def) = list.get(usize::from(n.index)).or(list.first()) else {
+            let Some(def) = roster.kind(n.boss, usize::from(n.index)).or(list.first()) else {
                 continue;
             };
             // Its shared debuffs and elite mark show as the host's do ([`mirror_auras`]).
@@ -514,13 +516,18 @@ fn mirror_heroes(
         Ref<NetBuild>,
         Option<Ref<NetStats>>,
         Option<Ref<NetBuffs>>,
+        Option<Ref<NetRaid>>,
         &mut HeroState,
         &mut ObjectStore,
         Has<LocalHero>,
     )>,
     mut run: ResMut<Run>,
 ) {
-    for (vitals, build, stats, buffs, mut hero, mut store, local) in &mut heroes {
+    for (vitals, build, stats, buffs, raid, mut hero, mut store, local) in &mut heroes {
+        // A raid boss's forced moves: this player's own walk plays them ([`super::super::raid`]).
+        if let Some(raid) = raid.filter(|r| r.is_changed()) {
+            raid.apply(&mut hero.raid);
+        }
         if build.is_changed() {
             apply_build(&mut hero, &build);
             if local {
@@ -655,6 +662,16 @@ fn copy_run(
         if run.banner.as_ref().is_none_or(|b| b.0 != *text) {
             run.banner = Some((text.clone(), 3.0));
         }
+    }
+}
+
+/// The host's boss yells, shown and sounded here as there.
+fn receive_yells(mut msgs: MessageReader<NetYell>, mut yells: MessageWriter<Yelled>) {
+    for y in msgs.read() {
+        yells.write(Yelled {
+            text: y.text.clone(),
+            sound: y.sound,
+        });
     }
 }
 

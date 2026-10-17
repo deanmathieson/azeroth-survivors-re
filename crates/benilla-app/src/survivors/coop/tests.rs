@@ -331,6 +331,15 @@ fn every_enemy_kind_is_found_again_in_the_roster() {
         for (i, def) in roster.bosses.iter().enumerate() {
             assert_eq!(host::roster_index(stage, def), (true, i as u16));
         }
+        // A raid script's add is numbered on past the horde, and a client finds it there.
+        for (i, def) in roster.adds.iter().enumerate() {
+            let (boss, idx) = host::roster_index(stage, def);
+            assert_eq!((boss, usize::from(idx)), (false, roster.enemies.len() + i));
+            assert_eq!(
+                roster.kind(boss, usize::from(idx)).map(|d| d.name),
+                Some(def.name)
+            );
+        }
     }
 }
 
@@ -1003,4 +1012,97 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
     assert_eq!(world.get::<NetHero>(mine).unwrap().mount_display, 2404);
     assert_eq!(world.get::<NetHero>(theirs).unwrap().mount_display, 10718);
     assert_eq!(world.get::<NetHero>(theirs).unwrap().mount_hat, Some(hat));
+}
+
+/// A raid boss's telegraph, a hero's forced move and a boss's yell, laid on the host, reach the
+/// client over the loopback: the same warning at the same time, the fear its own walk plays, and
+/// the yell's line and sound.
+#[test]
+fn a_raid_telegraph_a_fear_and_a_yell_reach_the_client_over_loopback() {
+    use super::super::raid::{self, HeroRaid, Shape, Telegraph, Tone, Walk, Yelled};
+    let mut host_app = app();
+    let mut client_app = app();
+    host_app.add_message::<Yelled>();
+    host_app.add_systems(
+        Update,
+        (host::tag_telegraphs, host::sync_heroes, host::relay_yells),
+    );
+
+    let channels = host_app.world().resource::<RepliconChannels>();
+    let (server, transport, port) = net::host(channels, 0).expect("binds the loopback");
+    host_app.insert_resource(server).insert_resource(transport);
+    let to = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let channels = client_app.world().resource::<RepliconChannels>();
+    let (client, transport) = net::join(channels, to).expect("binds a client socket");
+    client_app
+        .insert_resource(client)
+        .insert_resource(transport);
+    pump(&mut host_app, &mut client_app, |h, c| {
+        *c.world().resource::<State<ClientState>>() == ClientState::Connected
+            && h.world_mut()
+                .query::<&AuthorizedClient>()
+                .iter(h.world())
+                .count()
+                == 1
+    });
+
+    // Magmadar's Panic ring, winding up, and a hero it has feared.
+    let laid = Telegraph {
+        shape: Shape::Circle { radius: 30.0 },
+        at: [1112.0, -187.3, 1008.0],
+        yaw: 0.5,
+        tone: Tone::Control,
+        start: 40.0,
+        land: 42.0,
+        until: 42.0,
+    };
+    host_app.world_mut().spawn(laid);
+    let mut feared = HeroRaid::default();
+    feared.fear(Vec3::X, 6.0);
+    host_app
+        .world_mut()
+        .spawn((Replicated, NetRaid::of(&feared)));
+    host_app.world_mut().write_message(Yelled {
+        text: "Magmadar goes into a killing frenzy!".into(),
+        sound: 0,
+    });
+
+    let mut yells: Vec<NetYell> = Vec::new();
+    pump(&mut host_app, &mut client_app, |_, c| {
+        yells.extend(drain::<NetYell>(c));
+        let telegraphs = c.world_mut().query::<&Telegraph>().iter(c.world()).count();
+        let raids = c.world_mut().query::<&NetRaid>().iter(c.world()).count();
+        telegraphs == 1 && raids == 1 && !yells.is_empty()
+    });
+    let seen = *client_app
+        .world_mut()
+        .query::<&Telegraph>()
+        .single(client_app.world())
+        .unwrap();
+    assert_eq!(
+        seen, laid,
+        "every screen draws the same warning at the same time"
+    );
+    assert!(seen.contains(Vec3::new(1112.0 + 20.0, -187.3, 1008.0)));
+    assert_eq!(
+        yells[0],
+        NetYell {
+            text: "Magmadar goes into a killing frenzy!".into(),
+            sound: 0
+        }
+    );
+    assert_eq!(raid::SOUNDS[0], "RaidWarning");
+
+    // The client's own walk plays the fear the host sent.
+    let net = *client_app
+        .world_mut()
+        .query::<&NetRaid>()
+        .single(client_app.world())
+        .unwrap();
+    let mut mirror = HeroRaid::default();
+    net.apply(&mut mirror);
+    assert!((mirror.forced_left - 6.0).abs() < 0.11);
+    let mut walk = Walk::default();
+    let v = walk.step(&mirror, 0.1).expect("feared");
+    assert!(v.x > 0.0 && v.z.abs() < 1e-4, "{v}");
 }
