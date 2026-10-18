@@ -17,6 +17,7 @@ use super::cards::{PendingPick, Rays};
 use super::hud::{self, HudFont, Offer};
 use super::party::{self, Bot, LocalHero, NetRole};
 use super::{jewelry, HeroState, Phase, Rng, Run};
+use crate::cvars::Cvars;
 
 /// The key that opens and hides the hand strip; the toy bar has 7 to 9, F the mobility spell.
 pub(super) const STRIP_KEY: KeyCode = KeyCode::Tab;
@@ -113,12 +114,16 @@ pub(super) fn catch_up(level: u32) -> u32 {
 /// become every hero's banked hands, bots take theirs at once, and play goes on.
 pub(super) fn bank_level_ups(
     coop: Res<CoopRun>,
+    cvars: Res<Cvars>,
     mut next: ResMut<NextState<Phase>>,
     mut run: ResMut<Run>,
     mut heroes: Query<(&mut HeroState, Has<Bot>)>,
     mut rng: ResMut<Rng>,
 ) {
-    if !coop.0 {
+    let quick_picks = cvars
+        .get("survivorsQuickPicks")
+        .is_none_or(|value| value != "0");
+    if !(coop.0 || quick_picks) {
         return;
     }
     if matches!(
@@ -149,6 +154,7 @@ fn toggle_strip(
     keys: Res<ButtonInput<KeyCode>>,
     phase: Res<State<Phase>>,
     coop: Res<CoopRun>,
+    cvars: Res<Cvars>,
     offer: Res<Offer>,
     local: Query<&HeroState, With<LocalHero>>,
     run: Res<Run>,
@@ -157,7 +163,10 @@ fn toggle_strip(
     let holds = local
         .single()
         .is_ok_and(|me| me.alive() && (banked(me) > 0 || offer.len() > 0));
-    if !(coop.0 && *phase.get() == Phase::Playing && holds) {
+    let quick_picks = cvars
+        .get("survivorsQuickPicks")
+        .is_none_or(|value| value != "0");
+    if !((coop.0 || quick_picks) && *phase.get() == Phase::Playing && holds) {
         if strip.open {
             strip.open = false;
         }
@@ -179,6 +188,7 @@ fn focus(
     coop: Res<CoopRun>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
 ) {
+    // Solo quick picks use the strip but do not gain co-op's damage reduction.
     let want = coop.0 && strip.open;
     if let Ok(mut me) = local.single_mut() {
         if me.focused != want {
@@ -191,6 +201,7 @@ fn focus(
 /// gone down puts its hand away.
 fn deal_local(
     coop: Res<CoopRun>,
+    cvars: Res<Cvars>,
     role: Res<NetRole>,
     pending: Res<PendingPick>,
     run: Res<Run>,
@@ -198,7 +209,11 @@ fn deal_local(
     mut rng: ResMut<Rng>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
 ) {
-    if !coop.0 || *role == NetRole::Client || pending.busy() || run.breather > 0.0 {
+    let quick_picks = cvars
+        .get("survivorsQuickPicks")
+        .is_none_or(|value| value != "0");
+    if !(coop.0 || quick_picks) || *role == NetRole::Client || pending.busy() || run.breather > 0.0
+    {
         return;
     }
     let Ok(mut me) = local.single_mut() else {
@@ -293,6 +308,7 @@ fn spawn_badge(mut commands: Commands, font: Option<Res<HudFont>>, badges: Query
 fn refresh_badge(
     phase: Res<State<Phase>>,
     coop: Res<CoopRun>,
+    cvars: Res<Cvars>,
     strip: Res<HandStrip>,
     local: Query<&HeroState, With<LocalHero>>,
     mut badges: Query<(&mut Node, &Children), With<Badge>>,
@@ -303,7 +319,10 @@ fn refresh_badge(
         .ok()
         .filter(|me| me.alive())
         .map_or(0, banked);
-    let on = coop.0 && *phase.get() == Phase::Playing && !strip.open && n > 0;
+    let quick_picks = cvars
+        .get("survivorsQuickPicks")
+        .is_none_or(|value| value != "0");
+    let on = (coop.0 || quick_picks) && *phase.get() == Phase::Playing && !strip.open && n > 0;
     for (mut node, children) in &mut badges {
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {

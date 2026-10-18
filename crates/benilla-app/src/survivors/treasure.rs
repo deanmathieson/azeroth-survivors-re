@@ -540,7 +540,7 @@ pub(super) fn open_caches(
     time: Res<Time>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
-    heroes: Query<(Entity, &Transform, &HeroState), With<Hero>>,
+    mut heroes: Query<(Entity, &Transform, &mut HeroState), With<Hero>>,
     mut caches: Query<(Entity, &Guid, &Transform, &mut Cache, &mut ObjectStore), Without<Hero>>,
     mut fields: MessageWriter<FieldChanged>,
     mut fx: Fx,
@@ -613,7 +613,18 @@ pub(super) fn open_caches(
             if let Some(glow) = cache.glow.take() {
                 commands.entity(glow).try_despawn();
             }
-            let gold = open_boss_chest(&mut run, opener, cache.tier);
+            let gold = boss_chest_gold(cache.tier, run.elapsed, opener.stats().gold);
+            run.gold += gold;
+            run.pending_levels += 1;
+            let _ = opener;
+            // A boss advances every living player's hand tools; this runs on the host/solo
+            // simulation, so the replicated hero state remains authoritative.
+            for (_, _, mut state) in &mut heroes {
+                if state.alive() {
+                    state.rerolls += 1;
+                    state.banishes += 1;
+                }
+            }
             fx.number(hero_e, gold as f32, false, COLOR_GOLD);
             rolls.0.push(BossChestOpened {
                 map: selection.map,

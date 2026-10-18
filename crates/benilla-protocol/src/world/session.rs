@@ -855,7 +855,10 @@ impl WorldSession {
         self.conn
             .set_read_timeout(None)
             .context("clearing handshake read timeout")?;
-        let (reader, writer) = self.conn.split().context("splitting the world connection")?;
+        let (reader, writer) = self
+            .conn
+            .split()
+            .context("splitting the world connection")?;
         let (encrypter, decrypter) = self.crypto.split();
         Ok((
             WorldReader { reader, decrypter },

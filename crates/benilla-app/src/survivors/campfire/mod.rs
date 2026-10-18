@@ -83,14 +83,16 @@ const HEALTHSTONE_HEAL: f32 = 0.5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) enum VendorItem {
     Reroll,
+    Banish,
     Healthstone,
     ElixirOfTheMongoose,
     ElixirOfFortitude,
 }
 
 impl VendorItem {
-    pub(super) const ALL: [Self; 4] = [
+    pub(super) const ALL: [Self; 5] = [
         Self::Reroll,
+        Self::Banish,
         Self::Healthstone,
         Self::ElixirOfTheMongoose,
         Self::ElixirOfFortitude,
@@ -99,6 +101,7 @@ impl VendorItem {
     pub(super) const fn price(self) -> u32 {
         match self {
             Self::Reroll => 25,
+            Self::Banish => 25,
             Self::Healthstone => 35,
             Self::ElixirOfTheMongoose | Self::ElixirOfFortitude => 50,
         }
@@ -107,6 +110,7 @@ impl VendorItem {
     pub(super) const fn name(self) -> &'static str {
         match self {
             Self::Reroll => "Reroll Token",
+            Self::Banish => "Banish Token",
             Self::Healthstone => "Healthstone",
             Self::ElixirOfTheMongoose => "Elixir of the Mongoose",
             Self::ElixirOfFortitude => "Elixir of Fortitude",
@@ -118,6 +122,7 @@ impl VendorItem {
     pub(super) const fn icon(self) -> &'static str {
         match self {
             Self::Reroll => "Interface\\Icons\\INV_Misc_Token_ArgentDawn",
+            Self::Banish => "Interface\\Icons\\Spell_Shadow_AnimateDead",
             Self::Healthstone => "Interface\\Icons\\INV_Stone_04",
             Self::ElixirOfTheMongoose => "Interface\\Icons\\INV_Potion_32",
             Self::ElixirOfFortitude => "Interface\\Icons\\INV_Potion_44",
@@ -127,6 +132,7 @@ impl VendorItem {
     pub(super) const fn blurb(self) -> &'static str {
         match self {
             Self::Reroll => "One more reroll of a hand",
+            Self::Banish => "Remove one offer from future hands",
             Self::Healthstone => "Restores half your health",
             Self::ElixirOfTheMongoose => "+4% crit, +5% speed, 2 min",
             Self::ElixirOfFortitude => "+30 maximum health, 2 min",
@@ -292,6 +298,7 @@ pub(in crate::survivors) fn buy(run: &mut Run, hero: &mut HeroState, item: Vendo
     run.gold -= item.price();
     match item {
         VendorItem::Reroll => hero.rerolls += 1,
+        VendorItem::Banish => hero.banishes += 1,
         VendorItem::Healthstone => {
             let amount = hero.stats().max_hp * HEALTHSTONE_HEAL;
             party::heal(hero, amount);

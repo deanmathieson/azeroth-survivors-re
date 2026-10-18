@@ -2827,17 +2827,28 @@ pub(crate) fn wave_pool(elapsed: f32, tiers: usize) -> [usize; 3] {
 
 /// How many enemies the spawner keeps alive at a point in the run.
 pub(crate) fn target_alive(elapsed: f32) -> usize {
-    ((14.0 + progress(elapsed) * 225.0) as usize).min(220)
+    let p = progress(elapsed);
+    ((14.0 + p * 225.0 + (p - 0.6).max(0.0) * 35.0) as usize).min(240)
 }
 
 /// Enemy health grows on top of the tiers, so a late kill takes several spells.
 pub(crate) fn hp_scale(elapsed: f32) -> f32 {
-    1.0 + progress(elapsed) * 0.75
+    let p = progress(elapsed);
+    1.0 + p * 0.75 + (p - 0.6).max(0.0) * 2.125
 }
 
 /// Enemy damage grows the same way.
 pub(crate) fn damage_scale(elapsed: f32) -> f32 {
     1.0 + progress(elapsed) * 0.9
+}
+
+#[cfg(test)]
+#[test]
+fn late_game_health_and_density_step_up_after_sixty_percent() {
+    let six = VICTORY_SECS * 0.6;
+    assert_eq!(hp_scale(six), 1.45);
+    assert!(hp_scale(VICTORY_SECS) >= 2.59);
+    assert!(target_alive(VICTORY_SECS) > 230);
 }
 
 /// The experience to go from `level` to the next: cheap early, then a steady climb that leaves a

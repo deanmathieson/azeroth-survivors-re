@@ -31,6 +31,7 @@ const VIDEO: &[Setting] = &[
 const INTERFACE: &[Setting] = &[
     Setting::slider("Mouse Look Sensitivity", "mousespeed"),
     Setting::check("Invert Mouse Look", "mouseInvertPitch"),
+    Setting::check("Quick picks", "survivorsQuickPicks"),
 ];
 const KEYS: &[&str] = &[
     "WASD — move",

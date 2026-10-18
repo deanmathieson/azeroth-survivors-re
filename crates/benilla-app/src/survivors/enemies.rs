@@ -887,6 +887,16 @@ pub(super) fn collect_gems(
         run.level += 1;
         run.pending_levels += 1;
     }
+    if run.level > learned {
+        // A level is a breather even when Quick Picks keeps the horde moving.  The short
+        // immunity is deliberately per hero, rather than a shared party shield.
+        for (_, _, mut hero, _) in &mut heroes {
+            if hero.alive() {
+                hero.immune_t = hero.immune_t.max(1.0);
+            }
+        }
+        run.banner = Some(("Level up!".into(), 1.0));
+    }
     // The local hero is told of its mobility as the party reaches the level that teaches it.
     if learned < super::mobility::LEARN_LEVEL && run.level >= super::mobility::LEARN_LEVEL {
         let class = heroes

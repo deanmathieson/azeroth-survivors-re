@@ -1249,7 +1249,8 @@ pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
     for (i, o) in hero.abilities.iter().enumerate() {
         if o.level < data::MAX_ABILITY_LEVEL {
-            pool.push((Choice::Upgrade(i), 1.2));
+            let weight = if hero.abilities.len() >= 3 { 1.8 } else { 1.2 };
+            pool.push((Choice::Upgrade(i), weight));
         }
     }
     if hero.abilities.len() < data::MAX_ABILITIES {
@@ -1257,7 +1258,8 @@ pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
             if !hero.abilities.iter().any(|o| o.def.key == *key)
                 && super::talents::offered(hero, key)
             {
-                pool.push((Choice::NewAbility(data::ability(key)), 1.0));
+                let weight = if hero.abilities.len() >= 3 { 0.5 } else { 1.0 };
+                pool.push((Choice::NewAbility(data::ability(key)), weight));
             }
         }
     }
@@ -1714,12 +1716,12 @@ pub(super) fn describe_card(
         Choice::Overcharge(kind) => {
             let stack = hero.overcharges[kind.index()];
             let (name, desc) = match kind {
-                Overcharge::Damage => ("Overcharge: Damage", "Increases all damage by 4%."),
-                Overcharge::Haste => ("Overcharge: Haste", "Reduces cooldowns by 3%."),
-                Overcharge::MaxHp => ("Overcharge: Vitality", "Increases maximum health by 5%."),
-                Overcharge::Speed => ("Overcharge: Speed", "Increases movement speed by 4%."),
-                Overcharge::Magnet => ("Overcharge: Magnet", "Increases pickup radius by 10%."),
-                Overcharge::Gold => ("Overcharge: Gold", "Increases gold found by 10%."),
+                Overcharge::Damage => ("Overcharge: Damage", "Increases all damage by 6%."),
+                Overcharge::Haste => ("Overcharge: Haste", "Reduces cooldowns by 4%."),
+                Overcharge::MaxHp => ("Overcharge: Vitality", "Increases maximum health by 6%."),
+                Overcharge::Speed => ("Overcharge: Speed", "Increases movement speed by 5%."),
+                Overcharge::Magnet => ("Overcharge: Magnet", "Increases pickup radius by 12%."),
+                Overcharge::Gold => ("Overcharge: Gold", "Increases gold found by 12%."),
             };
             CardText {
                 spell: 0,

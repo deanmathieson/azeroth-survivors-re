@@ -286,6 +286,21 @@ pub(super) fn pick_at_random(hero: &mut HeroState, rng: &mut Rng) {
     }
 }
 
+/// Drain a backed-up build without stopping the run.  This uses the normal weighted offer pool,
+/// so established spells remain the preferred direction instead of a random pile of new buttons.
+pub(super) fn auto_build(hero: &mut HeroState, rng: &mut Rng) -> u32 {
+    let mut spent = 0;
+    while hero.picks > 0 {
+        let Some(choice) = hud::draw(hud::offer_pool(hero), 1, rng).pop() else {
+            break;
+        };
+        hud::take(hero, choice);
+        hero.picks -= 1;
+        spent += 1;
+    }
+    spent
+}
+
 /// Whether a hero takes its cards at random the moment they are dealt: a [`Bot`] that is up. A
 /// downed bot banks them, as anyone does.
 pub(super) fn auto_picks(hero: &HeroState, bot: bool) -> bool {

@@ -648,12 +648,13 @@ impl HeroState {
         let mut speed_pct = b.get(StatKey::MoveSpeed);
         let mut magnet_pct = b.get(StatKey::Pickup);
         let overcharge = |kind: Overcharge| self.overcharges[kind.index()] as f32;
-        s.might += overcharge(Overcharge::Damage) * 0.04;
-        s.haste += overcharge(Overcharge::Haste) * 0.03;
-        hp_pct += overcharge(Overcharge::MaxHp) * 0.05;
-        speed_pct += overcharge(Overcharge::Speed) * 0.04;
-        magnet_pct += overcharge(Overcharge::Magnet) * 0.10;
-        s.gold += overcharge(Overcharge::Gold) * 0.10;
+        let paragon = self.overcharges.iter().sum::<u32>() / 5;
+        s.might += overcharge(Overcharge::Damage) * 0.06 + paragon as f32 * 0.10;
+        s.haste += overcharge(Overcharge::Haste) * 0.04;
+        hp_pct += overcharge(Overcharge::MaxHp) * 0.06;
+        speed_pct += overcharge(Overcharge::Speed) * 0.05;
+        magnet_pct += overcharge(Overcharge::Magnet) * 0.12;
+        s.gold += overcharge(Overcharge::Gold) * 0.12;
         // Tanky classes start tougher, cloth starts quicker.
         match self.class.id {
             1 | 2 => s.max_hp += 40.0,
@@ -1027,5 +1028,12 @@ mod tests {
         assert_eq!(lucky.luck_weight(0), 1.0);
         assert!(close(lucky.luck_weight(2), 2.25));
         assert!(lucky.luck_weight(4) > lucky.luck_weight(3));
+    }
+
+    #[test]
+    fn every_five_overcharges_grants_paragon_damage() {
+        let mut hero = HeroState::default();
+        hero.overcharges[Overcharge::Damage.index()] = 5;
+        assert!(close(hero.stats().might, 1.4));
     }
 }

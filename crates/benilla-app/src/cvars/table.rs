@@ -382,6 +382,13 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // The default matches; Deviation: here the dial multiplies the camera's own rate, because
     // benilla does not change the OS pointer speed, a system-wide setting.
     same("mousespeed", "1"),
+    // Survivors-only accessibility knob.  Its default keeps the action flowing; it is consumed
+    // only by the fork's roguelite overlay, not by the 1.12 UI.
+    ours(
+        "survivorsQuickPicks",
+        "1",
+        "the survivors fork uses its compact, non-pausing picker by default",
+    ),
     // The zoom-out limit is `cameraDistanceMax × cameraDistanceMaxFactor`, held to [0, 50]
     // (`0x5112d6`). `cameraDistanceMax` (`0x50beb2`, default `0x84fbd0`) has no panel row; its
     // validator `0x50b310` refuses a value outside [0, 50], and `player::camera::on_cvar` does the
