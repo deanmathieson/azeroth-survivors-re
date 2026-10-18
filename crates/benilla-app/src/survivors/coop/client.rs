@@ -210,6 +210,9 @@ fn watch_link(
                     .map_or_else(Vec::new, |saved| saved.ranks.clone()),
                 mount_display: cosmetics.0,
                 mount_hat: cosmetics.1,
+                pinned_trinket: profile
+                    .as_deref()
+                    .and_then(|p| p.faire.wardrobe.pinned_trinket.clone()),
                 build: super::build_tag(build.as_deref()),
             });
         }

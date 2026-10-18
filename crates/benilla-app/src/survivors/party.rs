@@ -329,16 +329,15 @@ pub(super) fn apply_pick(hero: &mut HeroState, choice: Choice) -> bool {
 /// A [`Remote`] player's Skip: one hand passed up for the gold [`hand::skip_gold`] pays under the
 /// skipper's own multiplier, into the party's purse. `None` for a hero downed or with no hand.
 #[cfg_attr(not(feature = "coop"), allow(dead_code))]
-pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run) -> Option<u32> {
-    if !hero.alive() || super::strip::banked(hero) == 0 {
+pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run, held: &[Choice]) -> Option<u32> {
+    if !hero.alive() || held.is_empty() {
         return None;
     }
     let gold = hand::skip_gold(run, hero);
     run.gold += gold;
     hero.gold += gold;
     hero.gold_collected += gold;
-    // The hand on offer is a jewelry choice while one is banked ([`next_hand`]).
-    if hero.jewelry.picks > 0 {
+    if held.iter().any(|choice| matches!(choice, Choice::Jewel(_))) {
         hero.jewelry.picks -= 1;
     } else {
         hero.picks -= 1;
@@ -354,7 +353,8 @@ pub(super) fn next_hand(hero: &mut HeroState, level: u32, rng: &mut Rng) -> Opti
         return None;
     }
     while hero.jewelry.picks > 0 {
-        let pieces = jewelry::roll(jewelry::pieces(), &hero.jewelry, &hero.stats(), level, rng);
+        let pool: Vec<_> = jewelry::pieces().iter().collect();
+        let pieces = jewelry::roll_pool(&pool, &hero.jewelry, &hero.stats(), level, rng);
         if !pieces.is_empty() {
             return Some(pieces.into_iter().map(Choice::Jewel).collect());
         }
@@ -412,7 +412,8 @@ pub(super) fn open_banked_picks(
         }
         if bot {
             if hero.picks > 0 || hero.jewelry.picks > 0 {
-                jewelry::choose_at_random(&mut hero, run.level, &mut rng);
+                let pool: Vec<_> = jewelry::pieces().iter().collect();
+                jewelry::choose_at_random(&mut hero, &pool, run.level, &mut rng);
                 pick_at_random(&mut hero, &mut rng);
             }
         } else if local && hero.jewelry.picks > 0 {
@@ -1129,7 +1130,7 @@ mod tests {
         down.dead_t = Some(0.0);
         assert!(!holds_level_up(&down, false));
         assert!(party_picked([(&down, false)]));
-        assert!(apply_skip(&mut down, &mut Run::default()).is_none());
+        assert!(apply_skip(&mut down, &mut Run::default(), &[Choice::Heal]).is_none());
     }
 
     #[test]
@@ -1147,8 +1148,8 @@ mod tests {
             super::super::bonus::StatKey::Gold,
             1.0,
         ));
-        let a = apply_skip(&mut plain, &mut run).unwrap();
-        let b = apply_skip(&mut rich, &mut run).unwrap();
+        let a = apply_skip(&mut plain, &mut run, &[Choice::Heal]).unwrap();
+        let b = apply_skip(&mut rich, &mut run, &[Choice::Heal]).unwrap();
         assert_eq!(b, 2 * a);
         assert_eq!(run.gold, a + b);
         assert_eq!((plain.picks, rich.picks), (0, 0));

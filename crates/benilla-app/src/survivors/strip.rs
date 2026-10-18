@@ -136,7 +136,8 @@ pub(super) fn bank_level_ups(
     let level = run.level;
     for (mut hero, bot) in &mut heroes {
         if party::auto_picks(&hero, bot) {
-            jewelry::choose_at_random(&mut hero, level, &mut rng);
+            let pool: Vec<_> = jewelry::pieces().iter().collect();
+            jewelry::choose_at_random(&mut hero, &pool, level, &mut rng);
             party::pick_at_random(&mut hero, &mut rng);
         }
     }
@@ -197,7 +198,7 @@ fn deal_local(
     mut rng: ResMut<Rng>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
 ) {
-    if !coop.0 || *role == NetRole::Client || pending.busy() {
+    if !coop.0 || *role == NetRole::Client || pending.busy() || run.breather > 0.0 {
         return;
     }
     let Ok(mut me) = local.single_mut() else {
@@ -244,7 +245,7 @@ pub(super) fn slow_mo(
     let slow = if *role == NetRole::Client {
         run.slow
     } else {
-        let slow = coop.0 && all_choosing(heroes.iter());
+        let slow = coop.0 && run.breather <= 0.0 && all_choosing(heroes.iter());
         if run.slow != slow {
             run.slow = slow;
         }

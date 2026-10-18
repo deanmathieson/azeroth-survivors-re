@@ -122,7 +122,9 @@ pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
     match choice {
         Choice::NewAbility(def) => spell_tier(def, hero),
         Choice::Upgrade(k) => {
-            let o = &hero.abilities[k];
+            let Some(o) = hero.abilities.get(k) else {
+                return Rarity::Common;
+            };
             let next = o.level + 1;
             let targets = [3, 5, 7].contains(&next)
                 && matches!(
@@ -141,11 +143,12 @@ pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
             }
         }
         Choice::NewPassive(_) => Rarity::Uncommon,
-        Choice::UpPassive(k) => match hero.passives[k].1 + 1 {
-            n if n == data::MAX_PASSIVE_LEVEL => Rarity::Epic,
-            n if n + 1 == data::MAX_PASSIVE_LEVEL => Rarity::Rare,
-            2 => Rarity::Common,
-            _ => Rarity::Uncommon,
+        Choice::UpPassive(k) => match hero.passives.get(k).map(|(_, level)| level + 1) {
+            None => Rarity::Common,
+            Some(n) if n == data::MAX_PASSIVE_LEVEL => Rarity::Epic,
+            Some(n) if n + 1 == data::MAX_PASSIVE_LEVEL => Rarity::Rare,
+            Some(2) => Rarity::Common,
+            Some(_) => Rarity::Uncommon,
         },
         Choice::Overcharge(_) => Rarity::Epic,
         Choice::Jewel(piece) => piece.rarity,

@@ -343,6 +343,8 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) talents: Vec<(u32, u8)>,
     pub(in crate::survivors) mount_display: u32,
     pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
+    /// Completed-deck trinket pinned by this player's own profile.
+    pub(in crate::survivors) pinned_trinket: Option<String>,
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -628,6 +630,7 @@ mod tests {
                 pitch: 0.0,
                 scale: 1.0,
             }),
+            pinned_trinket: None,
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);

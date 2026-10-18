@@ -246,7 +246,8 @@ pub(super) fn use_tools(
                     offer.deal(Vec::new());
                 }
                 None if banked => {
-                    if let Some(gold) = super::party::apply_skip(&mut me, &mut run) {
+                    if let Some(gold) = super::party::apply_skip(&mut me, &mut run, offer.choices())
+                    {
                         run.banner = Some((format!("Skipped: +{gold} gold"), 2.5));
                     }
                     offer.deal(Vec::new());

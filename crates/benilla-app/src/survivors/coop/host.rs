@@ -15,6 +15,7 @@ use super::super::gear::GearRead;
 use super::super::hand;
 use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
+use super::super::jewelry;
 use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
 use super::super::profile::Profile;
@@ -45,6 +46,7 @@ pub(super) struct Peer {
     pub(super) talents: Vec<(u32, u8)>,
     pub(super) mount_display: u32,
     pub(super) mount_hat: Option<super::super::stable::CosmeticHat>,
+    pub(super) pinned_trinket: Option<String>,
     pub(super) hero: Option<Entity>,
 }
 
@@ -224,6 +226,7 @@ pub(super) fn greet(
             talents: h.talents.clone(),
             mount_display: h.mount_display,
             mount_hat: h.mount_hat,
+            pinned_trinket: h.pinned_trinket.clone(),
             // A repeated hello (sent until welcomed) keeps the hero it has.
             hero: old_hero,
         });
@@ -443,7 +446,7 @@ pub(super) fn decide(
             *held = None;
         }
         HandDecision::Skip => {
-            party::apply_skip(hero, run)?;
+            party::apply_skip(hero, run, hand)?;
             *held = None;
         }
         // A jewelry hand is not rerolled.
@@ -581,6 +584,11 @@ pub(super) fn spawn_peer_hero(
     let spec = talents::grant_learned(&mut state, &peer.talents);
     // Joining a run under way, it banks a hand for every level the party has made.
     state.picks = super::super::strip::catch_up(run.level);
+    // Caches already opened paid every existing player a jewelry choice.
+    state.jewelry.picks = run.caches;
+    if let Some(piece) = peer.pinned_trinket.as_deref().and_then(jewelry::piece) {
+        jewelry::put_on(&mut state, piece);
+    }
     let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
     let mut remote = commands.entity(e);
     remote.insert((

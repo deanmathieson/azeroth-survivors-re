@@ -2847,13 +2847,22 @@ pub(crate) fn xp_to_next(level: u32) -> f32 {
     if level < 11 {
         10.0 + (l - 1.0) * 17.0
     } else if level < 25 {
-        147.0 - (l - 10.0)
+        // Level 10 costs 163: never make the next level cheaper than the last.
+        163.0
     } else if level < 40 {
         let middle = l - 25.0;
-        133.0 + middle * 32.0 - middle * middle * 0.84
+        163.0 + middle * 32.0 - middle * middle * 0.84
     } else {
         let late = l - 40.0;
         425.0 + late * 9.0 + late * late * 6.6
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn xp_requirements_never_fall() {
+    for level in 1..100 {
+        assert!(xp_to_next(level + 1) >= xp_to_next(level), "level {level}");
     }
 }
 

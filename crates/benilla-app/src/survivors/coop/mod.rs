@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 12;
+pub(super) const PROTOCOL: u32 = 13;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {

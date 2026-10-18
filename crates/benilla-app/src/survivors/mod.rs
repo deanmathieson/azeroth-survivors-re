@@ -273,6 +273,7 @@ impl Plugin for SurvivorsPlugin {
                 OnEnter(Phase::GameOver),
                 (
                     unpause,
+                    hud::clear_offer,
                     treasure::open_leftover_chests,
                     profile::record_finished,
                 )
@@ -280,7 +281,7 @@ impl Plugin for SurvivorsPlugin {
             )
             .add_systems(
                 OnEnter(Phase::Menu),
-                (unpause, reset_run, hud::start_replay).chain(),
+                (unpause, hud::clear_offer, reset_run, hud::start_replay).chain(),
             );
         #[cfg(all(feature = "coop", not(target_arch = "wasm32")))]
         app.add_plugins(coop::plugin);
@@ -571,6 +572,8 @@ pub(super) struct Run {
     pub breather: f32,
     /// Every living player is choosing a co-op hand: the world runs slowed ([`strip::slow_mo`]).
     pub slow: bool,
+    /// The local account's run-start trinket has been applied for this run.
+    pub pinned_trinket: bool,
 }
 
 impl Default for Run {
@@ -601,6 +604,7 @@ impl Default for Run {
             party: 1,
             breather: 0.0,
             slow: false,
+            pinned_trinket: false,
         }
     }
 }
@@ -758,6 +762,7 @@ fn reset_run(
     mut pending: ResMut<abilities::PendingHits>,
     mut spawner: ResMut<enemies::Spawner>,
     mut selection: ResMut<Selection>,
+    mut offer: ResMut<hud::Offer>,
 ) {
     for e in &spawned {
         commands.entity(e).despawn();
@@ -770,6 +775,7 @@ fn reset_run(
     };
     pending.0.clear();
     *spawner = enemies::Spawner::default();
+    offer.deal(Vec::new());
     // The preview hero is respawned for the look still picked.
     selection.version += 1;
 }

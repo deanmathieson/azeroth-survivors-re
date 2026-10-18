@@ -61,11 +61,19 @@ pub(super) fn plugin(app: &mut App) {
 }
 
 /// A pinned completed-deck trinket occupies the first free trinket slot as play begins.
-fn equip_pinned_darkmoon(profile: Option<Res<Profile>>, mut heroes: Query<&mut HeroState>) {
+fn equip_pinned_darkmoon(
+    profile: Option<Res<Profile>>,
+    mut run: ResMut<Run>,
+    mut heroes: Query<&mut HeroState, With<LocalHero>>,
+) {
+    if run.pinned_trinket {
+        return;
+    }
     let Some(profile) = profile else { return };
-    for mut hero in &mut heroes {
+    if let Ok(mut hero) = heroes.single_mut() {
         equip_pinned(&profile, &mut hero);
     }
+    run.pinned_trinket = true;
 }
 
 fn equip_pinned(profile: &Profile, hero: &mut HeroState) -> bool {
@@ -360,6 +368,9 @@ pub(super) fn wear(
     };
     let before = hero.stats().max_hp;
     let old = hero.jewelry.slots[slot].replace(piece);
+    if let Some(old) = old {
+        mechanics::revoke(hero, MechanicId::Jewelry(old.display_id));
+    }
     for b in old.iter().flat_map(|o| o.bonuses) {
         hero.bonuses.add(&Bonus {
             value: -b.value,
@@ -433,7 +444,7 @@ pub(super) fn roll(
 
 /// [`roll`] over an account-aware pool.  Repeated entries are intentional high weight; after a
 /// pick all siblings are removed, so a hand never contains the same trinket twice.
-fn roll_pool(
+pub(super) fn roll_pool(
     catalog: &[&'static Piece],
     worn: &Jewelry,
     stats: &Stats,
@@ -490,10 +501,15 @@ pub(super) fn put_on(hero: &mut HeroState, piece: &'static Piece) {
 /// A hero no one picks for (the test aid's extras) takes a random piece from each offer it is
 /// dealt, replacing a random one of its kind when its slots are full; with nothing left to offer
 /// it takes a random level-up card instead.
-pub(super) fn choose_at_random(hero: &mut HeroState, level: u32, rng: &mut Rng) {
+pub(super) fn choose_at_random(
+    hero: &mut HeroState,
+    catalog: &[&'static Piece],
+    level: u32,
+    rng: &mut Rng,
+) {
     while hero.jewelry.picks > 0 {
         hero.jewelry.picks -= 1;
-        let offer = roll(catalog::CATALOG, &hero.jewelry, &hero.stats(), level, rng);
+        let offer = roll_pool(catalog, &hero.jewelry, &hero.stats(), level, rng);
         if offer.is_empty() {
             hero.picks += 1;
             party::pick_at_random(hero, rng);
@@ -538,7 +554,7 @@ impl JewelOffer {
 pub(super) fn next_offer(
     hero: &mut HeroState,
     offer: &mut JewelOffer,
-    catalog: &'static [Piece],
+    catalog: &[&'static Piece],
     level: u32,
     rng: &mut Rng,
 ) -> bool {
@@ -547,7 +563,7 @@ pub(super) fn next_offer(
     if hero.jewelry.picks == 0 {
         return false;
     }
-    offer.pieces = roll(catalog, &hero.jewelry, &hero.stats(), level, rng);
+    offer.pieces = roll_pool(catalog, &hero.jewelry, &hero.stats(), level, rng);
     if offer.pieces.is_empty() {
         hero.picks += hero.jewelry.picks;
         hero.jewelry.picks = 0;
@@ -655,6 +671,11 @@ pub(super) fn close(
         2.5,
     ));
     hero.jewelry.picks = hero.jewelry.picks.saturating_sub(1);
+    if hero.jewelry.picks == 0 {
+        offer.pieces.clear();
+        offer.replacing = None;
+        return Some(resume(hero));
+    }
     let level = run.level;
     let pool = (!offer.pool.is_empty()).then(|| offer.pool.clone());
     let has_offer = match pool {
@@ -663,7 +684,10 @@ pub(super) fn close(
             offer.pieces = roll_pool(&pool, &hero.jewelry, &hero.stats(), level, rng);
             !offer.pieces.is_empty()
         }
-        None => next_offer(hero, offer, catalog::CATALOG, level, rng),
+        None => {
+            let catalog: Vec<_> = pieces().iter().collect();
+            next_offer(hero, offer, &catalog, level, rng)
+        }
     };
     (!has_offer).then(|| resume(hero))
 }
@@ -692,7 +716,8 @@ fn deal_jewelry(
     let level = run.level;
     for (mut hero, _, bot) in &mut heroes {
         if party::auto_picks(&hero, bot) {
-            choose_at_random(&mut hero, level, &mut rng);
+            let pool = pool(profile.as_deref());
+            choose_at_random(&mut hero, &pool, level, &mut rng);
         }
     }
     match heroes
@@ -700,16 +725,8 @@ fn deal_jewelry(
         .find(|(hero, local, ..)| *local && hero.alive())
     {
         Some((mut hero, ..)) => {
-            offer.replacing = None;
-            offer.pieces.clear();
             offer.pool = pool(profile.as_deref());
-            if hero.jewelry.picks > 0 {
-                offer.pieces =
-                    roll_pool(&offer.pool, &hero.jewelry, &hero.stats(), level, &mut rng);
-            }
-            if offer.pieces.is_empty() {
-                hero.picks += hero.jewelry.picks;
-                hero.jewelry.picks = 0;
+            if !next_offer(&mut hero, &mut offer, &offer.pool.clone(), level, &mut rng) {
                 next.set(resume(&hero));
             }
         }
@@ -1063,26 +1080,21 @@ mod tests {
         let mut offer = JewelOffer::default();
         hero.jewelry.picks = 2;
         // Nothing to offer: both choices become hands, and the picker gives way to them.
-        assert!(!next_offer(
-            &mut hero,
-            &mut offer,
-            &pieces()[..0],
-            1,
-            &mut rng
-        ));
+        assert!(!next_offer(&mut hero, &mut offer, &[], 1, &mut rng));
         assert!(offer.pieces().is_empty());
         assert_eq!((hero.jewelry.picks, hero.picks), (0, 2));
         assert_eq!(resume(&hero), Phase::LevelUp);
         // With the real catalog an offer is always up, and no hand comes of it.
         let mut hero = HeroState::default();
         hero.jewelry.picks = 1;
-        assert!(next_offer(&mut hero, &mut offer, pieces(), 1, &mut rng));
+        let catalog: Vec<_> = pieces().iter().collect();
+        assert!(next_offer(&mut hero, &mut offer, &catalog, 1, &mut rng));
         assert_eq!(offer.pieces().len(), OFFER_SIZE);
         assert_eq!(hero.picks, 0);
         // A hero no one picks for falls back the same way, onto a random card.
         let mut extra = HeroState::new(1, &data::CLASSES[2], 1, Bonuses::default());
         extra.jewelry.picks = 3;
-        choose_at_random(&mut extra, 5, &mut rng);
+        choose_at_random(&mut extra, &catalog, 5, &mut rng);
         assert_eq!(extra.jewelry.picks, 0);
         // Three pieces taken; a second necklace replaces the first.
         assert!((1..=3).contains(&extra.jewelry.worn().count()));
@@ -1104,7 +1116,7 @@ mod tests {
         wear(&mut hero, by_key("blood_ring"), None).unwrap();
         hero.jewelry.picks = 2;
         let mut offer = JewelOffer {
-            pool: Vec::new(),
+            pool: pool(None),
             pieces: vec![by_key("band_of_accuria"), by_key("arena_master")],
             replacing: None,
         };
@@ -1145,6 +1157,26 @@ mod tests {
         );
         assert_eq!(hero.jewelry.picks, 0);
         assert!(offer.pieces().is_empty());
+    }
+
+    #[test]
+    fn last_choice_from_a_profile_pool_resumes_playing() {
+        let mut rng = Rng(17);
+        let mut run = Run::default();
+        let mut hero = HeroState::default();
+        hero.jewelry.picks = 1;
+        let mut offer = JewelOffer {
+            pool: pool(None),
+            pieces: vec![by_key("naglering")],
+            replacing: None,
+        };
+        let done = act(Act::Gold, &mut hero, &mut run, &mut offer).unwrap();
+        assert_eq!(
+            close(done, &mut hero, &mut run, &mut offer, &mut rng),
+            Some(Phase::Playing)
+        );
+        assert!(offer.pieces().is_empty());
+        assert!(offer.replacing().is_none());
     }
 
     #[test]

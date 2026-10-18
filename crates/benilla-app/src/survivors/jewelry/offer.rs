@@ -124,6 +124,7 @@ fn key_act(keys: &ButtonInput<KeyCode>, offer: &JewelOffer) -> Option<Act> {
             n.and_then(|n| Jewelry::slots_of(piece.kind).nth(n))
                 .map(Act::Replace)
         }
+        None if keys.just_pressed(KeyCode::Escape) => Some(Act::Gold),
         None => n.map(Act::Take),
     }
 }

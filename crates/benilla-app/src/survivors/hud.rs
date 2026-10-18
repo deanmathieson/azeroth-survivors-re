@@ -295,6 +295,11 @@ pub(super) struct Offer {
     redealt: Option<usize>,
 }
 
+/// A run boundary cannot leave a co-op hand visible for the next run.
+pub(super) fn clear_offer(mut offer: ResMut<Offer>) {
+    offer.deal(Vec::new());
+}
+
 impl Offer {
     pub(super) fn len(&self) -> usize {
         self.choices.len()
@@ -1300,16 +1305,10 @@ pub(super) fn draw(mut pool: Vec<(Choice, f32)>, n: usize, rng: &mut Rng) -> Vec
 /// everything is mastered.
 pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
     let mut out = draw(offer_pool(hero), 3, rng);
-    if out.is_empty() {
-        out = draw(
-            Overcharge::ALL
-                .into_iter()
-                .map(|kind| (Choice::Overcharge(kind), 1.0))
-                .collect(),
-            2,
-            rng,
-        );
-        out.push(Choice::Heal);
+    while out.len() < 3 {
+        out.push(Choice::Overcharge(
+            Overcharge::ALL[rng.index(Overcharge::ALL.len())],
+        ));
     }
     out
 }
@@ -1354,7 +1353,7 @@ pub(super) fn roll_offer(
 /// ability for the rest of the run.
 pub(super) fn take(hero: &mut HeroState, choice: Choice) {
     match choice {
-        Choice::NewAbility(def) => {
+        Choice::NewAbility(def) if hero.class.pool.contains(&def.key) => {
             // A spell a learned talent teaches comes in at rank 2.
             let level = super::talents::first_rank(hero, def.key);
             hero.abilities.push(Owned {
@@ -1364,11 +1363,11 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
             });
         }
         Choice::Upgrade(k) => {
+            let Some(old) = hero.abilities.get(k) else {
+                return;
+            };
             let ranks = super::cards::rarity(choice, hero).ranks();
-            hero.abilities[k].level = hero.abilities[k]
-                .level
-                .saturating_add(ranks)
-                .min(data::MAX_ABILITY_LEVEL);
+            hero.abilities[k].level = old.level.saturating_add(ranks).min(data::MAX_ABILITY_LEVEL);
             super::mechanics::sync_legendaries(hero);
         }
         Choice::NewPassive(p) => {
@@ -1376,6 +1375,9 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
             hero.passives.push((p, rank));
         }
         Choice::UpPassive(k) => {
+            if hero.passives.get(k).is_none() {
+                return;
+            }
             let ranks = super::cards::rarity(choice, hero).ranks();
             hero.passives[k].1 = hero.passives[k]
                 .1
@@ -1392,6 +1394,7 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
                 hero.mechanics.share_healthstone();
             }
         }
+        Choice::NewAbility(_) => {}
     }
 }
 
