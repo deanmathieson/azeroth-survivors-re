@@ -444,7 +444,8 @@ mod tests {
         packet.extend_from_slice(&body);
         packet.extend_from_slice(&0u16.to_le_bytes()); // footer padding
 
-        let realms = futures_lite::future::block_on(read_realm_list(&mut Cursor(&packet))).unwrap();
+        let realms =
+            futures_lite::future::block_on(read_realm_list(&mut Cursor(&packet))).unwrap();
         assert_eq!(realms.len(), 1);
         let r = &realms[0];
         assert_eq!(r.name, "Onyxia");

@@ -33,7 +33,11 @@ use super::partyui::MemberName;
 use super::{abilities, enemies, hero, party, HeroState, Phase};
 
 pub(super) use buffs::{bonuses as buff_bonuses, reflect, PartyBuff};
-pub(super) use build::{progress as build_progress, school as build_school};
+#[cfg(test)]
+pub(super) use build::every_set_mechanic;
+pub(super) use build::{
+    progress as build_progress, school as build_school, set_line as build_set_line, sync_sets,
+};
 pub(super) use debuffs::{afflict, Debuffs};
 #[cfg(test)]
 pub(super) use threat::{taunts, TAUNT_SECS};
@@ -76,6 +80,9 @@ pub(in crate::survivors) struct HeroSynergy {
     /// A tank's stance is up, and its taunt's cooldown.
     pub(in crate::survivors) stance: bool,
     pub(in crate::survivors) taunt_cd: f32,
+    /// The school set tier each school's bonuses are applied at, in [`build::SCHOOLS`]' order
+    /// ([`build::sync_sets`]).
+    pub(in crate::survivors) sets: [u8; 7],
 }
 
 /// The spells `hero` shows as its auras after its own: its stance, a soulstone, the group buffs.

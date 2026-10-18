@@ -846,6 +846,10 @@ pub(super) fn hero_vitals(
         if hero.focused {
             shown.push(super::strip::FOCUS_MARK);
         }
+        // A Paragon's gold, held for the run.
+        if super::moments::paragons(&hero) > 0 {
+            shown.push(super::moments::PARAGON_AURA);
+        }
         // A next-cast guarantee held (Presence of Mind, Clearcasting) shows as its buff.
         if let Some(armed) = hero.mechanics.armed().filter(|a| a.aura != 0) {
             shown.push(armed.aura);

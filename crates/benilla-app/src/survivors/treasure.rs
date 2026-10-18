@@ -19,6 +19,7 @@ use super::data;
 use super::enemies::{self, Rank, Spawner};
 use super::hero::{self, Hero, HERO_RADIUS};
 use super::party;
+use super::roulette;
 use super::run_options::RunOptions;
 use super::units::{self, flat, Fx};
 use super::{HeroState, LocalHero, Phase, Rng, Run, Selection};
@@ -184,12 +185,12 @@ pub(super) fn open_cache(run: &mut Run, opener: &HeroState) -> u32 {
     gold
 }
 
-/// What a boss chest holds besides its boss's drop: a bigger burst of gold than a cache's (under
-/// the opener's gold multiplier) and one level-up hand. Returns the gold given.
+/// What a boss chest holds besides its boss's drop and its roulette's prizes
+/// ([`super::roulette`]): a bigger burst of gold than a cache's (under the opener's gold
+/// multiplier). Returns the gold given.
 pub(super) fn open_boss_chest(run: &mut Run, opener: &HeroState, tier: ChestTier) -> u32 {
     let gold = boss_chest_gold(tier, run.elapsed, opener.stats().gold);
     run.gold += gold;
-    run.pending_levels += 1;
     gold
 }
 
@@ -387,16 +388,28 @@ pub(super) struct BossChestOpened {
 #[derive(Resource, Default)]
 pub(super) struct BossRolls(pub Vec<BossChestOpened>);
 
-/// A roster boss falls: its chest stands where it died, glowing, its drop inside until it opens.
+/// A boss slain arms every hero, one down too (its hands wait for its revive), with one more
+/// reroll and one more banish for its hands.
+pub(super) fn boss_tools(hero: &mut HeroState) {
+    hero.rerolls += 1;
+    hero.banishes += 1;
+}
+
+/// A boss falls: every hero gets its hand tools ([`boss_tools`]), and a roster boss's
+/// chest stands where it died, glowing, its drop inside until it opens.
 pub(super) fn drop_boss_chests(
     mut commands: Commands,
     mut kills: MessageReader<enemies::Loot>,
     mut run: ResMut<Run>,
     selection: Res<Selection>,
+    mut heroes: Query<&mut HeroState>,
 ) {
     for kill in kills.read() {
         if !kill.boss {
             continue;
+        }
+        for mut hero in &mut heroes {
+            boss_tools(&mut hero);
         }
         let roster = data::roster(selection.map);
         let Some(boss) = roster.bosses.iter().position(|b| b.name == kill.def.name) else {
@@ -532,12 +545,16 @@ pub(super) fn spawn_elites(
 
 /// Walking into a cache opens it, a locked one only for its price (from the party's purse): its lid
 /// lifts, [`open_cache`] gives the reward to the nearest hero standing in reach, and it fades a
-/// moment later. A boss chest opens for whoever reaches it: [`open_boss_chest`]'s reward, and its
-/// boss's drop queued for the roll ([`BossRolls`]).
+/// moment later. A boss chest opens for whoever reaches it: [`open_boss_chest`]'s reward, its
+/// roulette's prizes for every hero standing ([`roulette::spin`]: the host decides them, each
+/// player's screen shows its own), and its boss's drop queued for the roll ([`BossRolls`]).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn open_caches(
     mut commands: Commands,
     time: Res<Time>,
+    mut rng: ResMut<Rng>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    mut won: MessageWriter<roulette::RouletteWon>,
     mut run: ResMut<Run>,
     mut next: ResMut<NextState<Phase>>,
     mut heroes: Query<(Entity, &Transform, &mut HeroState), With<Hero>>,
@@ -613,18 +630,16 @@ pub(super) fn open_caches(
             if let Some(glow) = cache.glow.take() {
                 commands.entity(glow).try_despawn();
             }
-            let gold = boss_chest_gold(cache.tier, run.elapsed, opener.stats().gold);
-            run.gold += gold;
-            run.pending_levels += 1;
-            let _ = opener;
-            // A boss advances every living player's hand tools; this runs on the host/solo
-            // simulation, so the replicated hero state remains authoritative.
-            for (_, _, mut state) in &mut heroes {
+            let gold = open_boss_chest(&mut run, opener, cache.tier);
+            // One spin for the chest, by its opener's luck; every hero standing wins that many.
+            let n = roulette::spin_count(&opener.stats(), &mut rng);
+            for (e, _, mut state) in &mut heroes {
                 if state.alive() {
-                    state.rerolls += 1;
-                    state.banishes += 1;
+                    let prizes = roulette::spin(&mut state, n, spells.as_deref(), &mut rng);
+                    won.write(roulette::RouletteWon { hero: e, prizes });
                 }
             }
+            run.version += 1;
             fx.number(hero_e, gold as f32, false, COLOR_GOLD);
             rolls.0.push(BossChestOpened {
                 map: selection.map,
@@ -636,7 +651,8 @@ pub(super) fn open_caches(
                 .bosses
                 .get(boss)
                 .map_or("The boss", |b| b.name);
-            run.banner = Some((format!("{name}'s hoard! +{gold} gold"), 3.0));
+            let prizes = if n == 1 { "prize" } else { "prizes" };
+            run.banner = Some((format!("{name}'s hoard! +{gold} gold, {n} {prizes}"), 3.0));
             continue;
         }
         let gold = open_cache(&mut run, opener);
@@ -874,7 +890,11 @@ mod tests {
         let mut run = Run::default();
         let gold = open_boss_chest(&mut run, &HeroState::default(), ChestTier::Boss);
         assert_eq!(gold, boss_chest_gold(ChestTier::Boss, 0.0, 1.0));
-        assert_eq!((run.gold, run.pending_levels), (gold, 1), "gold and a hand");
+        assert_eq!(
+            (run.gold, run.pending_levels),
+            (gold, 0),
+            "gold; its prizes are the roulette's"
+        );
         assert_eq!(run.caches, 0, "no dearer locked chests for it");
     }
 
@@ -923,7 +943,26 @@ mod tests {
             elite: true,
             def: &bosses[0],
         });
+        let standing = world.spawn(HeroState::default()).id();
+        let down = HeroState {
+            dead_t: Some(0.0),
+            ..HeroState::default()
+        };
+        let down = world.spawn(down).id();
         world.run_system_once(drop_boss_chests).unwrap();
+        // Two bosses slain: two more rerolls and banishes for every hero, one down too.
+        let tools = |world: &World, e: Entity| {
+            let h = world.get::<HeroState>(e).unwrap();
+            (h.rerolls, h.banishes)
+        };
+        assert_eq!(
+            tools(&world, standing),
+            (
+                super::super::hand::REROLLS_PER_RUN + 2,
+                super::super::hand::BANISHES_PER_RUN + 2
+            )
+        );
+        assert_eq!(tools(&world, down), tools(&world, standing));
         let mut got = chests(&mut world);
         got.sort_by_key(|c| c.1);
         assert_eq!(
@@ -950,7 +989,11 @@ mod tests {
         world.init_resource::<Messages<CombatTextSpawn>>();
         world.init_resource::<Messages<FieldChanged>>();
         world.init_resource::<Messages<SoundCue>>();
-        world.spawn((Hero::default(), Transform::default(), HeroState::default()));
+        world.init_resource::<Messages<roulette::RouletteWon>>();
+        world.insert_resource(Rng(4));
+        let hero = world
+            .spawn((Hero::default(), Transform::default(), HeroState::default()))
+            .id();
         let at = Vec3::new(BOSS_CHEST_REACH, 0.0, 0.0);
         let chest = world
             .spawn((
@@ -981,11 +1024,15 @@ mod tests {
         );
         let run = world.resource::<Run>();
         assert_eq!(run.gold, boss_chest_gold(ChestTier::Boss, 0.0, 1.0));
-        assert_eq!(run.pending_levels, 1);
-        assert!(matches!(
-            *world.resource::<NextState<Phase>>(),
-            NextState::Pending(Phase::LevelUp)
-        ));
+        assert_eq!(run.pending_levels, 0, "the roulette pays, not a hand");
+        // One spin, for the one hero standing: 1, 3 or 5 prizes.
+        let won: Vec<_> = world
+            .resource_mut::<Messages<roulette::RouletteWon>>()
+            .drain()
+            .collect();
+        assert_eq!(won.len(), 1);
+        assert_eq!(won[0].hero, hero);
+        assert!([1, 3, 5].contains(&won[0].prizes.len()), "{:?}", won[0]);
     }
 
     #[test]

@@ -87,16 +87,20 @@ pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
         while let Some(h) = at {
             let mut model = model_mut();
             // A saved next that the previous handler unregistered ends the walk.
-            let Some(pos) = model.event_to_frames.get(event).and_then(|l| {
-                #[cfg(target_os = "macos")]
-                {
-                    l.iter().position(|&x| x == h)
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    wenilla_listener::position(l, &h, next_index)
-                }
-            }) else {
+            let Some(pos) = model
+                .event_to_frames
+                .get(event)
+                .and_then(|l| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        l.iter().position(|&x| x == h)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        wenilla_listener::position(l, &h, next_index)
+                    }
+                })
+            else {
                 break;
             };
             let next = model

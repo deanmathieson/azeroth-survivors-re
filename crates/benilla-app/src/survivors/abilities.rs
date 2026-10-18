@@ -1058,6 +1058,7 @@ pub(super) fn apply_hits(
                         kind: ProcKind::Hit {
                             crit,
                             killed: en.hp <= 0.0,
+                            bane: enemies::bane(en.def),
                         },
                         target: Some(e),
                         pos: tf.translation,

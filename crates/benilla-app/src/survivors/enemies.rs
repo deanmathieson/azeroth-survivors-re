@@ -68,17 +68,284 @@ pub(super) struct Dot {
 #[derive(Component)]
 pub(super) struct Dying(f32);
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(super) struct Spawner {
     timer: f32,
     /// What the Run Options density split owes the next spawns.
     pub xp_carry: XpCarry,
     /// Spawns made round a standing hero so far: the heroes take turns ([`party::spawn_anchor`]).
     pub turn: u32,
-    /// The next host-authoritative micro-event.  It shares the horde's clock, so clients never
-    /// independently roll an event.
+    /// The run second of the next host-authoritative micro-event.  It shares the horde's clock,
+    /// so clients never independently roll an event.
     micro_next: f32,
     micro_kind: u8,
+}
+
+/// The run second the first micro-event comes at: the opening is the horde's alone.
+pub(super) const MICRO_FIRST_SECS: f32 = 45.0;
+/// Seconds from one micro-event to the next.
+pub(super) const MICRO_EVERY_SECS: f32 = 45.0;
+/// No micro-event this close before a roster boss walks out: it waits until the boss is out.
+const MICRO_BOSS_CLEARANCE: f32 = 15.0;
+
+/// The goblin Treasure Courier: a quick, frail goblin (`GoblinMale.mdx`) that flees the party,
+/// dripping coins, and spills its purse when it is slain; it gets away after
+/// [`COURIER_SECS`].
+pub(super) static COURIER: EnemyDef = EnemyDef {
+    name: "Treasure Courier",
+    display: 7174,
+    hp: 45.0,
+    speed: 6.0,
+    damage: 0.0,
+    scale: 1.0,
+    xp: 8,
+    level: 60,
+    big: false,
+};
+const COURIER_SECS: f32 = 22.0;
+/// A coin every this many seconds as it runs, and the coins its purse spills: twice a cache's,
+/// short of a boss chest's.
+const COURIER_DRIP: f32 = 2.0;
+const COURIER_PURSE: u32 = 12;
+
+/// The Shrine of Overcharge: the Paladin shrine (`PaladinShrine.mdx`), standing this long; the
+/// first hero within reach takes its blessing, a 30-second Overcharge
+/// ([`SHRINE_BLESSING`]), under Power Infusion's visual.
+pub(super) const SHRINE_DISPLAY: u32 = 6873;
+const SHRINE_SECS: f32 = 25.0;
+const SHRINE_REACH: f32 = 3.0;
+pub(super) const SHRINE_SPELL: u32 = 10060;
+const SHRINE_KEY: u32 = 0x5A1E_0001;
+const SHRINE_BUFF_SECS: f32 = 30.0;
+pub(super) const SHRINE_BLESSING: &[super::bonus::Bonus] = &[
+    super::bonus::Bonus::new(super::bonus::StatKey::Damage, 0.15),
+    super::bonus::Bonus::new(super::bonus::StatKey::Cooldown, 0.10),
+    super::bonus::Bonus::new(super::bonus::StatKey::MoveSpeed, 0.10),
+];
+
+/// The named rares an Elite Pack's leader may be, 1.12's own: the silver dragon frame shows it
+/// ([`super::moments`]).
+pub(super) const RARE_NAMES: [&str; 8] = [
+    "Mor'Ladim",
+    "Rak'shiri",
+    "Azzere the Skyblade",
+    "Kurmokk",
+    "Ruuzel",
+    "Foreman Rigger",
+    "Lord Sakrasis",
+    "Brack",
+];
+
+/// Name parts of 1.12's undead and demons on the rosters: the Scourge's dead, ghosts and
+/// abominations, and the Legion's fel beasts, felguard, infernals and satyr.
+const BANE_PARTS: [&str; 26] = [
+    "Skeletal",
+    "Zombie",
+    "Ghoul",
+    "Corpse",
+    " Dead",
+    "Scourge",
+    "Rattlecage",
+    "Putrid",
+    "Shambling",
+    "Stitched",
+    "Spirit",
+    "Shade",
+    "Bonecaster",
+    "Death Lord",
+    "Deathknight",
+    "Crypt",
+    "Screamer",
+    "Fel",
+    "Infernal",
+    "Doomguard",
+    "Manahound",
+    "Manastalker",
+    "Familiar",
+    "Jadefire",
+    "Hederine",
+    "Nerubian",
+];
+/// The undead and demon lords the name parts miss.
+const BANE_NAMES: [&str; 10] = [
+    "Kel'Thuzad",
+    "Patchwerk",
+    "Gluth",
+    "Thaddius",
+    "Anub'Rekhan",
+    "Lord Kazzak",
+    "Lord Hel'nurath",
+    "Lord Banehollow",
+    "Lord Azrethoc",
+    "Prince Xavalis",
+];
+
+/// Whether `def` is an undead or a demon, by its 1.12 creature: what Mark of the Champion's holy
+/// wrath strikes ([`super::mechanics::Of::Bane`]).
+pub(super) fn bane(def: &EnemyDef) -> bool {
+    BANE_NAMES.contains(&def.name) || BANE_PARTS.iter().any(|part| def.name.contains(part))
+}
+
+/// A Treasure Courier on the run: seconds to its next coin and before it gets away, and whether
+/// its purse has spilled.
+#[derive(Component)]
+pub(super) struct Courier {
+    drip: f32,
+    left: f32,
+    paid: bool,
+}
+
+/// A Shrine of Overcharge standing, and the seconds it has left.
+#[derive(Component)]
+pub(super) struct Shrine {
+    left: f32,
+}
+
+/// An Elite Pack's named rare, by its place in [`RARE_NAMES`].
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RareMob(pub u8);
+
+impl RareMob {
+    pub(super) fn name(self) -> &'static str {
+        RARE_NAMES[usize::from(self.0) % RARE_NAMES.len()]
+    }
+}
+
+/// Whether a micro-event due at `elapsed` waits: a roster boss walks out within
+/// [`MICRO_BOSS_CLEARANCE`] seconds.
+pub(super) fn micro_waits(elapsed: f32) -> bool {
+    let to_boss = data::BOSS_EVERY_SECS - elapsed.rem_euclid(data::BOSS_EVERY_SECS);
+    to_boss < MICRO_BOSS_CLEARANCE
+}
+
+/// How far a level's nova throws the horde back from each hero standing, in yards, and what it
+/// deals each enemy it reaches at run level 1 (growing as the mechanics' flat numbers do).
+pub(super) const LEVEL_NOVA_RADIUS: f32 = 7.0;
+pub(super) const LEVEL_NOVA_DAMAGE: f32 = 10.0;
+
+/// A Treasure Courier runs from the party, a coin dropping behind it every [`COURIER_DRIP`]
+/// seconds; slain, its purse spills ([`COURIER_PURSE`] coins); left alone it gets away. The
+/// host's.
+pub(super) fn run_couriers(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    mut couriers: Query<(Entity, &Transform, &mut Enemy, &mut Courier)>,
+) {
+    let dt = time.delta_secs();
+    for (e, tf, mut enemy, mut courier) in &mut couriers {
+        let at = tf.translation;
+        if enemy.dead {
+            if !courier.paid {
+                courier.paid = true;
+                let coins = treasure::Coins::new(COURIER_PURSE, run.elapsed, rng.f32());
+                spawn_gem(&mut commands, run.guid(), at, GemKind::Gold(coins));
+                run.banner = Some(("The Treasure Courier spills its purse!".into(), 3.0));
+            }
+            continue;
+        }
+        // It never stops running.
+        enemy.fear_t = enemy.fear_t.max(1.0);
+        courier.drip -= dt;
+        if courier.drip <= 0.0 {
+            courier.drip += COURIER_DRIP;
+            let coins = treasure::Coins::new(1, run.elapsed, rng.f32());
+            spawn_gem(&mut commands, run.guid(), at, GemKind::Gold(coins));
+        }
+        courier.left -= dt;
+        if courier.left <= 0.0 {
+            commands.entity(e).try_despawn();
+            run.banner = Some(("The Treasure Courier got away!".into(), 3.0));
+        }
+    }
+}
+
+/// A Shrine of Overcharge: the first hero standing within reach takes its 30-second blessing
+/// ([`SHRINE_BLESSING`]) and the shrine is spent; untouched, it fades. The host's.
+pub(super) fn touch_shrines(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut run: ResMut<Run>,
+    mut shrines: Query<(Entity, &Transform, &mut Shrine), Without<Hero>>,
+    mut heroes: Query<(Entity, &Transform, &mut HeroState), With<Hero>>,
+    mut fx: Fx,
+) {
+    let dt = time.delta_secs();
+    for (e, tf, mut shrine) in &mut shrines {
+        shrine.left -= dt;
+        let at = tf.translation;
+        let toucher = heroes.iter_mut().find(|(_, h, state)| {
+            state.alive() && flat(h.translation - at).length() <= SHRINE_REACH
+        });
+        if let Some((hero_e, _, mut hero)) = toucher {
+            super::mechanics::timed_buff(&mut hero, SHRINE_KEY, SHRINE_BUFF_SECS, SHRINE_BLESSING);
+            fx.cast(hero_e, SHRINE_SPELL, &[hero_e], None);
+            run.banner = Some((
+                "Blessed by the Shrine: Overcharged for 30 seconds!".into(),
+                3.0,
+            ));
+            commands
+                .entity(e)
+                .remove::<Shrine>()
+                .insert(benilla_world::model_fade::DespawnFade::default());
+        } else if shrine.left <= 0.0 {
+            commands
+                .entity(e)
+                .remove::<Shrine>()
+                .insert(benilla_world::model_fade::DespawnFade::default());
+        }
+    }
+}
+
+/// Each level the party makes, every hero standing throws a golden nova
+/// ([`super::moments::LEVEL_RING`]): the horde near it is shoved out to [`LEVEL_NOVA_RADIUS`] (a
+/// boss stands its ground) and takes [`LEVEL_NOVA_DAMAGE`]. The second of immunity is
+/// [`collect_gems`]'. A new run's level falling back throws nothing.
+pub(super) fn level_up_nova(
+    run: Res<Run>,
+    mut last: Local<Option<u32>>,
+    heroes: Query<(Entity, &Transform, &HeroState), With<Hero>>,
+    mut enemies: Query<(Entity, &mut Transform, &Enemy), Without<Hero>>,
+    mut hits: MessageWriter<Hit>,
+    mut fx: Fx,
+) {
+    let gained = last.is_some_and(|l| run.level > l);
+    *last = Some(run.level);
+    if !gained {
+        return;
+    }
+    let damage = LEVEL_NOVA_DAMAGE * super::mechanics::level_scale(run.level);
+    for (hero_e, htf, hero) in &heroes {
+        if !hero.alive() {
+            continue;
+        }
+        fx.cast(hero_e, super::moments::LEVEL_RING, &[hero_e], None);
+        let at = htf.translation;
+        for (e, mut tf, enemy) in &mut enemies {
+            let away = flat(tf.translation - at);
+            let dist = away.length();
+            if enemy.dead || dist > LEVEL_NOVA_RADIUS {
+                continue;
+            }
+            if !enemy.boss && dist > 0.01 {
+                tf.translation += away / dist * (LEVEL_NOVA_RADIUS - dist);
+            }
+            hits.write(Hit::direct(hero_e, e, damage, false));
+        }
+    }
+}
+
+impl Default for Spawner {
+    fn default() -> Self {
+        Self {
+            timer: 0.0,
+            xp_carry: XpCarry::default(),
+            turn: 0,
+            micro_next: MICRO_FIRST_SECS,
+            micro_kind: 0,
+        }
+    }
 }
 
 /// The small rewards that punctuate a quiet stretch between boss and elite moments.
@@ -102,6 +369,206 @@ fn micro_event(n: u8) -> MicroEvent {
 #[cfg(test)]
 mod micro_tests {
     use super::*;
+
+    fn foe(world: &mut World, x: f32, boss: bool) -> Entity {
+        let def = &data::roster(0).enemies[0];
+        world
+            .spawn((
+                Transform::from_xyz(x, 0.0, 0.0),
+                Enemy {
+                    def,
+                    hp: 1000.0,
+                    max_hp: 1000.0,
+                    speed: 0.0,
+                    damage: 0.0,
+                    radius: 0.6,
+                    xp: 1,
+                    boss,
+                    elite: false,
+                    guardian: false,
+                    dormant: false,
+                    attack_cd: 0.0,
+                    slow: 1.0,
+                    slow_t: 0.0,
+                    root_t: 0.0,
+                    stun_t: 0.0,
+                    fear_t: 0.0,
+                    weaken: 1.0,
+                    weaken_t: 0.0,
+                    dots: Vec::new(),
+                    dead: false,
+                    taunted: None,
+                    debuffs: Default::default(),
+                },
+            ))
+            .id()
+    }
+
+    #[test]
+    fn a_level_throws_the_horde_back_from_every_hero_standing() {
+        let mut world = World::new();
+        world.init_resource::<Run>();
+        world.init_resource::<Messages<Hit>>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<Messages<crate::creature_anim::SpellGoTargets>>();
+        world.init_resource::<Messages<crate::creature_anim::SwingMessage>>();
+        world.init_resource::<Messages<crate::combat_text::CombatTextSpawn>>();
+        world.spawn((Hero::default(), Transform::default(), HeroState::default()));
+        let near = foe(&mut world, 3.0, false);
+        let boss = foe(&mut world, -2.0, true);
+        let far = foe(&mut world, 20.0, false);
+        let nova = world.register_system(level_up_nova);
+        let run_once = |world: &mut World| {
+            world.run_system(nova).unwrap();
+            world
+                .resource_mut::<Messages<Hit>>()
+                .drain()
+                .collect::<Vec<_>>()
+        };
+        // The first frame only learns the level.
+        assert!(run_once(&mut world).is_empty());
+        world.resource_mut::<Run>().level = 2;
+        let hits = run_once(&mut world);
+        assert_eq!(hits.len(), 2, "the two in reach");
+        assert!(hits.iter().all(|h| h.damage > 0.0 && h.target != far));
+        let x = |world: &World, e: Entity| world.get::<Transform>(e).unwrap().translation.x;
+        assert!(
+            (x(&world, near) - LEVEL_NOVA_RADIUS).abs() < 1e-3,
+            "shoved out"
+        );
+        assert_eq!(x(&world, boss), -2.0, "a boss stands its ground");
+        assert_eq!(x(&world, far), 20.0);
+        // No level, no nova; a new run's level falling back throws none either.
+        assert!(run_once(&mut world).is_empty());
+        world.resource_mut::<Run>().level = 1;
+        assert!(run_once(&mut world).is_empty());
+    }
+
+    fn fx_world() -> World {
+        let mut world = World::new();
+        world.init_resource::<Run>();
+        world.insert_resource(Rng(8));
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        world.insert_resource(time);
+        world.init_resource::<Messages<Hit>>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<Messages<crate::creature_anim::SpellGoTargets>>();
+        world.init_resource::<Messages<crate::creature_anim::SwingMessage>>();
+        world.init_resource::<Messages<crate::combat_text::CombatTextSpawn>>();
+        world
+    }
+
+    fn coins(world: &mut World) -> usize {
+        world
+            .query::<&Gem>()
+            .iter(world)
+            .filter(|g| matches!(g.kind, GemKind::Gold(_)))
+            .count()
+    }
+
+    #[test]
+    fn a_courier_drips_coins_flees_and_spills_its_purse() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = fx_world();
+        let e = foe(&mut world, 5.0, false);
+        world.entity_mut(e).insert(Courier {
+            drip: 0.2,
+            left: 10.0,
+            paid: false,
+        });
+        world.run_system_once(run_couriers).unwrap();
+        assert_eq!(coins(&mut world), 1, "a coin as it runs");
+        assert!(world.get::<Enemy>(e).unwrap().fear_t >= 1.0, "it flees");
+        world.get_mut::<Enemy>(e).unwrap().dead = true;
+        world.run_system_once(run_couriers).unwrap();
+        world.run_system_once(run_couriers).unwrap();
+        assert_eq!(coins(&mut world), 2, "its purse spills once");
+        // One left alone gets away.
+        let gone = foe(&mut world, 5.0, false);
+        world.entity_mut(gone).insert(Courier {
+            drip: 5.0,
+            left: 0.1,
+            paid: false,
+        });
+        world.run_system_once(run_couriers).unwrap();
+        assert!(world.get_entity(gone).is_err());
+    }
+
+    #[test]
+    fn the_first_hero_to_touch_a_shrine_is_overcharged() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = fx_world();
+        let near = world
+            .spawn((Hero::default(), Transform::default(), HeroState::default()))
+            .id();
+        let far = world
+            .spawn((
+                Hero::default(),
+                Transform::from_xyz(30.0, 0.0, 0.0),
+                HeroState::default(),
+            ))
+            .id();
+        let might = world.get::<HeroState>(near).unwrap().stats().might;
+        let shrine = world
+            .spawn((
+                Transform::from_xyz(1.0, 0.0, 0.0),
+                Shrine { left: SHRINE_SECS },
+            ))
+            .id();
+        world.run_system_once(touch_shrines).unwrap();
+        assert!(world.get::<Shrine>(shrine).is_none(), "spent");
+        let blessed = world.get::<HeroState>(near).unwrap();
+        assert!(blessed.stats().might > might, "Overcharged");
+        assert_eq!(
+            super::super::mechanics::buff_left(blessed, SHRINE_KEY),
+            Some(SHRINE_BUFF_SECS)
+        );
+        let other = world.get::<HeroState>(far).unwrap();
+        assert_eq!(super::super::mechanics::buff_left(other, SHRINE_KEY), None);
+    }
+
+    #[test]
+    fn only_undead_and_demons_are_a_banes_foes() {
+        let named = |name: &'static str| EnemyDef { name, ..COURIER };
+        for name in [
+            "Skeletal Warrior",
+            "Rotting Dead",
+            "Felhound",
+            "Lesser Infernal",
+            "Kel'Thuzad",
+            "Jadefire Felsworn",
+        ] {
+            assert!(bane(&named(name)), "{name}");
+        }
+        for name in [
+            "Hogger",
+            "Defias Thug",
+            "Prairie Wolf",
+            "Lucifron",
+            "Murloc",
+        ] {
+            assert!(!bane(&named(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn micro_events_wait_out_a_boss_walking_out() {
+        assert!(!micro_waits(MICRO_FIRST_SECS));
+        assert!(micro_waits(data::BOSS_EVERY_SECS - 5.0));
+        assert!(!micro_waits(data::BOSS_EVERY_SECS + 1.0));
+        assert_eq!(RareMob(1).name(), RARE_NAMES[1]);
+        assert_eq!(RareMob(200).name(), RARE_NAMES[200 % RARE_NAMES.len()]);
+    }
+
+    #[test]
+    fn no_micro_event_comes_before_its_first_time() {
+        let spawner = Spawner::default();
+        assert_eq!(spawner.micro_next, MICRO_FIRST_SECS);
+        assert!(spawner.micro_next >= 30.0, "nothing at 0:00");
+    }
 
     #[test]
     fn micro_events_rotate_through_all_rewards() {
@@ -204,7 +671,23 @@ pub(super) fn spawn_enemy(
     rank: Rank,
     opts: &RunOptions,
     xp_carry: &mut XpCarry,
-) {
+) -> Entity {
+    spawn_enemy_with(commands, run, def, pos, hero, rank, opts, xp_carry, 1)
+}
+
+/// [`spawn_enemy`], worth `xp_mult` times its experience: a Swarm's prey.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_enemy_with(
+    commands: &mut Commands,
+    run: &mut Run,
+    def: &'static EnemyDef,
+    pos: Vec3,
+    hero: Vec3,
+    rank: Rank,
+    opts: &RunOptions,
+    xp_carry: &mut XpCarry,
+    xp_mult: u32,
+) -> Entity {
     // The Run Options first, then the run clock's growth and the party's size, then an elite's own
     // multipliers. Only the horde splits its experience under density: neither density nor party
     // size adds bosses, elites or guardians.
@@ -253,7 +736,7 @@ pub(super) fn spawn_enemy(
             speed: tuned.speed,
             damage: body.damage,
             radius: body_radius(def, body.scale),
-            xp: tuned.xp,
+            xp: tuned.xp.saturating_mul(xp_mult),
             boss: rank == Rank::Boss,
             elite,
             guardian: rank == Rank::Guardian,
@@ -273,6 +756,7 @@ pub(super) fn spawn_enemy(
         },
         marks,
     ));
+    e
 }
 
 /// Ground an object on the terrain heightfield where it has no walking body.
@@ -365,99 +849,118 @@ pub(super) fn spawn_enemies(
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
 
-    // One deterministic host event every 45 seconds, held clear of a boss approach.  The event
-    // itself only creates ordinary replicated enemies/pickups, which is why co-op clients need
-    // no special wire message.
+    // A host event every [`MICRO_EVERY_SECS`] from [`MICRO_FIRST_SECS`], held while a boss is
+    // about to walk out. It makes ordinary replicated enemies, pickups and objects, and counts in
+    // `Run::events`, which sounds the raid warning on every screen ([`super::sfx`]).
     if elapsed >= spawner.micro_next {
-        let event = micro_event(spawner.micro_kind);
-        spawner.micro_kind = spawner.micro_kind.wrapping_add(1);
-        spawner.micro_next = elapsed + 45.0;
-        let hpos = party::spawn_anchor(&standing, &mut spawner.turn).unwrap_or(standing[0]);
-        let def = &roster.enemies[pool[0]];
-        match event {
-            MicroEvent::GoldRush => {
-                let at = party::spawn_point(
-                    hpos,
-                    rng.range(0.0, std::f32::consts::TAU),
-                    24.0,
-                    &everyone,
-                    leash,
-                );
-                let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
-                spawn_enemy(
-                    &mut commands,
-                    &mut run,
-                    def,
-                    pos,
-                    hpos,
-                    Rank::Elite,
-                    &opts,
-                    &mut spawner.xp_carry,
-                );
-                spawn_gem(
-                    &mut commands,
-                    run.guid(),
-                    pos + Vec3::X,
-                    GemKind::Gold(treasure::Coins::new(20, elapsed, rng.f32())),
-                );
-                run.banner = Some(("Gold Rush! Treasure Courier incoming!".into(), 4.0));
-            }
-            MicroEvent::Shrine => {
-                // A short-lived shrine is represented by its real gold game-object pickup: on
-                // touch it pays an immediate cache-sized reward while the banner names the buff.
-                spawn_gem(
-                    &mut commands,
-                    run.guid(),
-                    hpos + Vec3::Z * 10.0,
-                    GemKind::Heal(45.0),
-                );
-                run.banner = Some(("Shrine of Overcharge! Touch it for a blessing!".into(), 4.0));
-            }
-            MicroEvent::Swarm => {
-                for i in 0..12 {
+        if micro_waits(elapsed) {
+            spawner.micro_next = elapsed + MICRO_BOSS_CLEARANCE;
+        } else {
+            let event = micro_event(spawner.micro_kind);
+            spawner.micro_kind = spawner.micro_kind.wrapping_add(1);
+            spawner.micro_next = elapsed + MICRO_EVERY_SECS;
+            run.events += 1;
+            let hpos = party::spawn_anchor(&standing, &mut spawner.turn).unwrap_or(standing[0]);
+            let def = &roster.enemies[pool[0]];
+            match event {
+                MicroEvent::GoldRush => {
                     let at = party::spawn_point(
                         hpos,
-                        i as f32 / 12.0 * std::f32::consts::TAU,
-                        22.0,
+                        rng.range(0.0, std::f32::consts::TAU),
+                        20.0,
                         &everyone,
                         leash,
                     );
                     let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
-                    spawn_enemy(
+                    let e = spawn_enemy(
                         &mut commands,
                         &mut run,
-                        def,
+                        &COURIER,
                         pos,
                         hpos,
                         Rank::Horde,
                         &opts,
                         &mut spawner.xp_carry,
                     );
+                    commands.entity(e).insert(Courier {
+                        drip: COURIER_DRIP,
+                        left: COURIER_SECS,
+                        paid: false,
+                    });
+                    run.banner = Some((
+                        "Gold Rush! A Treasure Courier is loose: catch it!".into(),
+                        4.0,
+                    ));
                 }
-                run.banner = Some(("Swarm! Double experience prey!".into(), 4.0));
-            }
-            MicroEvent::ElitePack => {
-                for i in 0..3 {
+                MicroEvent::Shrine => {
                     let at = party::spawn_point(
                         hpos,
-                        i as f32 / 3.0 * std::f32::consts::TAU,
-                        24.0,
+                        rng.range(0.0, std::f32::consts::TAU),
+                        10.0,
                         &everyone,
                         leash,
                     );
-                    let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
-                    spawn_enemy(
-                        &mut commands,
-                        &mut run,
-                        def,
-                        pos,
-                        hpos,
-                        Rank::Elite,
-                        &opts,
-                        &mut spawner.xp_carry,
-                    );
+                    let pos = ground(&world, at, map.floor);
+                    let e =
+                        units::spawn_object(&mut commands, run.guid(), SHRINE_DISPLAY, 1.0, pos);
+                    commands.entity(e).insert(Shrine { left: SHRINE_SECS });
+                    run.banner = Some((
+                        "A Shrine of Overcharge rises! Touch it for its blessing!".into(),
+                        4.0,
+                    ));
                 }
-                run.banner = Some((format!("Rare pack! {} leads the hunt!", def.name), 4.0));
+                MicroEvent::Swarm => {
+                    for i in 0..12 {
+                        let at = party::spawn_point(
+                            hpos,
+                            i as f32 / 12.0 * std::f32::consts::TAU,
+                            22.0,
+                            &everyone,
+                            leash,
+                        );
+                        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                        spawn_enemy_with(
+                            &mut commands,
+                            &mut run,
+                            def,
+                            pos,
+                            hpos,
+                            Rank::Horde,
+                            &opts,
+                            &mut spawner.xp_carry,
+                            2,
+                        );
+                    }
+                    run.banner = Some(("Swarm! Double experience prey!".into(), 4.0));
+                }
+                MicroEvent::ElitePack => {
+                    let rare = RareMob(rng.index(RARE_NAMES.len()) as u8);
+                    for i in 0..3 {
+                        let at = party::spawn_point(
+                            hpos,
+                            i as f32 / 3.0 * std::f32::consts::TAU,
+                            24.0,
+                            &everyone,
+                            leash,
+                        );
+                        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                        let e = spawn_enemy(
+                            &mut commands,
+                            &mut run,
+                            def,
+                            pos,
+                            hpos,
+                            Rank::Elite,
+                            &opts,
+                            &mut spawner.xp_carry,
+                        );
+                        // The first leads: the named rare.
+                        if i == 0 {
+                            commands.entity(e).insert(rare);
+                        }
+                    }
+                    run.banner = Some((format!("Rare pack! {} leads the hunt!", rare.name()), 4.0));
+                }
             }
         }
     }

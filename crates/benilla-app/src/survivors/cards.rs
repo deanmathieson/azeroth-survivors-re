@@ -1,17 +1,21 @@
 //! The level-up picker, as a survivors game deals it: three tall cards that flip up out of the
 //! deck one after another, tilt toward the cursor, lift under it and burst on the pick. Each card
 //! wears its rarity in WoW's item-quality colours, so what is better reads at a glance: a fresh
-//! spell is Rare, a rank up Uncommon, a rank that adds a target Epic. The top rank is Legendary:
-//! it transforms the spell ([`data::LEGENDARIES`]), and its card burns gold-orange and says into
-//! what.
+//! spell by its power among the class's. A rank-up rolls its quality as it is dealt
+//! ([`roll_rarity`]): Common for one rank, Rare for two, Epic for three, the rarer ones likelier
+//! with luck; a hand holding a Rare or Epic roll lands with a quality glow and a chime. The top
+//! rank is Legendary: it transforms the spell ([`data::LEGENDARIES`]), and its card burns
+//! gold-orange and says into what.
 
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 
+use crate::sound::SoundCue;
+
 use super::data::{self, Kind};
 use super::hand::{self, HandMode};
 use super::hud::{self, Choice, HudFont, Offer, SpellIcon};
-use super::{party, HeroState, LocalHero, Phase, Rng, Run};
+use super::{party, HeroState, LocalHero, Phase, Rng, Run, Stats};
 
 /// WoW's item-quality colours (`ITEM_QUALITY_COLORS`).
 pub(super) const COMMON: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -25,6 +29,33 @@ const CARD_H: f32 = 330.0;
 /// Seconds between one card landing and the next.
 const DEAL_STAGGER: f32 = 0.09;
 const DEAL_SECS: f32 = 0.38;
+/// A hand chained straight onto the last (stacked level-ups) deals this quickly.
+const CHAIN_DEAL_SECS: f32 = 0.2;
+/// A hand dealt within this many real seconds of the last one closing is chained onto it.
+const CHAIN_GAP: f32 = 0.6;
+
+/// How long a fresh hand's cards take to land: quicker for one chained onto the hand before it
+/// (dealt over it, or within [`CHAIN_GAP`] of its closing), the 2nd and later of a stack.
+fn deal_secs(had_hand: bool, closed_at: Option<f32>, now: f32) -> f32 {
+    let chained = had_hand || closed_at.is_some_and(|t| now - t < CHAIN_GAP);
+    if chained {
+        CHAIN_DEAL_SECS
+    } else {
+        DEAL_SECS
+    }
+}
+
+/// The chimes a hand plays as it lands holding a rolled Rare or Epic, as the Darkmoon Faire's
+/// reveal rings its Rare and Epic cards: the quest-accepted and quest-complete kits.
+pub(super) const ROLL_RARE_SOUND: &str = "QUESTADDED";
+pub(super) const ROLL_EPIC_SOUND: &str = "QUESTCOMPLETED";
+
+/// A rank-up card's qualities and their base weights: one card in four rolls Rare or better.
+const ROLLS: [(Rarity, f32); 3] = [
+    (Rarity::Common, 75.0),
+    (Rarity::Rare, 20.0),
+    (Rarity::Epic, 5.0),
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Rarity {
@@ -63,6 +94,74 @@ impl Rarity {
             Self::Epic => "Epic",
             Self::Legendary => "Legendary",
         }
+    }
+
+    /// Its place on the wire.
+    #[cfg_attr(not(feature = "coop"), allow(dead_code))]
+    pub(super) const fn index(self) -> u8 {
+        self as u8
+    }
+
+    #[cfg_attr(not(feature = "coop"), allow(dead_code))]
+    pub(super) const fn from_index(i: u8) -> Option<Self> {
+        match i {
+            0 => Some(Self::Common),
+            1 => Some(Self::Uncommon),
+            2 => Some(Self::Rare),
+            3 => Some(Self::Epic),
+            4 => Some(Self::Legendary),
+            _ => None,
+        }
+    }
+
+    /// Whether this is `other`'s quality or better.
+    pub(super) const fn at_least(self, other: Self) -> bool {
+        self as u8 >= other as u8
+    }
+}
+
+/// A rank-up card's quality, rolled as it is dealt: Common (one rank) most often, Rare (two) and
+/// Epic (three) rarer, each step up weighted again by `stats`' luck ([`Stats::luck_weight`]).
+pub(super) fn roll_rarity(stats: &Stats, rng: &mut Rng) -> Rarity {
+    let weighed = ROLLS.map(|(r, w)| (r, w * stats.luck_weight(roll_tier(r))));
+    let total: f32 = weighed.iter().map(|(_, w)| w).sum();
+    let mut pick = rng.f32() * total;
+    for (r, w) in weighed {
+        if pick < w {
+            return r;
+        }
+        pick -= w;
+    }
+    Rarity::Epic
+}
+
+/// How many steps above Common a rolled quality stands, for the luck weight.
+const fn roll_tier(r: Rarity) -> i32 {
+    match r {
+        Rarity::Common | Rarity::Uncommon => 0,
+        Rarity::Rare => 1,
+        Rarity::Epic | Rarity::Legendary => 2,
+    }
+}
+
+/// The quality a rank-up card rolled, as `hero` would take it: at least Rare while it holds an
+/// Empower token ([`HeroState::empower`]).
+fn rolled(rolled: Rarity, hero: &HeroState) -> Rarity {
+    if hero.empower > 0 && !rolled.at_least(Rarity::Rare) {
+        Rarity::Rare
+    } else {
+        rolled
+    }
+}
+
+/// The quality a dealt card rolled, Rare or better: what makes a hand land with a jolt. A new spell
+/// or talent, an Overcharge or a piece of jewelry rolls nothing.
+pub(super) fn jolt(choice: Choice, hero: &HeroState) -> Option<Rarity> {
+    match choice {
+        Choice::Upgrade(_, r) | Choice::UpPassive(_, r) => {
+            Some(rolled(r, hero)).filter(|r| r.at_least(Rarity::Rare))
+        }
+        _ => None,
     }
 }
 
@@ -115,40 +214,27 @@ fn spell_tier(def: &data::AbilityDef, hero: &HeroState) -> Rarity {
     }
 }
 
-/// What a choice is worth to `hero`, by what it brings: a rank that reaches the top is
-/// Legendary, a rank that adds a target Epic, a new spell by its power among the class's
-/// ([`spell_tier`]), a plain rank Uncommon.
+/// What a choice is worth to `hero`, by what it brings: a rank-up its rolled quality (at least
+/// Rare under an Empower token), Legendary where it reaches the top rank; a new spell by its power
+/// among the class's ([`spell_tier`]), a new talent Uncommon.
 pub(super) fn rarity(choice: Choice, hero: &HeroState) -> Rarity {
     match choice {
         Choice::NewAbility(def) => spell_tier(def, hero),
-        Choice::Upgrade(k) => {
+        Choice::Upgrade(k, r) => {
             let Some(o) = hero.abilities.get(k) else {
                 return Rarity::Common;
             };
-            let next = o.level + 1;
-            let targets = [3, 5, 7].contains(&next)
-                && matches!(
-                    o.def.kind,
-                    Kind::Bolt | Kind::Strike | Kind::Melee | Kind::Dot | Kind::Chain | Kind::Orbit
-                );
-            let rarity = if targets {
-                Rarity::Epic
-            } else {
-                Rarity::Uncommon
-            };
-            if o.level.saturating_add(rarity.ranks()) >= data::MAX_ABILITY_LEVEL {
+            let r = rolled(r, hero);
+            if o.level.saturating_add(r.ranks()) >= data::MAX_ABILITY_LEVEL {
                 Rarity::Legendary
             } else {
-                rarity
+                r
             }
         }
         Choice::NewPassive(_) => Rarity::Uncommon,
-        Choice::UpPassive(k) => match hero.passives.get(k).map(|(_, level)| level + 1) {
+        Choice::UpPassive(k, r) => match hero.passives.get(k) {
             None => Rarity::Common,
-            Some(n) if n == data::MAX_PASSIVE_LEVEL => Rarity::Epic,
-            Some(n) if n + 1 == data::MAX_PASSIVE_LEVEL => Rarity::Rare,
-            Some(2) => Rarity::Common,
-            Some(_) => Rarity::Uncommon,
+            Some(_) => rolled(r, hero),
         },
         Choice::Overcharge(_) => Rarity::Epic,
         Choice::Jewel(piece) => piece.rarity,
@@ -166,6 +252,11 @@ pub(super) struct Card {
     tilt: Vec2,
     picked: Option<f32>,
     rarity: Rarity,
+    /// The rim that breathes round it: a transformation's gold-orange, or a rolled Rare's or
+    /// Epic's own colour.
+    rim: Option<Color>,
+    /// Seconds its deal takes ([`deal_secs`]).
+    deal: f32,
 }
 
 /// The rarity glow behind the card, which swells under the cursor.
@@ -202,21 +293,55 @@ impl PendingPick {
 
 const PICK_SECS: f32 = 0.28;
 
-/// The cards, rebuilt for each offer: the local hero's hand.
+/// The chime a freshly dealt hand rings for its best rolled card, if that is Rare or better.
+pub(super) fn jolt_sound(hand: &[Choice], hero: &HeroState) -> Option<&'static str> {
+    let best = hand
+        .iter()
+        .filter_map(|&c| jolt(c, hero))
+        .max_by_key(|r| *r as u8)?;
+    Some(if best.at_least(Rarity::Epic) {
+        ROLL_EPIC_SOUND
+    } else {
+        ROLL_RARE_SOUND
+    })
+}
+
+/// The cards, rebuilt for each offer: the local hero's hand. A new hand holding a rolled Rare or
+/// Epic rings its chime ([`jolt_sound`]); one chained onto the last deals quicker ([`deal_secs`]).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn deal_cards(
     mut commands: Commands,
+    time: Res<Time<Real>>,
     offer: Res<Offer>,
     local: Query<&HeroState, With<LocalHero>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     font: Res<HudFont>,
     rows: Query<Entity, With<hud::OfferRow>>,
+    mut cues: MessageWriter<SoundCue>,
+    mut last: Local<(bool, Option<f32>)>,
 ) {
     if !offer.is_changed() {
         return;
     }
+    // Whether a hand was up before this one, and when the last one closed.
+    let now = time.elapsed_secs();
+    let secs = deal_secs(last.0, last.1, now);
+    if offer.len() == 0 {
+        if last.0 {
+            last.1 = Some(now);
+        }
+        last.0 = false;
+    } else {
+        last.0 = true;
+    }
     let Ok(row) = rows.single() else { return };
     commands.entity(row).despawn_related::<Children>();
     let Ok(me) = local.single() else { return };
+    if offer.redealt().is_none() {
+        if let Some(kit) = jolt_sound(offer.choices(), me) {
+            cues.write(SoundCue::flat(kit));
+        }
+    }
     let f = &font.0;
     commands.entity(row).with_children(|row| {
         for (i, &choice) in offer.choices().iter().enumerate() {
@@ -224,11 +349,16 @@ pub(super) fn deal_cards(
             let rarity = rarity(choice, me);
             let rc = rarity.color();
             let legend = card.legendary;
+            let rim = match (legend, jolt(choice, me)) {
+                (Some(_), _) => Some(flame_color()),
+                (None, Some(r)) => Some(r.color()),
+                (None, None) => None,
+            };
             // After a banish only its slot is dealt again; the rest lie where they landed.
             let t = match offer.redealt() {
-                Some(r) if r != i => DEAL_SECS + 1.0,
+                Some(r) if r != i => secs + 1.0,
                 Some(_) => 0.0,
-                None => -(i as f32) * DEAL_STAGGER,
+                None => -(i as f32) * DEAL_STAGGER * secs / DEAL_SECS,
             };
             let mut face = row.spawn((
                 Card {
@@ -238,6 +368,8 @@ pub(super) fn deal_cards(
                     tilt: Vec2::ZERO,
                     picked: None,
                     rarity,
+                    rim,
+                    deal: secs,
                 },
                 Button,
                 Interaction::default(),
@@ -280,12 +412,13 @@ pub(super) fn deal_cards(
                 },
                 Visibility::Hidden,
             ));
-            // The transformation's gold rim, pulsing in `animate_cards`.
-            if legend.is_some() {
+            // The transformation's gold rim, or a rolled Rare's or Epic's quality glow, pulsing in
+            // `animate_cards`.
+            if let Some(rim) = rim {
                 face.insert(Outline::new(
                     Val::Px(2.0),
                     Val::Px(2.0),
-                    flame_color().with_alpha(0.6),
+                    rim.with_alpha(0.6),
                 ));
             }
             face.with_children(|c| {
@@ -560,7 +693,7 @@ pub(super) fn animate_cards(
         r.scale = Vec2::splat(1.0 + 0.03 * (now * 1.7).sin());
     }
     let chosen = pending.0.map(|(i, _)| i);
-    let mut shine_at = [None::<f32>; 4];
+    let mut shine_at = [None::<(f32, f32)>; 4];
     for (mut card, interaction, cursor, mut tf, mut shadow, mut vis, outline) in &mut cards {
         let card = &mut *card;
         card.t += dt;
@@ -569,7 +702,7 @@ pub(super) fn animate_cards(
             continue;
         }
         *vis = Visibility::Inherited;
-        let deal = (card.t / DEAL_SECS).clamp(0.0, 1.0);
+        let deal = (card.t / card.deal).clamp(0.0, 1.0);
         let e = ease_out_back(deal);
         let hot = *interaction != Interaction::None && chosen.is_none() && deal >= 1.0;
         let k = 1.0 - (-dt * 14.0).exp();
@@ -625,16 +758,16 @@ pub(super) fn animate_cards(
             sh.spread_radius = Val::Px(2.0 + 4.0 * h);
             sh.y_offset = Val::Px(6.0 + 10.0 * h);
         }
-        // A transformation's rim breathes.
-        if let Some(mut outline) = outline {
+        // A transformation's rim breathes, as does a rolled Rare's or Epic's.
+        if let (Some(mut outline), Some(rim)) = (outline, card.rim) {
             let glow = 0.45 + 0.4 * (now * 3.1 + card.index as f32).sin().abs();
-            outline.color = flame_color().with_alpha(glow * (1.0 - pick_fade));
+            outline.color = rim.with_alpha(glow * (1.0 - pick_fade));
         }
         if pick_fade >= 1.0 {
             *vis = Visibility::Hidden;
         }
         if card.index < shine_at.len() {
-            shine_at[card.index] = Some(card.t);
+            shine_at[card.index] = Some((card.t, card.deal));
         }
     }
     // The flame flickers on two beats.
@@ -644,10 +777,10 @@ pub(super) fn animate_cards(
             Val::Px(84.0 + 9.0 * (now * 6.3 + k).sin() + 5.0 * (now * 11.7 + 2.0 * k).sin());
     }
     for (shine, mut node) in &mut shines {
-        let Some(t) = shine_at.get(shine.0).copied().flatten() else {
+        let Some((t, deal)) = shine_at.get(shine.0).copied().flatten() else {
             continue;
         };
-        let u = ((t - DEAL_SECS * 0.6) / 0.5).clamp(0.0, 1.0);
+        let u = ((t - deal * 0.6) / 0.5).clamp(0.0, 1.0);
         node.left = Val::Px(-120.0 + u * (CARD_W + 200.0));
     }
     if let Some((i, t)) = pending.0.as_mut() {
@@ -695,7 +828,7 @@ pub(super) fn choose_card(
     }
     let mut pick = cards
         .iter()
-        .find(|(c, i)| **i == Interaction::Pressed && c.t >= DEAL_SECS)
+        .find(|(c, i)| **i == Interaction::Pressed && c.t >= c.deal)
         .map(|(c, _)| c.index);
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
         .into_iter()
@@ -723,5 +856,21 @@ pub(super) fn choose_card(
             }
         }
         mode.banishing = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stacked_hand_deals_quicker_than_the_first() {
+        // Nothing before it: the full deal.
+        assert_eq!(deal_secs(false, None, 10.0), DEAL_SECS);
+        // Dealt over the hand before, or just after it closed: chained.
+        assert_eq!(deal_secs(true, None, 10.0), CHAIN_DEAL_SECS);
+        assert_eq!(deal_secs(false, Some(9.8), 10.0), CHAIN_DEAL_SECS);
+        // A hand long after the last is a fresh one.
+        assert_eq!(deal_secs(false, Some(2.0), 10.0), DEAL_SECS);
     }
 }

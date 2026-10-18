@@ -24,8 +24,10 @@ use super::{party, HeroState, LocalHero, Phase, Run};
 const LEVEL_UP: &str = "LEVELUPSOUND";
 /// The loot window's coin (`LootCoinSmall.wav`), the client's sound for any purse change.
 const COIN: &str = "LOOTWINDOWCOINSOUND";
-/// The raid warning horn, for a boss walking out.
+/// The raid warning horn, for a boss walking out and a micro-event.
 const BOSS: &str = "RaidWarning";
+#[cfg(test)]
+pub(super) const RAID_WARNING: &str = BOSS;
 /// Coins chime at most this often, in seconds: a vacuumed field is one jingle, not fifty.
 const COIN_GAP: f64 = 0.12;
 
@@ -88,6 +90,8 @@ struct Tally {
     level: u32,
     gold: u32,
     bosses: u32,
+    /// Micro-events announced ([`Run::events`]).
+    events: u32,
 }
 
 impl Tally {
@@ -96,6 +100,7 @@ impl Tally {
             level: run.level,
             gold: run.gold,
             bosses: run.bosses,
+            events: run.events,
         }
     }
 }
@@ -107,7 +112,8 @@ fn cues_for(was: Tally, now: Tally, coin_ok: bool) -> Vec<&'static str> {
     if now.level > was.level {
         out.push(LEVEL_UP);
     }
-    if now.bosses > was.bosses {
+    // A boss walking out, or a micro-event, sounds the raid warning, once a frame.
+    if now.bosses > was.bosses || now.events > was.events {
         out.push(BOSS);
     }
     if now.gold > was.gold && coin_ok {
@@ -151,12 +157,20 @@ mod tests {
             level: 3,
             gold: 10,
             bosses: 0,
+            events: 0,
         };
         assert!(cues_for(was, was, true).is_empty());
+        let event = Tally { events: 1, ..was };
+        assert_eq!(
+            cues_for(was, event, true),
+            [BOSS],
+            "a micro-event's raid warning"
+        );
         let now = Tally {
             level: 4,
             gold: 15,
             bosses: 1,
+            events: 0,
         };
         assert_eq!(cues_for(was, now, true), [LEVEL_UP, BOSS, COIN]);
         assert_eq!(
@@ -172,6 +186,7 @@ mod tests {
             level: 20,
             gold: 900,
             bosses: 3,
+            events: 9,
         };
         assert!(cues_for(late, Tally::default(), true).is_empty());
     }

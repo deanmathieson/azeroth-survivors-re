@@ -208,14 +208,17 @@ fn triggers_match_their_ability_and_their_kind_of_proc() {
     let hit = ProcKind::Hit {
         crit: false,
         killed: false,
+        bane: false,
     };
     let crit = ProcKind::Hit {
         crit: true,
         killed: false,
+        bane: false,
     };
     let kill = ProcKind::Hit {
         crit: false,
         killed: true,
+        bane: false,
     };
     let mine = Of::Ability("frostbolt");
     let on_hit = Trigger::OnHit {
@@ -238,6 +241,23 @@ fn triggers_match_their_ability_and_their_kind_of_proc() {
     };
     assert_eq!(fires_on(on_kill, crit, frostbolt), None);
     assert_eq!(fires_on(on_kill, kill, frostbolt), Some(1.0));
+    // A bane listens to blows on undead and demons alone, of any ability.
+    let on_bane = Trigger::OnHit {
+        of: Of::Bane,
+        chance: 0.3,
+    };
+    let on_undead = ProcKind::Hit {
+        crit: false,
+        killed: false,
+        bane: true,
+    };
+    assert_eq!(fires_on(on_bane, hit, fireball), None);
+    assert_eq!(fires_on(on_bane, on_undead, fireball), Some(0.3));
+    assert_eq!(fires_on(on_bane, on_undead, frostbolt), Some(0.3));
+    assert_eq!(
+        fires_on(Trigger::OnCast(Of::Bane), ProcKind::Cast, fireball),
+        None
+    );
     let on_cast = Trigger::OnCast(mine);
     assert_eq!(fires_on(on_cast, ProcKind::Cast, frostbolt), Some(1.0));
     assert_eq!(fires_on(on_cast, hit, frostbolt), None);
@@ -429,7 +449,8 @@ fn grant_replaces_by_id_and_revoke_takes_back_only_its_own() {
 #[test]
 fn the_top_rank_grants_its_legendary_once_for_the_run() {
     let mut hero = hero_with("frostbolt", data::MAX_ABILITY_LEVEL - 2);
-    hud::take(&mut hero, Choice::Upgrade(0));
+    // An Epic roll's three ranks carry it to the top.
+    hud::take(&mut hero, Choice::Upgrade(0, Rarity::Epic));
     let id = MechanicId::Legendary("frostbolt");
     assert!(
         has(&hero, id),
@@ -466,16 +487,24 @@ fn echoes_come_due_one_gap_apart() {
 #[test]
 fn the_legendary_card_is_flagged_and_says_into_what() {
     let mut hero = hero_with("frostbolt", data::MAX_ABILITY_LEVEL - 1);
-    let card = hud::describe_card(Choice::Upgrade(0), &hero, None);
+    let card = hud::describe_card(Choice::Upgrade(0, Rarity::Common), &hero, None);
     let legend = card.legendary.expect("the top rank's card transforms");
     assert_eq!((legend.ability, legend.name), ("frostbolt", "Shatterbolt"));
     assert!(!legend.text.is_empty());
-    assert_eq!(cards::rarity(Choice::Upgrade(0), &hero), Rarity::Legendary);
+    assert_eq!(
+        cards::rarity(Choice::Upgrade(0, Rarity::Common), &hero),
+        Rarity::Legendary
+    );
     hero.abilities[0].level = 3;
-    assert!(hud::describe_card(Choice::Upgrade(0), &hero, None)
-        .legendary
-        .is_none());
-    assert_ne!(cards::rarity(Choice::Upgrade(0), &hero), Rarity::Legendary);
+    assert!(
+        hud::describe_card(Choice::Upgrade(0, Rarity::Common), &hero, None)
+            .legendary
+            .is_none()
+    );
+    assert_ne!(
+        cards::rarity(Choice::Upgrade(0, Rarity::Common), &hero),
+        Rarity::Legendary
+    );
     let fresh = hud::describe_card(Choice::NewAbility(data::ability("fireball")), &hero, None);
     assert!(fresh.legendary.is_none());
 }
@@ -650,6 +679,8 @@ fn legendary_visuals_are_real_spells_with_the_kits_they_play() {
             .filter(|d| d.visual != 0)
             .and_then(|d| visuals.stages(d.visual).map(|s| (d.visual, *s)))
     };
+    // A legendary's mechanics, then every piece of jewelry's.
+    let mut sources: Vec<(&str, &[MechanicSpec])> = Vec::new();
     for l in LEGENDARIES {
         if stages(l.visual_spell).is_none() {
             bad.push(format!(
@@ -657,10 +688,15 @@ fn legendary_visuals_are_real_spells_with_the_kits_they_play() {
                 l.ability, l.visual_spell
             ));
         }
-        for m in l.mechanics {
+        sources.push((l.ability, l.mechanics));
+    }
+    sources.extend(super::super::jewelry::every_mechanic());
+    sources.extend(super::super::synergy::every_set_mechanic());
+    for (who, specs) in sources {
+        for m in specs {
             let Some(spell) = m.visual else { continue };
             let Some((visual, s)) = stages(spell) else {
-                bad.push(format!("{}: {spell} has no visual", l.ability));
+                bad.push(format!("{who}: {spell} has no visual"));
                 continue;
             };
             let on_hero = matches!(m.at, Aim::Hero | Aim::Follow)
@@ -685,11 +721,16 @@ fn legendary_visuals_are_real_spells_with_the_kits_they_play() {
                 _ => s.impact != 0,
             };
             if !ok {
-                bad.push(format!(
-                    "{}: {spell} cannot play for {:?}",
-                    l.ability, m.effect
-                ));
+                bad.push(format!("{who}: {spell} cannot play for {:?}", m.effect));
             }
+        }
+    }
+    // The run's own moments: each a real spell whose visual plays a cast, impact or state kit.
+    for (what, spell) in super::super::moments::SPELLS {
+        let plays =
+            stages(spell).is_some_and(|(_, s)| s.cast != 0 || s.impact != 0 || s.state != 0);
+        if !plays {
+            bad.push(format!("{what}: {spell} plays no visual"));
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
@@ -753,6 +794,7 @@ fn crit_on(world: &mut World, owner: Entity, target: Entity, damage: f32) {
         kind: ProcKind::Hit {
             crit: true,
             killed: false,
+            bane: false,
         },
         target: Some(target),
         pos: Vec3::ZERO,

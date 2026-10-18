@@ -7,10 +7,10 @@
 //! of the free level-up hand it gave before ([`Run::pending_jewelry`]). While playing, a banked
 //! choice pauses the run on [`Phase::Jewelry`] once any level-up hands are made ([`open_jewelry`]):
 //! every hero is dealt one choice for each ([`deal`]), the heroes no one here picks for choose at
-//! random, and the local hero is offered three pieces ([`roll`]: weighted to rarity by its luck and
-//! the run's level, never one it wears). It takes one, or gold instead; a piece whose slots are
-//! full asks which worn one it replaces ([`act`]). With nothing left to offer, the choices become
-//! level-up hands. [`offer`] puts it on screen.
+//! random, and the local hero is offered three pieces ([`roll_pool`]: weighted to rarity by its
+//! luck and the run's level, never one it wears). It takes one, or gold instead; a piece whose
+//! slots are full asks which worn one it replaces ([`act`]). With nothing left to offer, the
+//! choices become level-up hands. [`offer`] puts it on screen.
 //!
 //! Every piece ever offered and taken is logged per account in the profile's
 //! [`CodexSave`] ([`codex`]), which the Armory's Codex tab shows.
@@ -171,6 +171,13 @@ pub(super) fn piece(key: &str) -> Option<&'static Piece> {
         .find(|p| p.key == key)
 }
 
+/// The Darkmoon trinket keyed `key`, and only a Darkmoon trinket: what another player's pinned
+/// trinket may be (its deck is its own profile's to check), never an arbitrary catalog piece.
+#[cfg_attr(not(feature = "coop"), allow(dead_code))]
+pub(super) fn darkmoon_piece(key: &str) -> Option<&'static Piece> {
+    catalog::DARKMOON.iter().find(|p| p.key == key)
+}
+
 /// Deck trinkets unlocked by this account.  Each appears four times in the selection pool, making
 /// a completed deck feel like an earned run-starting reward without displacing normal jewelry.
 pub(super) fn darkmoon_pool(profile: &Profile) -> Vec<&'static Piece> {
@@ -198,7 +205,7 @@ pub(super) fn darkmoon_pool(profile: &Profile) -> Vec<&'static Piece> {
 /// The normal catalog plus the account's completed-deck trinkets.  A trinket occurs four times:
 /// the weighted roller removes only the picked entry, making it markedly more likely without
 /// permitting duplicate offers of the same piece.
-fn pool(profile: Option<&Profile>) -> Vec<&'static Piece> {
+pub(super) fn pool(profile: Option<&Profile>) -> Vec<&'static Piece> {
     let mut out: Vec<_> = catalog::CATALOG.iter().collect();
     if let Some(profile) = profile {
         out.extend(darkmoon_pool(profile));
@@ -275,9 +282,42 @@ fn darkmoon_specs(key: &str) -> &'static [MechanicSpec] {
     }
 }
 
+/// The kinds of proc blue-and-better jewelry carries: each has one mechanic ([`proc_specs`]) and
+/// the one line its card shows ([`proc_text`]), so the two never drift apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcKind {
+    SpellBurst,
+    ExtraAttack,
+    Crit,
+    Shield,
+    DecayingPower,
+    Reset,
+    HolyNova,
+    Chain,
+    Heal,
+}
+
+/// Which proc a catalog piece's key carries, echoing the real item where it had one.
+fn proc_kind(key: &str) -> ProcKind {
+    match key {
+        "talisman_of_ephemeral_power" => ProcKind::SpellBurst,
+        "hand_of_justice" | "band_of_accuria" => ProcKind::ExtraAttack,
+        "blackhands_breadth" => ProcKind::Crit,
+        "royal_seal_of_eldre_thalas" => ProcKind::Shield,
+        "zandalarian_hero_charm" => ProcKind::DecayingPower,
+        "eye_of_moam" => ProcKind::Reset,
+        "mark_of_the_champion" => ProcKind::HolyNova,
+        "painweaver_band" | "ring_of_spell_power" | "choker_of_the_fire_lord" => ProcKind::Chain,
+        "diamond_flask" | "mark_of_fordring" | "gem_of_trapped_innocents" => ProcKind::Heal,
+        // The remaining real pieces keep a quiet, useful on-hit extra strike, on an independent
+        // cooldown when two are worn together.
+        _ => ProcKind::ExtraAttack,
+    }
+}
+
 /// The small, distinct procs on blue-and-better jewelry.  Their flat values are deliberately
 /// below a rank-one spell: a find changes the build's rhythm, not its whole damage budget.
-fn proc_specs(key: &str) -> &'static [MechanicSpec] {
+fn proc_specs(kind: ProcKind) -> &'static [MechanicSpec] {
     const SPELL_BURST: [MechanicSpec; 1] = [MechanicSpec::new(
         Trigger::Periodic { every: 18.0 },
         Effect::Burst {
@@ -294,7 +334,8 @@ fn proc_specs(key: &str) -> &'static [MechanicSpec] {
         },
         Effect::Echo { extra_casts: 1 },
     )
-    .visual(15600)
+    // Hand of Justice's own extra attack.
+    .visual(15601)
     .cooldown(4.0)];
     const CRIT: [MechanicSpec; 1] = [MechanicSpec::new(
         Trigger::OnCrit {
@@ -326,23 +367,26 @@ fn proc_specs(key: &str) -> &'static [MechanicSpec] {
             bonuses: &[Bonus::new(StatKey::Damage, 0.16)],
         },
     )
-    .visual(24571)
+    // Zandalarian Hero Charm's own Unstable Power.
+    .visual(24658)
     .cooldown(24.0)];
     const RESET: [MechanicSpec; 1] =
         [
             MechanicSpec::new(Trigger::Periodic { every: 35.0 }, Effect::ResetCooldowns)
-                .visual(23513)
+                .visual(26166)
                 .cooldown(35.0),
         ];
+    // Mark of the Champion's: its wrath is for the undead and demons alone, a holy smite on the
+    // one struck.
     const HOLY_NOVA: [MechanicSpec; 1] = [MechanicSpec::new(
-        Trigger::OnKill {
-            of: Of::Any,
-            chance: 0.12,
+        Trigger::OnHit {
+            of: Of::Bane,
+            chance: 0.30,
         },
         Effect::Nova {
             school: School::Holy,
-            radius: 4.0,
-            damage: 16.0,
+            radius: 1.5,
+            damage: 14.0,
             knockback: 0.0,
             cc: None,
         },
@@ -373,45 +417,69 @@ fn proc_specs(key: &str) -> &'static [MechanicSpec] {
     )
     .visual(2054)
     .cooldown(5.0)];
-    match key {
-        "talisman_of_ephemeral_power" => &SPELL_BURST,
-        "hand_of_justice" | "band_of_accuria" => &EXTRA_ATTACK,
-        "blackhands_breadth" => &CRIT,
-        "royal_seal_of_eldre_thalas" => &SHIELD,
-        "zandalarian_hero_charm" => &DECAYING_POWER,
-        "eye_of_moam" => &RESET,
-        "mark_of_the_champion" => &HOLY_NOVA,
-        "painweaver_band" | "ring_of_spell_power" | "choker_of_the_fire_lord" => &CHAIN,
-        "diamond_flask" | "mark_of_fordring" | "gem_of_trapped_innocents" => &HEAL,
-        // The remaining real pieces keep a quiet, useful on-hit extra strike.  They still have
-        // individual card text and an independent cooldown when two are worn together.
-        _ => &EXTRA_ATTACK,
+    match kind {
+        ProcKind::SpellBurst => &SPELL_BURST,
+        ProcKind::ExtraAttack => &EXTRA_ATTACK,
+        ProcKind::Crit => &CRIT,
+        ProcKind::Shield => &SHIELD,
+        ProcKind::DecayingPower => &DECAYING_POWER,
+        ProcKind::Reset => &RESET,
+        ProcKind::HolyNova => &HOLY_NOVA,
+        ProcKind::Chain => &CHAIN,
+        ProcKind::Heal => &HEAL,
     }
 }
 
-/// Compact card copy for an item's real-proc echo.  The mechanic is the authority; this is only
-/// the player-facing explanation.
+/// The card line for a piece's proc, by its key: a Darkmoon trinket's own mechanic, else its
+/// [`ProcKind`]'s. Every number here is the one in [`darkmoon_specs`] / [`proc_specs`].
 pub(super) fn proc_text(key: &str) -> &'static str {
     match key {
-        "talisman_of_ephemeral_power" => "Every 18 sec: +12% spell power for 6 sec",
-        "hand_of_justice" => "10% on hit: strike again",
-        "band_of_accuria" => "10% on hit: strike again",
-        "blackhands_breadth" => "On crit: your next cast critically strikes",
-        "royal_seal_of_eldre_thalas" => "Below 35% health: absorb 28 damage",
-        "zandalarian_hero_charm" => "Every 24 sec: +16% spell power for 8 sec",
-        "eye_of_moam" => "Every 35 sec: reset ability cooldowns",
-        "mark_of_the_champion" => "Kills may smite nearby undead and demons",
-        _ => "12% on hit: strike again",
+        "darkmoon_blue_dragon" => "On cast: cooldowns 50% faster for 15 sec",
+        "darkmoon_heroism" => "15% on hit: heal allies near for 30 and +25% damage for 8 sec",
+        "darkmoon_maelstrom" => "20% on hit: a lightning nova for 28 damage",
+        "darkmoon_twisting_nether" => "Once a run: cheat death, back up at 35% health",
+        _ => match proc_kind(key) {
+            ProcKind::SpellBurst => "Every 18 sec: +12% damage for 6 sec",
+            ProcKind::ExtraAttack => "10% on hit: strike again",
+            ProcKind::Crit => "On crit: your next cast crits (every 12 sec)",
+            ProcKind::Shield => "Below 35% health: absorb 28 damage (every 30 sec)",
+            ProcKind::DecayingPower => "Every 24 sec: +16% damage for 8 sec",
+            ProcKind::Reset => "Every 35 sec: reset your cooldowns",
+            ProcKind::HolyNova => "30% on hit vs undead and demons: a holy smite for 14",
+            ProcKind::Chain => "12% on hit: the blow chains to 2 more foes",
+            ProcKind::Heal => "15% on kill: heal allies near for 12",
+        },
     }
 }
 
-/// Give a worn Darkmoon trinket its run mechanic.
+/// What a worn piece grants as a mechanic: a Darkmoon trinket its own (never a generic proc),
+/// else its proc's, and a green nothing.
+fn mechanic_specs(piece: &Piece) -> &'static [MechanicSpec] {
+    let darkmoon = darkmoon_specs(piece.key);
+    if !darkmoon.is_empty() {
+        return darkmoon;
+    }
+    match piece.proc {
+        Some(key) => proc_specs(proc_kind(key)),
+        None => &[],
+    }
+}
+
+/// Every piece's mechanic by its key, the Darkmoon trinkets' too: the data test holds their
+/// visuals to the real spells'.
+#[cfg(test)]
+pub(super) fn every_mechanic() -> Vec<(&'static str, &'static [MechanicSpec])> {
+    pieces()
+        .iter()
+        .chain(catalog::DARKMOON)
+        .map(|p| (p.key, mechanic_specs(p)))
+        .filter(|(_, specs)| !specs.is_empty())
+        .collect()
+}
+
+/// Give a worn piece its run mechanic: a Darkmoon trinket's, or a blue-or-better piece's proc.
 pub(super) fn grant_darkmoon(hero: &mut HeroState, piece: &Piece) {
-    let specs = if piece.proc.is_some() {
-        proc_specs(piece.key)
-    } else {
-        darkmoon_specs(piece.key)
-    };
+    let specs = mechanic_specs(piece);
     if !specs.is_empty() {
         mechanics::grant(
             hero,
@@ -419,6 +487,30 @@ pub(super) fn grant_darkmoon(hero: &mut HeroState, piece: &Piece) {
             specs.iter().copied(),
         );
     }
+}
+
+/// What putting on `new` in place of `old` changes, stat by stat: each bonus `new` grants less
+/// what `old` did, the ones that cancel out left off.
+pub(super) fn stat_deltas(new: &Piece, old: &Piece) -> Vec<Bonus> {
+    let mut out: Vec<Bonus> = Vec::new();
+    let mut add = |b: &Bonus, sign: f32| match out
+        .iter_mut()
+        .find(|o| o.stat == b.stat && o.school == b.school)
+    {
+        Some(o) => o.value += sign * b.value,
+        None => out.push(Bonus {
+            value: sign * b.value,
+            ..*b
+        }),
+    };
+    for b in new.bonuses {
+        add(b, 1.0);
+    }
+    for b in old.bonuses {
+        add(b, -1.0);
+    }
+    out.retain(|b| b.value.abs() > 1e-6);
+    out
 }
 
 /// What one hero wears this run, and the jewelry choices it has still to make. Empty as each run
@@ -511,6 +603,8 @@ pub(super) fn wear(
     }
     hero.bonuses.add_all(piece.bonuses);
     grant_darkmoon(hero, piece);
+    // A piece of a school counts toward its set.
+    super::synergy::sync_sets(hero);
     let after = hero.stats().max_hp;
     if hero.alive() && after > before {
         hero.hp += after - before;
@@ -542,40 +636,9 @@ pub(super) fn weight(rarity: Rarity, stats: &Stats, level: u32) -> f32 {
     base * stats.luck_weight(tier) * tilt
 }
 
-/// Up to [`OFFER_SIZE`] pieces of `catalog` for a hero wearing `worn`, by [`weight`], never one it
-/// wears and none twice.
-pub(super) fn roll(
-    catalog: &'static [Piece],
-    worn: &Jewelry,
-    stats: &Stats,
-    level: u32,
-    rng: &mut Rng,
-) -> Vec<&'static Piece> {
-    let mut pool: Vec<(&'static Piece, f32)> = catalog
-        .iter()
-        .filter(|p| !worn.wears(p))
-        .map(|p| (p, weight(p.rarity, stats, level)))
-        .filter(|&(_, w)| w > 0.0)
-        .collect();
-    let mut out = Vec::with_capacity(OFFER_SIZE);
-    while out.len() < OFFER_SIZE && !pool.is_empty() {
-        let total: f32 = pool.iter().map(|(_, w)| w).sum();
-        let mut pick = rng.f32() * total;
-        let mut idx = pool.len() - 1;
-        for (i, (_, w)) in pool.iter().enumerate() {
-            if pick < *w {
-                idx = i;
-                break;
-            }
-            pick -= w;
-        }
-        out.push(pool.swap_remove(idx).0);
-    }
-    out
-}
-
-/// [`roll`] over an account-aware pool.  Repeated entries are intentional high weight; after a
-/// pick all siblings are removed, so a hand never contains the same trinket twice.
+/// Up to [`OFFER_SIZE`] pieces of `catalog` (an account-aware pool, [`pool`]) for a hero wearing
+/// `worn`, by [`weight`], never one it wears and none twice. Repeated entries are intentional high
+/// weight; after a pick all siblings are removed, so a hand never contains the same trinket twice.
 pub(super) fn roll_pool(
     catalog: &[&'static Piece],
     worn: &Jewelry,
@@ -808,19 +871,14 @@ pub(super) fn close(
         offer.replacing = None;
         return Some(resume(hero));
     }
-    let level = run.level;
-    let pool = (!offer.pool.is_empty()).then(|| offer.pool.clone());
-    let has_offer = match pool {
-        Some(pool) => {
-            offer.replacing = None;
-            offer.pieces = roll_pool(&pool, &hero.jewelry, &hero.stats(), level, rng);
-            !offer.pieces.is_empty()
-        }
-        None => {
-            let catalog: Vec<_> = pieces().iter().collect();
-            next_offer(hero, offer, &catalog, level, rng)
-        }
+    // The account's pool when the picker dealt one, else the catalog; either way nothing left to
+    // offer turns the remaining choices into level-up hands ([`next_offer`]).
+    let pool = if offer.pool.is_empty() {
+        pieces().iter().collect()
+    } else {
+        offer.pool.clone()
     };
+    let has_offer = next_offer(hero, offer, &pool, run.level, rng);
     (!has_offer).then(|| resume(hero))
 }
 
@@ -857,8 +915,9 @@ fn deal_jewelry(
         .find(|(hero, local, ..)| *local && hero.alive())
     {
         Some((mut hero, ..)) => {
-            offer.pool = pool(profile.as_deref());
-            if !next_offer(&mut hero, &mut offer, &offer.pool.clone(), level, &mut rng) {
+            let pool = pool(profile.as_deref());
+            offer.pool = pool.clone();
+            if !next_offer(&mut hero, &mut offer, &pool, level, &mut rng) {
                 next.set(resume(&hero));
             }
         }
@@ -893,6 +952,18 @@ mod tests {
         piece(key).unwrap_or_else(|| panic!("no piece {key}"))
     }
 
+    /// [`roll_pool`] over a slice of the catalog.
+    fn roll(
+        catalog: &'static [Piece],
+        worn: &Jewelry,
+        stats: &Stats,
+        level: u32,
+        rng: &mut Rng,
+    ) -> Vec<&'static Piece> {
+        let pool: Vec<&'static Piece> = catalog.iter().collect();
+        roll_pool(&pool, worn, stats, level, rng)
+    }
+
     #[test]
     fn darkmoon_pool_only_contains_completed_decks() {
         let mut profile = Profile::default();
@@ -913,7 +984,108 @@ mod tests {
             let mut hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
             grant_darkmoon(&mut hero, piece);
             assert!(mechanics::has(&hero, MechanicId::Jewelry(piece.display_id)));
+            // Its own mechanic, never the generic proc its rarity would otherwise carry.
+            let own = darkmoon_specs(piece.key);
+            assert!(!own.is_empty(), "{}", piece.key);
+            assert!(
+                std::ptr::eq(mechanic_specs(piece), own),
+                "{} lost its real mechanic",
+                piece.key
+            );
         }
+    }
+
+    #[test]
+    fn a_replacement_shows_what_it_changes_stat_by_stat() {
+        // Hand of Justice (+7% damage, +3% crit, +2% armor) over Blackhand's Breadth (+5% crit,
+        // +10% crit damage).
+        let deltas = stat_deltas(by_key("hand_of_justice"), by_key("blackhands_breadth"));
+        let of = |stat| {
+            deltas
+                .iter()
+                .find(|b| b.stat == stat)
+                .map(|b| (b.value * 100.0).round())
+        };
+        assert_eq!(of(StatKey::Damage), Some(7.0));
+        assert_eq!(of(StatKey::CritChance), Some(-2.0));
+        assert_eq!(of(StatKey::CritDamage), Some(-10.0));
+        assert_eq!(of(StatKey::Armor), Some(2.0));
+        // A piece over itself changes nothing.
+        let same = by_key("naglering");
+        assert!(stat_deltas(same, same).is_empty());
+    }
+
+    #[test]
+    fn proc_text_says_the_chance_the_proc_rolls() {
+        let procs = pieces().iter().filter_map(|p| p.proc);
+        for key in procs.chain(catalog::DARKMOON.iter().map(|p| p.key)) {
+            let text = proc_text(key);
+            let specs = darkmoon_specs(key);
+            let specs = if specs.is_empty() {
+                proc_specs(proc_kind(key))
+            } else {
+                specs
+            };
+            for spec in specs {
+                let chance = match spec.trigger {
+                    Trigger::OnHit { chance, .. } | Trigger::OnKill { chance, .. } => chance,
+                    _ => continue,
+                };
+                let said = format!("{}% on", (chance * 100.0).round());
+                assert!(text.contains(&said), "{key}: {text:?} should say {said:?}");
+            }
+        }
+        assert_eq!(proc_text("band_of_rumination"), "10% on hit: strike again");
+        assert_ne!(proc_text("diamond_flask"), proc_text("hand_of_justice"));
+    }
+
+    #[test]
+    fn a_replaced_piece_takes_its_proc_with_it() {
+        let mut hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
+        let first = by_key("hand_of_justice");
+        let second = by_key("blackhands_breadth");
+        let third = by_key("diamond_flask");
+        wear(&mut hero, first, None).unwrap();
+        wear(&mut hero, second, None).unwrap();
+        let slot = Jewelry::slots_of(Kind::Trinket)
+            .find(|&i| hero.jewelry.slot(i) == Some(first))
+            .unwrap();
+        assert_eq!(wear(&mut hero, third, Some(slot)), Ok(Some(first)));
+        assert!(!mechanics::has(
+            &hero,
+            MechanicId::Jewelry(first.display_id)
+        ));
+        assert!(mechanics::has(
+            &hero,
+            MechanicId::Jewelry(second.display_id)
+        ));
+        assert!(mechanics::has(&hero, MechanicId::Jewelry(third.display_id)));
+        // Putting the first back over and over never stacks its proc.
+        for _ in 0..3 {
+            let slot = Jewelry::slots_of(Kind::Trinket)
+                .find(|&i| hero.jewelry.slot(i) != Some(second))
+                .unwrap();
+            let _ = wear(&mut hero, first, Some(slot));
+            let _ = wear(&mut hero, third, Some(slot));
+        }
+        let worn: Vec<_> = hero.jewelry.worn().map(|p| p.display_id).collect();
+        let stale = hero.mechanics.clone().revoke_where(|id| match id {
+            MechanicId::Jewelry(d) => !worn.contains(&d),
+            _ => false,
+        });
+        assert_eq!(stale, 0, "a replaced piece's proc lingers");
+        let jewelry = hero
+            .mechanics
+            .clone()
+            .revoke_where(|id| matches!(id, MechanicId::Jewelry(_)));
+        assert_eq!(jewelry, 2, "one proc for each of the two worn pieces");
+    }
+
+    #[test]
+    fn only_a_darkmoon_trinket_may_be_pinned_by_another_player() {
+        assert!(darkmoon_piece("darkmoon_heroism").is_some());
+        assert!(darkmoon_piece("band_of_accuria").is_none());
+        assert!(darkmoon_piece("no_such_piece").is_none());
     }
 
     #[test]
@@ -1310,6 +1482,29 @@ mod tests {
         );
         assert!(offer.pieces().is_empty());
         assert!(offer.replacing().is_none());
+    }
+
+    #[test]
+    fn an_exhausted_profile_pool_turns_the_choices_left_into_hands() {
+        let mut rng = Rng(23);
+        let mut run = Run::default();
+        let mut hero = HeroState::default();
+        let only = by_key("naglering");
+        hero.jewelry.picks = 3;
+        let mut offer = JewelOffer {
+            pool: vec![only],
+            pieces: vec![only],
+            replacing: None,
+        };
+        // Taking the pool's only piece leaves it nothing to offer: the two choices left become
+        // level-up hands instead of vanishing.
+        let done = act(Act::Take(0), &mut hero, &mut run, &mut offer).unwrap();
+        assert_eq!(
+            close(done, &mut hero, &mut run, &mut offer, &mut rng),
+            Some(Phase::LevelUp)
+        );
+        assert_eq!((hero.jewelry.picks, hero.picks), (0, 2));
+        assert!(offer.pieces().is_empty());
     }
 
     #[test]

@@ -8,14 +8,18 @@
 //! ([`super::campfire`]), with no spawns while it lasts and the full-size hand. Esc's menu and the
 //! Character panel pause nothing either ([`world_runs`]).
 //!
-//! A run of one player (with or without the test aid's bots) keeps the paused level-up exactly as
-//! it was.
+//! A run of one player (with or without the test aid's bots) banks its hands the same way under
+//! the Quick picks setting, on by default ([`quick_picks`]); with it off, it keeps the paused
+//! level-up exactly as it was. A hero holding [`AUTO_BUILD_AT`] or more banked hands is offered
+//! Auto-build, which takes them one after another by weight, favouring its own spells
+//! ([`party::auto_pick`]), through the same pick a click makes.
 
 use bevy::prelude::*;
 
 use super::cards::{PendingPick, Rays};
 use super::hud::{self, HudFont, Offer};
 use super::party::{self, Bot, LocalHero, NetRole};
+use super::profile::Profile;
 use super::{jewelry, HeroState, Phase, Rng, Run};
 use crate::cvars::Cvars;
 
@@ -36,6 +40,24 @@ const CHOOSING: &str = "Everyone's choosing";
 const STRIP_SCALE: f32 = 0.6;
 const STRIP_BOTTOM: f32 = 118.0;
 
+/// The solo setting that banks level-ups for the strip instead of pausing (Options → Interface).
+pub(super) const QUICK_PICKS: &str = "survivorsQuickPicks";
+/// Banked hands from which the strip offers Auto-build.
+pub(super) const AUTO_BUILD_AT: u32 = 5;
+
+/// Whether Quick picks is on: the setting's value, or its default (on) where it is not set, or
+/// with no console variables at all.
+pub(super) fn quick_picks(cvars: Option<&Cvars>) -> bool {
+    cvars
+        .and_then(|c| c.get(QUICK_PICKS))
+        .is_none_or(|value| value.trim() != "0")
+}
+
+/// Whether hands bank for the strip: always in co-op, and solo under Quick picks.
+fn banks(coop: &CoopRun, cvars: Option<&Res<Cvars>>) -> bool {
+    coop.0 || quick_picks(cvars.map(|c| &**c))
+}
+
 /// Whether this run is a co-op one: two or more players' heroes in it.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct CoopRun(pub bool);
@@ -50,19 +72,32 @@ pub(super) struct HandStrip {
 #[derive(Component)]
 struct Badge;
 
+/// Auto-build, running: the local hero's banked hands are taken one by one until none is left.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct AutoBuild {
+    pub on: bool,
+}
+
+/// The Auto-build button by the strip.
+#[derive(Component)]
+struct AutoBuildButton;
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CoopRun>()
         .init_resource::<HandStrip>()
+        .init_resource::<AutoBuild>()
         .add_systems(PreUpdate, detect)
         .add_systems(
             Update,
             (
                 toggle_strip,
                 focus,
-                deal_local.before(super::cards::deal_cards),
+                (deal_local, press_auto_build, auto_build)
+                    .chain()
+                    .before(super::cards::deal_cards),
                 slow_mo,
-                spawn_badge,
-                (refresh_badge, style_strip)
+                (spawn_badge, spawn_auto_button),
+                (refresh_badge, refresh_auto_button, style_strip)
                     .after(hud::show_panels)
                     .before(crate::glue::GlueVisuals),
             ),
@@ -114,16 +149,14 @@ pub(super) fn catch_up(level: u32) -> u32 {
 /// become every hero's banked hands, bots take theirs at once, and play goes on.
 pub(super) fn bank_level_ups(
     coop: Res<CoopRun>,
-    cvars: Res<Cvars>,
+    cvars: Option<Res<Cvars>>,
+    profile: Option<Res<Profile>>,
     mut next: ResMut<NextState<Phase>>,
     mut run: ResMut<Run>,
     mut heroes: Query<(&mut HeroState, Has<Bot>)>,
     mut rng: ResMut<Rng>,
 ) {
-    let quick_picks = cvars
-        .get("survivorsQuickPicks")
-        .is_none_or(|value| value != "0");
-    if !(coop.0 || quick_picks) {
+    if !banks(&coop, cvars.as_ref()) {
         return;
     }
     if matches!(
@@ -139,9 +172,10 @@ pub(super) fn bank_level_ups(
     party::deal_hands(&mut run, heroes.iter_mut().map(|(h, _)| h));
     jewelry::deal(&mut run, heroes.iter_mut().map(|(h, _)| h));
     let level = run.level;
+    // The bots are this machine's, as the paused picker's are ([`jewelry`]): this profile's pool.
+    let pool = jewelry::pool(profile.as_deref());
     for (mut hero, bot) in &mut heroes {
         if party::auto_picks(&hero, bot) {
-            let pool: Vec<_> = jewelry::pieces().iter().collect();
             jewelry::choose_at_random(&mut hero, &pool, level, &mut rng);
             party::pick_at_random(&mut hero, &mut rng);
         }
@@ -154,7 +188,7 @@ fn toggle_strip(
     keys: Res<ButtonInput<KeyCode>>,
     phase: Res<State<Phase>>,
     coop: Res<CoopRun>,
-    cvars: Res<Cvars>,
+    cvars: Option<Res<Cvars>>,
     offer: Res<Offer>,
     local: Query<&HeroState, With<LocalHero>>,
     run: Res<Run>,
@@ -163,10 +197,7 @@ fn toggle_strip(
     let holds = local
         .single()
         .is_ok_and(|me| me.alive() && (banked(me) > 0 || offer.len() > 0));
-    let quick_picks = cvars
-        .get("survivorsQuickPicks")
-        .is_none_or(|value| value != "0");
-    if !((coop.0 || quick_picks) && *phase.get() == Phase::Playing && holds) {
+    if !(banks(&coop, cvars.as_ref()) && *phase.get() == Phase::Playing && holds) {
         if strip.open {
             strip.open = false;
         }
@@ -197,11 +228,15 @@ fn focus(
     }
 }
 
-/// The local hero's next banked hand, dealt here (a co-op client's comes from its host); a hero
-/// gone down puts its hand away.
+/// The local hero's next banked hand, dealt here (a co-op client's comes from its host) while
+/// playing, the camp's full-size hand too; a hero gone down puts its hand away. Jewelry rolls from
+/// this player's own pool, its completed decks' trinkets with the catalog.
+#[allow(clippy::too_many_arguments)]
 fn deal_local(
     coop: Res<CoopRun>,
-    cvars: Res<Cvars>,
+    cvars: Option<Res<Cvars>>,
+    profile: Option<Res<Profile>>,
+    phase: Res<State<Phase>>,
     role: Res<NetRole>,
     pending: Res<PendingPick>,
     run: Res<Run>,
@@ -209,10 +244,10 @@ fn deal_local(
     mut rng: ResMut<Rng>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
 ) {
-    let quick_picks = cvars
-        .get("survivorsQuickPicks")
-        .is_none_or(|value| value != "0");
-    if !(coop.0 || quick_picks) || *role == NetRole::Client || pending.busy() || run.breather > 0.0
+    if !banks(&coop, cvars.as_ref())
+        || *phase.get() != Phase::Playing
+        || *role == NetRole::Client
+        || pending.busy()
     {
         return;
     }
@@ -226,10 +261,66 @@ fn deal_local(
         return;
     }
     if offer.len() == 0 {
-        if let Some(hand) = party::next_hand(&mut me, run.level, &mut rng) {
+        let pool = jewelry::pool(profile.as_deref());
+        if let Some(hand) = party::next_hand(&mut me, &pool, run.level, &mut rng) {
             offer.deal(hand);
         }
     }
+}
+
+/// The Auto-build button pressed: the local hero's banked hands start resolving.
+fn press_auto_build(
+    presses: Query<&Interaction, (Changed<Interaction>, With<AutoBuildButton>)>,
+    mut auto: ResMut<AutoBuild>,
+) {
+    if presses.iter().any(|i| *i == Interaction::Pressed) && !auto.on {
+        auto.on = true;
+    }
+}
+
+/// Auto-build at work: each hand dealt to the local hero is taken at once, by weight favouring
+/// its own spells ([`party::auto_pick`]), the way a click takes it: applied here, or posted to the
+/// host by a co-op client, which deals the next. It stops with nothing left banked, off the run,
+/// or with the hero down.
+#[allow(clippy::too_many_arguments)]
+fn auto_build(
+    phase: Res<State<Phase>>,
+    pending: Res<PendingPick>,
+    mut auto: ResMut<AutoBuild>,
+    mut run: ResMut<Run>,
+    mut offer: ResMut<Offer>,
+    mut rng: ResMut<Rng>,
+    mut local: Query<&mut HeroState, With<LocalHero>>,
+    mut outbox: Option<ResMut<party::HandOutbox>>,
+) {
+    if !auto.on {
+        return;
+    }
+    let Ok(mut me) = local.single_mut() else {
+        auto.on = false;
+        return;
+    };
+    if *phase.get() != Phase::Playing || !me.alive() || (banked(&me) == 0 && offer.len() == 0) {
+        auto.on = false;
+        return;
+    }
+    if pending.busy() || offer.len() == 0 {
+        return;
+    }
+    let Some(i) = party::auto_pick(offer.choices(), &me, &mut rng) else {
+        return;
+    };
+    match outbox.as_deref_mut() {
+        Some(outbox) => outbox.0.push(party::HandDecision::Pick(i)),
+        None => {
+            if let Some(&choice) = offer.choices().get(i) {
+                if party::apply_pick(&mut me, choice) {
+                    run.version += 1;
+                }
+            }
+        }
+    }
+    offer.deal(Vec::new());
 }
 
 /// Whether every living player has a hand open: the world slows. A party with none standing is
@@ -249,11 +340,12 @@ pub(super) fn all_choosing<'a>(heroes: impl IntoIterator<Item = (&'a HeroState, 
 }
 
 /// The world at [`SLOW_MO`] while every living player chooses, with the banner; a co-op client
-/// follows its host's.
+/// follows its host's. A transformation's hitstop holds it at [`super::moments::HITSTOP_SPEED`].
 pub(super) fn slow_mo(
     role: Res<NetRole>,
     coop: Res<CoopRun>,
     heroes: Query<(&HeroState, Has<Bot>)>,
+    hitstop: Option<Res<super::moments::Hitstop>>,
     mut run: ResMut<Run>,
     mut time: ResMut<Time<Virtual>>,
 ) {
@@ -269,7 +361,13 @@ pub(super) fn slow_mo(
         }
         slow
     };
-    let speed = if slow { SLOW_MO } else { 1.0 };
+    let speed = if hitstop.is_some_and(|h| h.left > 0.0) {
+        super::moments::HITSTOP_SPEED
+    } else if slow {
+        SLOW_MO
+    } else {
+        1.0
+    };
     if time.relative_speed() != speed {
         time.set_relative_speed(speed);
     }
@@ -308,7 +406,7 @@ fn spawn_badge(mut commands: Commands, font: Option<Res<HudFont>>, badges: Query
 fn refresh_badge(
     phase: Res<State<Phase>>,
     coop: Res<CoopRun>,
-    cvars: Res<Cvars>,
+    cvars: Option<Res<Cvars>>,
     strip: Res<HandStrip>,
     local: Query<&HeroState, With<LocalHero>>,
     mut badges: Query<(&mut Node, &Children), With<Badge>>,
@@ -319,16 +417,84 @@ fn refresh_badge(
         .ok()
         .filter(|me| me.alive())
         .map_or(0, banked);
-    let quick_picks = cvars
-        .get("survivorsQuickPicks")
-        .is_none_or(|value| value != "0");
-    let on = (coop.0 || quick_picks) && *phase.get() == Phase::Playing && !strip.open && n > 0;
+    let on = banks(&coop, cvars.as_ref()) && *phase.get() == Phase::Playing && !strip.open && n > 0;
     for (mut node, children) in &mut badges {
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
         }
         let want = format!("Level up! \u{00d7}{n} (Tab)");
+        for &child in children {
+            if let Ok(mut t) = texts.get_mut(child) {
+                if t.0 != want {
+                    t.0 = want.clone();
+                }
+            }
+        }
+    }
+}
+
+fn spawn_auto_button(
+    mut commands: Commands,
+    font: Option<Res<HudFont>>,
+    buttons: Query<(), With<AutoBuildButton>>,
+) {
+    let Some(font) = font else { return };
+    if !buttons.is_empty() {
+        return;
+    }
+    commands
+        .spawn((
+            AutoBuildButton,
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(24.0),
+                bottom: Val::Px(STRIP_BOTTOM + 14.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(4.0)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.12, 0.09, 0.03, 0.92)),
+            BorderColor::all(hud::GOLD_TONE),
+            GlobalZIndex(416),
+        ))
+        .with_children(|b| {
+            b.spawn(hud::centered_bundle(&font.0, "", 16.0, hud::GOLD_TONE));
+        });
+}
+
+/// The Auto-build button: shown while the local hero holds [`AUTO_BUILD_AT`] or more banked
+/// hands in a run that banks them, and while it works through them.
+fn refresh_auto_button(
+    phase: Res<State<Phase>>,
+    coop: Res<CoopRun>,
+    cvars: Option<Res<Cvars>>,
+    auto: Res<AutoBuild>,
+    local: Query<&HeroState, With<LocalHero>>,
+    mut buttons: Query<(&mut Node, &Children), With<AutoBuildButton>>,
+    mut texts: Query<&mut Text>,
+) {
+    let n = local
+        .single()
+        .ok()
+        .filter(|me| me.alive())
+        .map_or(0, banked);
+    let on = banks(&coop, cvars.as_ref())
+        && *phase.get() == Phase::Playing
+        && (auto.on || n >= AUTO_BUILD_AT);
+    let want = if auto.on {
+        format!("Auto-building\u{2026} {n} left")
+    } else {
+        format!("Auto-build {n} hands")
+    };
+    for (mut node, children) in &mut buttons {
+        let display = if on { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
         for &child in children {
             if let Ok(mut t) = texts.get_mut(child) {
                 if t.0 != want {
@@ -473,8 +639,11 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_player_keeps_the_paused_level_up() {
+    fn a_lone_player_keeps_the_paused_level_up_with_quick_picks_off() {
         let mut w = world(false);
+        let mut cvars = Cvars::default();
+        let _ = cvars.set(QUICK_PICKS, "0");
+        w.insert_resource(cvars);
         w.spawn(hero(0));
         w.spawn((hero(1), Bot));
         w.run_system_once(detect).unwrap();
@@ -500,6 +669,79 @@ mod tests {
     }
 
     #[test]
+    fn quick_picks_is_on_by_default_and_banks_a_lone_players_level_ups() {
+        assert!(quick_picks(None), "no console variables: the default");
+        let mut cvars = Cvars::default();
+        assert!(quick_picks(Some(&cvars)), "the registered default");
+        let _ = cvars.set(QUICK_PICKS, "0");
+        assert!(!quick_picks(Some(&cvars)));
+        // Solo, with no console variables in the world, the level-up banks and play goes on.
+        let mut w = world(false);
+        let me = w.spawn((hero(0), LocalHero)).id();
+        w.resource_mut::<Run>().pending_levels = 2;
+        w.resource_mut::<NextState<Phase>>().set(Phase::LevelUp);
+        w.run_system_once(bank_level_ups).unwrap();
+        assert!(matches!(
+            *w.resource::<NextState<Phase>>(),
+            NextState::Unchanged
+        ));
+        assert_eq!(w.get::<HeroState>(me).unwrap().picks, 2);
+    }
+
+    fn strip_world(phase: Phase) -> World {
+        let mut w = world(false);
+        w.insert_resource(State::new(phase));
+        w.init_resource::<PendingPick>();
+        w.init_resource::<Offer>();
+        w.init_resource::<AutoBuild>();
+        w.init_resource::<HandStrip>();
+        w.init_resource::<ButtonInput<KeyCode>>();
+        w
+    }
+
+    #[test]
+    fn hands_are_dealt_only_while_playing_and_at_camp() {
+        let mut w = strip_world(Phase::GameOver);
+        let me = w.spawn((hero(0), LocalHero)).id();
+        w.get_mut::<HeroState>(me).unwrap().picks = 2;
+        // The run is over (its hand cleared): a banked pick deals nothing into the results.
+        w.run_system_once(deal_local).unwrap();
+        assert_eq!(
+            w.resource::<Offer>().len(),
+            0,
+            "a stale hand outlives its run"
+        );
+        // At camp the strip is the full-size hand, and it deals.
+        w.insert_resource(State::new(Phase::Playing));
+        w.resource_mut::<Run>().breather = 20.0;
+        w.run_system_once(deal_local).unwrap();
+        assert_eq!(w.resource::<Offer>().len(), 3, "camp spends banked picks");
+        w.run_system_once(toggle_strip).unwrap();
+        assert!(w.resource::<HandStrip>().open);
+    }
+
+    #[test]
+    fn auto_build_resolves_every_banked_hand_favouring_owned_spells() {
+        let mut w = strip_world(Phase::Playing);
+        let me = w.spawn((hero(0), LocalHero)).id();
+        w.get_mut::<HeroState>(me).unwrap().picks = 8;
+        w.resource_mut::<AutoBuild>().on = true;
+        for _ in 0..40 {
+            w.run_system_once(deal_local).unwrap();
+            w.run_system_once(auto_build).unwrap();
+        }
+        let h = w.get::<HeroState>(me).unwrap();
+        assert_eq!(banked(h), 0, "every hand taken");
+        assert_eq!(w.resource::<Offer>().len(), 0);
+        assert!(!w.resource::<AutoBuild>().on, "it stops once done");
+        let ranks: u32 = h.abilities.iter().map(|o| u32::from(o.level)).sum::<u32>()
+            + h.passives.iter().map(|(_, l)| u32::from(*l)).sum::<u32>()
+            + h.overcharges.iter().sum::<u32>()
+            + h.abilities.len() as u32;
+        assert!(ranks > 8, "eight picks grew the build: {ranks}");
+    }
+
+    #[test]
     fn a_late_joiner_catches_up_and_banked_jewelry_deals_first() {
         assert_eq!(catch_up(1), 0);
         assert_eq!(catch_up(7), 6);
@@ -507,7 +749,8 @@ mod tests {
         me.picks = 1;
         me.jewelry.picks = 1;
         let mut rng = Rng(9);
-        let hand = party::next_hand(&mut me, 3, &mut rng).unwrap();
+        let pool = jewelry::pool(None);
+        let hand = party::next_hand(&mut me, &pool, 3, &mut rng).unwrap();
         assert!(hand.iter().all(|c| matches!(c, Choice::Jewel(_))));
         assert!(party::apply_pick(&mut me, hand[0]));
         assert_eq!(
@@ -516,15 +759,15 @@ mod tests {
             "a piece spends the jewelry"
         );
         assert_eq!(me.jewelry.worn().count(), 1);
-        let hand = party::next_hand(&mut me, 3, &mut rng).unwrap();
+        let hand = party::next_hand(&mut me, &pool, 3, &mut rng).unwrap();
         assert!(!hand.iter().any(|c| matches!(c, Choice::Jewel(_))));
         assert!(party::apply_pick(&mut me, hand[0]));
         assert_eq!(banked(&me), 0);
-        assert!(party::next_hand(&mut me, 3, &mut rng).is_none());
+        assert!(party::next_hand(&mut me, &pool, 3, &mut rng).is_none());
         // Down, nothing is dealt.
         me.picks = 2;
         me.dead_t = Some(0.0);
-        assert!(party::next_hand(&mut me, 3, &mut rng).is_none());
+        assert!(party::next_hand(&mut me, &pool, 3, &mut rng).is_none());
     }
 
     #[test]

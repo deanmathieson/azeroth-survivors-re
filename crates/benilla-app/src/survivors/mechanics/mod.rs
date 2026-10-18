@@ -124,14 +124,22 @@ pub(crate) enum Of {
     Any,
     /// Only this one, by its key in [`data::ABILITIES`].
     Ability(&'static str),
+    /// Any of the hero's abilities, striking an undead or a demon
+    /// ([`super::enemies::bane`]): Mark of the Champion's.
+    Bane,
 }
 
 impl Of {
     pub(crate) fn matches(self, ability: &AbilityDef) -> bool {
         match self {
-            Of::Any => true,
+            Of::Any | Of::Bane => true,
             Of::Ability(key) => ability.key == key,
         }
+    }
+
+    /// Whether a blow of `ability` on a foe (`bane`: an undead or a demon) is one it listens to.
+    fn strikes(self, ability: &AbilityDef, bane: bool) -> bool {
+        self.matches(ability) && (self != Of::Bane || bane)
     }
 }
 
@@ -874,7 +882,12 @@ pub(crate) fn sync_legendaries(hero: &mut HeroState) -> usize {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum ProcKind {
     Cast,
-    Hit { crit: bool, killed: bool },
+    /// A blow landed: a critical strike, a kill, and on an undead or a demon.
+    Hit {
+        crit: bool,
+        killed: bool,
+        bane: bool,
+    },
 }
 
 /// A cast or a landed blow of a hero's ability, recorded for its mechanics.
@@ -900,20 +913,24 @@ pub(crate) struct Procs(pub Vec<Proc>);
 /// Which triggers a proc of `kind` from `ability` sets off, as its chance.
 pub(crate) fn fires_on(trigger: Trigger, kind: ProcKind, ability: &AbilityDef) -> Option<f32> {
     match (trigger, kind) {
-        (Trigger::OnCast(of), ProcKind::Cast) if of.matches(ability) => Some(1.0),
-        (Trigger::OnHit { of, chance }, ProcKind::Hit { .. }) if of.matches(ability) => {
-            Some(chance)
-        }
-        (Trigger::OnCrit { of, chance }, ProcKind::Hit { crit: true, .. })
-            if of.matches(ability) =>
+        (Trigger::OnCast(of), ProcKind::Cast) if of != Of::Bane && of.matches(ability) => Some(1.0),
+        (Trigger::OnHit { of, chance }, ProcKind::Hit { bane, .. })
+            if of.strikes(ability, bane) =>
         {
             Some(chance)
         }
-        (Trigger::OnKill { of, chance }, ProcKind::Hit { killed: true, .. })
-            if of.matches(ability) =>
-        {
-            Some(chance)
-        }
+        (
+            Trigger::OnCrit { of, chance },
+            ProcKind::Hit {
+                crit: true, bane, ..
+            },
+        ) if of.strikes(ability, bane) => Some(chance),
+        (
+            Trigger::OnKill { of, chance },
+            ProcKind::Hit {
+                killed: true, bane, ..
+            },
+        ) if of.strikes(ability, bane) => Some(chance),
         _ => None,
     }
 }

@@ -2853,16 +2853,17 @@ fn late_game_health_and_density_step_up_after_sixty_percent() {
 
 /// The experience to go from `level` to the next: cheap early, then a steady climb that leaves a
 /// normal-density run time to play between hands while rarity carries a build to its top ranks.
+/// Never cheaper than the level before: each piece starts where the last one ends (145 at levels
+/// 10 to 25, 425 at 39 and 40), and the pieces' sums keep the pacing test's levels on the clock.
 pub(crate) fn xp_to_next(level: u32) -> f32 {
     let l = level as f32;
     if level < 11 {
-        10.0 + (l - 1.0) * 17.0
+        10.0 + (l - 1.0) * 15.0
     } else if level < 25 {
-        // Level 10 costs 163: never make the next level cheaper than the last.
-        163.0
+        145.0
     } else if level < 40 {
         let middle = l - 25.0;
-        163.0 + middle * 32.0 - middle * middle * 0.84
+        145.0 + middle * 27.0 - middle * middle * 0.5
     } else {
         let late = l - 40.0;
         425.0 + late * 9.0 + late * late * 6.6
@@ -2872,9 +2873,18 @@ pub(crate) fn xp_to_next(level: u32) -> f32 {
 #[cfg(test)]
 #[test]
 fn xp_requirements_never_fall() {
-    for level in 1..100 {
-        assert!(xp_to_next(level + 1) >= xp_to_next(level), "level {level}");
+    for level in 1..200 {
+        assert!(
+            xp_to_next(level + 1) >= xp_to_next(level),
+            "level {level}: {} then {}",
+            xp_to_next(level),
+            xp_to_next(level + 1)
+        );
     }
+    // The seams meet: no step at levels 10/11, 24/25 or 39/40.
+    assert_eq!(xp_to_next(10), xp_to_next(11));
+    assert_eq!(xp_to_next(24), xp_to_next(25));
+    assert_eq!(xp_to_next(39), xp_to_next(40));
 }
 
 /// A normal-density run's expected experience at `seconds`: five turns of the opening live horde

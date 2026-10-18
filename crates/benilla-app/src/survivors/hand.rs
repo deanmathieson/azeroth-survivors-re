@@ -35,9 +35,9 @@ pub(crate) enum Struck {
 pub(super) fn struck(choice: Choice, hero: &HeroState) -> Option<Struck> {
     match choice {
         Choice::NewAbility(def) => Some(Struck::Ability(def.key)),
-        Choice::Upgrade(k) => hero.abilities.get(k).map(|o| Struck::Ability(o.def.key)),
+        Choice::Upgrade(k, _) => hero.abilities.get(k).map(|o| Struck::Ability(o.def.key)),
         Choice::NewPassive(p) => Some(Struck::Passive(p.key)),
-        Choice::UpPassive(k) => hero.passives.get(k).map(|(p, _)| Struck::Passive(p.key)),
+        Choice::UpPassive(k, _) => hero.passives.get(k).map(|(p, _)| Struck::Passive(p.key)),
         Choice::Overcharge(_) | Choice::Jewel(_) => None,
         Choice::Heal => None,
     }
@@ -105,7 +105,13 @@ pub(super) fn banish(slot: usize, hero: &mut HeroState, offer: &mut Offer, rng: 
         .collect();
     let mut pool = hud::offer_pool(hero);
     pool.retain(|&(c, _)| struck(c, hero).is_none_or(|k| !held.contains(&k)));
-    offer.redeal(slot, hud::draw(pool, 1, rng).pop());
+    let stats = hero.stats();
+    // With nothing left to deal, an Overcharge the hand does not hold takes the slot.
+    let card = match hud::draw(pool, 1, rng).pop() {
+        Some(c) => Some(hud::roll_card(c, &stats, rng)),
+        None => hud::spare_overcharge(offer.choices(), rng),
+    };
+    offer.redeal(slot, card);
     true
 }
 
@@ -341,6 +347,7 @@ pub(super) fn refresh_tools(
 #[cfg(test)]
 mod tests {
     use super::super::bonus::{Bonus, StatKey};
+    use super::super::cards::Rarity;
     use super::super::{data, Owned};
     use super::*;
 
@@ -413,14 +420,52 @@ mod tests {
     fn banishing_an_owned_spell_ends_its_ranks() {
         let (mut hero, mut offer, mut rng) = (fresh_hero(), Offer::default(), Rng(3));
         hero.banishes = 1;
-        offer.deal(vec![Choice::Upgrade(0), Choice::Heal]);
+        offer.deal(vec![Choice::Upgrade(0, Rarity::Common), Choice::Heal]);
         assert!(!strikable(1, &hero, &offer), "the healthstone stays");
         assert!(banish(0, &mut hero, &mut offer, &mut rng));
         let start = hero.abilities[0].def.key;
         assert_eq!(hero.banished, vec![Struck::Ability(start)]);
         assert!(hud::offer_pool(&hero)
             .iter()
-            .all(|&(c, _)| !matches!(c, Choice::Upgrade(0))));
+            .all(|&(c, _)| !matches!(c, Choice::Upgrade(0, _))));
+    }
+
+    #[test]
+    fn a_banish_with_nothing_left_deals_an_overcharge() {
+        let (mut hero, mut offer, mut rng) = (fresh_hero(), Offer::default(), Rng(3));
+        hero.banishes = 1;
+        // Its only spell at the top rank, no talent slot to offer: nothing else is left.
+        hero.abilities[0].level = data::MAX_ABILITY_LEVEL;
+        hero.passives = data::PASSIVES[..data::MAX_PASSIVES]
+            .iter()
+            .map(|p| (p, data::MAX_PASSIVE_LEVEL))
+            .collect();
+        hero.passives[0].1 = data::MAX_PASSIVE_LEVEL - 1;
+        offer.deal(vec![
+            Choice::UpPassive(0, Rarity::Common),
+            Choice::Overcharge(super::super::Overcharge::Damage),
+            Choice::Overcharge(super::super::Overcharge::Haste),
+        ]);
+        // Every other class spell banished, so no new spell is offered either.
+        for key in hero.class.pool {
+            if *key != hero.abilities[0].def.key {
+                hero.banished.push(Struck::Ability(key));
+            }
+        }
+        assert!(banish(0, &mut hero, &mut offer, &mut rng));
+        assert_eq!(offer.len(), 3, "the slot is dealt again");
+        assert!(matches!(offer.choices()[0], Choice::Overcharge(_)));
+        assert!(!offer.choices().iter().any(|c| matches!(c, Choice::Heal)));
+        let kinds: Vec<usize> = offer
+            .choices()
+            .iter()
+            .filter_map(|c| match c {
+                Choice::Overcharge(k) => Some(k.index()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds.len(), 3);
+        assert!(kinds[0] != kinds[1] && kinds[0] != kinds[2], "{kinds:?}");
     }
 
     #[test]

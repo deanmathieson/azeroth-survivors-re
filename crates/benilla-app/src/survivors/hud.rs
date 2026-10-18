@@ -11,6 +11,7 @@ use bevy::shader::ShaderRef;
 use bevy::ui_render::ui_material::{MaterialNode, UiMaterial};
 use bevy::window::PrimaryWindow;
 
+use super::cards::Rarity;
 use super::data::{self, AbilityDef, Effect, Kind, PassiveDef, Stat};
 use super::hero::{self, Hero};
 use super::minimap::{self, MiniMap};
@@ -278,9 +279,11 @@ pub(super) struct BaseColor(Color);
 #[derive(Clone, Copy)]
 pub(super) enum Choice {
     NewAbility(&'static AbilityDef),
-    Upgrade(usize),
+    /// A rank-up of the hero's ability `.0`, of the quality it rolled as it was dealt
+    /// ([`super::cards::roll_rarity`]); the same for a talent.
+    Upgrade(usize, Rarity),
     NewPassive(&'static PassiveDef),
-    UpPassive(usize),
+    UpPassive(usize, Rarity),
     Overcharge(Overcharge),
     Heal,
     /// A piece of jewelry, as a co-op hand deals a banked jewelry choice ([`super::strip`]).
@@ -330,8 +333,9 @@ impl Offer {
                 if i < self.choices.len() {
                     self.choices.remove(i);
                 }
+                // Never an empty hand: an Overcharge it does not hold yet.
                 if self.choices.is_empty() {
-                    self.choices.push(Choice::Heal);
+                    self.choices.push(Choice::Overcharge(Overcharge::ALL[0]));
                 }
                 self.redealt = None;
             }
@@ -416,7 +420,11 @@ fn icon(spell: u32, size: f32) -> impl Bundle {
     )
 }
 
-fn spell_name(spells: Option<&crate::ui_action::Spells>, spell: u32, fallback: &str) -> String {
+pub(super) fn spell_name(
+    spells: Option<&crate::ui_action::Spells>,
+    spell: u32,
+    fallback: &str,
+) -> String {
     spells
         .and_then(|s| s.catalog.get(spell))
         .map(|d| d.name.clone())
@@ -1247,10 +1255,11 @@ pub(super) fn start_replay(
 /// run.
 pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
     let mut pool: Vec<(Choice, f32)> = Vec::new();
+    // Rank-ups go in Common; their quality is rolled as they are dealt ([`roll_card`]).
     for (i, o) in hero.abilities.iter().enumerate() {
         if o.level < data::MAX_ABILITY_LEVEL {
             let weight = if hero.abilities.len() >= 3 { 1.8 } else { 1.2 };
-            pool.push((Choice::Upgrade(i), weight));
+            pool.push((Choice::Upgrade(i, Rarity::Common), weight));
         }
     }
     if hero.abilities.len() < data::MAX_ABILITIES {
@@ -1265,7 +1274,7 @@ pub(super) fn offer_pool(hero: &HeroState) -> Vec<(Choice, f32)> {
     }
     for (i, (_, level)) in hero.passives.iter().enumerate() {
         if *level < data::MAX_PASSIVE_LEVEL {
-            pool.push((Choice::UpPassive(i), 0.8));
+            pool.push((Choice::UpPassive(i, Rarity::Common), 0.8));
         }
     }
     if hero.passives.len() < data::MAX_PASSIVES {
@@ -1303,16 +1312,46 @@ pub(super) fn draw(mut pool: Vec<(Choice, f32)>, n: usize, rng: &mut Rng) -> Vec
     out
 }
 
-/// A level-up hand for `hero`: three choices, or repeatable Overcharges and a healthstone once
-/// everything is mastered.
+/// A level-up hand for `hero`: three choices, the hand filled up with repeatable Overcharges (never
+/// one twice) once fewer than three are left, as a build nears its top.
 pub(super) fn choices_for(hero: &HeroState, rng: &mut Rng) -> Vec<Choice> {
     let mut out = draw(offer_pool(hero), 3, rng);
-    while out.len() < 3 {
-        out.push(Choice::Overcharge(
-            Overcharge::ALL[rng.index(Overcharge::ALL.len())],
-        ));
+    if out.len() < 3 {
+        out.extend(draw(overcharges(), 3 - out.len(), rng));
     }
-    out
+    let stats = hero.stats();
+    out.into_iter()
+        .map(|choice| roll_card(choice, &stats, rng))
+        .collect()
+}
+
+/// A card as it is dealt: a rank-up rolls its quality ([`super::cards::roll_rarity`]); anything
+/// else is dealt as it is.
+pub(super) fn roll_card(choice: Choice, stats: &Stats, rng: &mut Rng) -> Choice {
+    match choice {
+        Choice::Upgrade(k, _) => Choice::Upgrade(k, super::cards::roll_rarity(stats, rng)),
+        Choice::UpPassive(k, _) => Choice::UpPassive(k, super::cards::roll_rarity(stats, rng)),
+        other => other,
+    }
+}
+
+/// An Overcharge `hand` does not hold, for a slot nothing else is left to fill.
+pub(super) fn spare_overcharge(hand: &[Choice], rng: &mut Rng) -> Option<Choice> {
+    let mut pool = overcharges();
+    pool.retain(|(c, _)| {
+        !hand
+            .iter()
+            .any(|h| matches!((h, c), (Choice::Overcharge(a), Choice::Overcharge(b)) if a == b))
+    });
+    draw(pool, 1, rng).pop()
+}
+
+/// Every Overcharge, evenly weighted: what fills a short hand.
+fn overcharges() -> Vec<(Choice, f32)> {
+    Overcharge::ALL
+        .into_iter()
+        .map(|kind| (Choice::Overcharge(kind), 1.0))
+        .collect()
 }
 
 /// The picker opens: the banked levels become a hand for every hero ([`party::deal_hands`]), the
@@ -1363,20 +1402,24 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
                 level,
                 cd: 0.3,
             });
+            // A new spell may complete a school's set.
+            super::synergy::sync_sets(hero);
         }
-        Choice::Upgrade(k) => {
+        Choice::Upgrade(k, _) => {
             let Some(old) = hero.abilities.get(k) else {
                 return;
             };
             let ranks = super::cards::rarity(choice, hero).ranks();
             hero.abilities[k].level = old.level.saturating_add(ranks).min(data::MAX_ABILITY_LEVEL);
+            // An Empower token lifts the one card it is spent on.
+            hero.empower = hero.empower.saturating_sub(1);
             super::mechanics::sync_legendaries(hero);
         }
         Choice::NewPassive(p) => {
             let rank = super::talents::first_rank(hero, p.key);
             hero.passives.push((p, rank));
         }
-        Choice::UpPassive(k) => {
+        Choice::UpPassive(k, _) => {
             if hero.passives.get(k).is_none() {
                 return;
             }
@@ -1385,6 +1428,7 @@ pub(super) fn take(hero: &mut HeroState, choice: Choice) {
                 .1
                 .saturating_add(ranks)
                 .min(data::MAX_PASSIVE_LEVEL);
+            hero.empower = hero.empower.saturating_sub(1);
         }
         Choice::Overcharge(kind) => hero.overcharges[kind.index()] += 1,
         Choice::Jewel(piece) => super::jewelry::put_on(hero, piece),
@@ -1435,7 +1479,8 @@ pub(super) fn close_hand(
     if jewelry_hand {
         hero.jewelry.picks = hero.jewelry.picks.saturating_sub(1);
         offer.deal(Vec::new());
-        next.set(Phase::Playing);
+        // Its level-up hands, if it holds any, else the run ([`super::jewelry::resume`]).
+        next.set(super::jewelry::resume(hero));
         return;
     }
     hero.picks = hero.picks.saturating_sub(1);
@@ -1637,7 +1682,7 @@ pub(super) fn describe_card(
                 legendary: None,
             }
         }
-        Choice::Upgrade(k) => {
+        Choice::Upgrade(k, _) => {
             let o = &hero.abilities[k];
             let next = o
                 .level
@@ -1697,7 +1742,7 @@ pub(super) fn describe_card(
             ranks: Some((0, data::MAX_PASSIVE_LEVEL)),
             legendary: None,
         },
-        Choice::UpPassive(k) => {
+        Choice::UpPassive(k, _) => {
             let (p, level) = hero.passives[k];
             let next = level
                 .saturating_add(super::cards::rarity(choice, hero).ranks())
@@ -3013,11 +3058,91 @@ mod tests {
     fn rare_cards_show_and_grant_their_extra_ranks() {
         let mut hero = HeroState::default();
         hero.passives.push((&data::PASSIVES[0], 3));
-        let choice = Choice::UpPassive(0);
+        let choice = Choice::UpPassive(0, Rarity::Rare);
         assert_eq!(super::super::cards::rarity(choice, &hero).ranks(), 2);
         assert_eq!(describe_card(choice, &hero, None).tag, "Rank 3 » 5");
         take(&mut hero, choice);
         assert_eq!(hero.passives[0].1, data::MAX_PASSIVE_LEVEL);
+    }
+
+    #[test]
+    fn rank_ups_roll_their_quality_and_luck_tilts_it() {
+        use super::super::bonus::{Bonus, StatKey};
+        let mut hero = HeroState::default();
+        let start = data::ability(hero.class.start);
+        hero.abilities.push(Owned {
+            def: start,
+            level: 1,
+            cd: 0.0,
+        });
+        hero.passives.push((&data::PASSIVES[0], 1));
+        let count = |hero: &HeroState, seed: u64| {
+            let mut rng = Rng(seed);
+            let mut seen = [0u32; 5];
+            for _ in 0..3000 {
+                for c in choices_for(hero, &mut rng) {
+                    if let Choice::Upgrade(_, r) | Choice::UpPassive(_, r) = c {
+                        seen[r as usize] += 1;
+                    }
+                }
+            }
+            seen
+        };
+        let plain = count(&hero, 5);
+        let common = plain[Rarity::Common as usize];
+        let rare = plain[Rarity::Rare as usize];
+        let epic = plain[Rarity::Epic as usize];
+        assert_eq!(
+            plain[Rarity::Uncommon as usize],
+            0,
+            "no rank-up rolls Uncommon"
+        );
+        assert!(common > rare && rare > epic && epic > 0, "{plain:?}");
+        // A Rare adds two ranks, an Epic three, a Common one.
+        for (r, ranks) in [(Rarity::Common, 1), (Rarity::Rare, 2), (Rarity::Epic, 3)] {
+            let mut h = HeroState::default();
+            h.abilities.push(Owned {
+                def: start,
+                level: 1,
+                cd: 0.0,
+            });
+            take(&mut h, Choice::Upgrade(0, r));
+            assert_eq!(h.abilities[0].level, 1 + ranks, "{r:?}");
+        }
+        // Luck makes the rarer rolls likelier.
+        hero.bonuses.add(&Bonus::new(StatKey::Luck, 1.0));
+        let lucky = count(&hero, 5);
+        let share = |s: [u32; 5]| {
+            (s[Rarity::Rare as usize] + s[Rarity::Epic as usize]) as f32
+                / s.iter().sum::<u32>().max(1) as f32
+        };
+        assert!(share(lucky) > share(plain) * 1.3, "{lucky:?} vs {plain:?}");
+    }
+
+    #[test]
+    fn an_empower_token_lifts_the_next_rank_up_to_rare() {
+        let mut hero = HeroState::default();
+        hero.passives.push((&data::PASSIVES[0], 1));
+        hero.empower = 1;
+        let card = Choice::UpPassive(0, Rarity::Common);
+        assert_eq!(super::super::cards::rarity(card, &hero), Rarity::Rare);
+        assert_eq!(
+            super::super::cards::jolt_sound(&[card], &hero),
+            Some(super::super::cards::ROLL_RARE_SOUND)
+        );
+        take(&mut hero, card);
+        assert_eq!(
+            (hero.passives[0].1, hero.empower),
+            (3, 0),
+            "two ranks, spent"
+        );
+        assert_eq!(super::super::cards::rarity(card, &hero), Rarity::Common);
+        assert_eq!(super::super::cards::jolt_sound(&[card], &hero), None);
+        let epic = Choice::UpPassive(0, Rarity::Epic);
+        assert_eq!(
+            super::super::cards::jolt_sound(&[card, epic], &hero),
+            Some(super::super::cards::ROLL_EPIC_SOUND)
+        );
     }
 
     #[test]
@@ -3071,6 +3196,14 @@ mod tests {
         );
         assert_eq!((hero.picks, hero.jewelry.picks), (1, 0));
         assert!(offer.choices().is_empty());
+        // The level-up hand it still holds comes next ([`super::jewelry::resume`]); with none,
+        // play resumes.
+        assert!(matches!(next, NextState::Pending(Phase::LevelUp)));
+        hero.picks = 0;
+        hero.jewelry.picks = 1;
+        offer.deal(vec![Choice::Jewel(&super::super::jewelry::pieces()[0])]);
+        let mut next = NextState::default();
+        close_hand(&mut hero, &mut offer, &mut rng, &mut next);
         assert!(matches!(next, NextState::Pending(Phase::Playing)));
     }
 
@@ -3140,8 +3273,54 @@ mod tests {
         }
     }
 
+    /// A card's identity in a hand, for telling two the same apart.
+    fn card_key(choice: Choice) -> String {
+        match choice {
+            Choice::NewAbility(def) => format!("new {}", def.key),
+            Choice::Upgrade(k, ..) => format!("rank {k}"),
+            Choice::NewPassive(p) => format!("talent {}", p.key),
+            Choice::UpPassive(k, ..) => format!("talent rank {k}"),
+            Choice::Overcharge(kind) => format!("overcharge {}", kind.index()),
+            Choice::Heal => "heal".into(),
+            Choice::Jewel(piece) => format!("jewel {}", piece.key),
+        }
+    }
+
     #[test]
-    fn mastered_build_hands_offer_overcharges_and_a_healthstone() {
+    fn no_hand_holds_the_same_card_twice() {
+        let mut rng = Rng(77);
+        let mut hero = HeroState::default();
+        hero.abilities = hero.class.pool[..data::MAX_ABILITIES]
+            .iter()
+            .map(|key| Owned {
+                def: data::ability(key),
+                level: data::MAX_ABILITY_LEVEL,
+                cd: 0.0,
+            })
+            .collect();
+        hero.passives = data::PASSIVES[..data::MAX_PASSIVES]
+            .iter()
+            .map(|passive| (passive, data::MAX_PASSIVE_LEVEL))
+            .collect();
+        // From a fully mastered build down to one with a single rank left anywhere: the short
+        // hands pad with Overcharges, and no card is dealt twice.
+        for open in 0..3 {
+            if open > 0 {
+                hero.abilities[open - 1].level -= 1;
+            }
+            for deal in 0..200 {
+                let hand = choices_for(&hero, &mut rng);
+                assert_eq!(hand.len(), 3);
+                let keys: Vec<String> = hand.iter().map(|&c| card_key(c)).collect();
+                for (i, k) in keys.iter().enumerate() {
+                    assert!(!keys[i + 1..].contains(k), "deal {deal}: {keys:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mastered_build_hands_offer_three_different_overcharges() {
         let mut hero = HeroState::default();
         hero.abilities = hero.class.pool[..data::MAX_ABILITIES]
             .iter()
@@ -3158,13 +3337,16 @@ mod tests {
         let mut rng = Rng::default();
         let hand = choices_for(&hero, &mut rng);
         assert_eq!(hand.len(), 3);
-        assert!(hand.iter().any(|choice| matches!(choice, Choice::Heal)));
-        assert_eq!(
-            hand.iter()
-                .filter(|choice| matches!(choice, Choice::Overcharge(_)))
-                .count(),
-            2
-        );
+        let mut kinds: Vec<usize> = hand
+            .iter()
+            .filter_map(|choice| match choice {
+                Choice::Overcharge(kind) => Some(kind.index()),
+                _ => None,
+            })
+            .collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        assert_eq!(kinds.len(), 3, "three different Overcharges");
     }
 
     /// The results and their ways out: the keys and buttons, the record on GameOver and the reset
@@ -3196,6 +3378,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<abilities::PendingHits>()
             .init_resource::<enemies::Spawner>()
+            .init_resource::<Offer>()
             .add_message::<profile::RunEnded>()
             .add_message::<AppExit>()
             .add_systems(Update, (buttons, keys).chain())

@@ -351,6 +351,7 @@ fn proc_text(trigger: Trigger, label: Option<&str>, name: &str) -> Option<String
         (Some(l), _) => format!("Your {l} {what}"),
         (None, Of::Ability(key)) => format!("Your {} {what}", title(key)),
         (None, Of::Any) => format!("Your {what}"),
+        (None, Of::Bane) => format!("Your {what} on undead and demons"),
     };
     Some(if c >= 1.0 {
         format!("{subject} proc {name}")
@@ -364,6 +365,7 @@ fn trigger_text(trigger: Trigger, label: Option<&str>) -> String {
         (Some(l), _) => Some(l.to_string()),
         (None, Of::Ability(key)) => Some(title(key)),
         (None, Of::Any) => None,
+        (None, Of::Bane) => Some("undead- and demon-slaying".to_string()),
     };
     let chance = |c: f32, what: &str, of: Of| {
         let what = match named(of) {

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::super::bonus::Bonuses;
+use super::super::cards::Rarity;
 use super::super::data;
 use super::super::gear::Features;
 use super::super::gear::Slot;
@@ -122,6 +123,8 @@ pub(in crate::survivors) struct NetBuild {
     pub(in crate::survivors) overcharges: [u32; 6],
     /// Jewelry choices banked.
     pub(in crate::survivors) jewels: u32,
+    /// Empower tokens held: its cards show the Rare they will be taken at.
+    pub(in crate::survivors) empower: u32,
 }
 
 /// The party's group buffs on a hero ([`super::super::synergy`]), each by its index in the
@@ -185,6 +188,8 @@ pub(in crate::survivors) struct NetEnemy {
     pub(in crate::survivors) elite: bool,
     pub(in crate::survivors) guardian: bool,
     pub(in crate::survivors) max_hp: f32,
+    /// A micro-event's named rare, by its place in the names ([`super::super::enemies::RareMob`]).
+    pub(in crate::survivors) rare: Option<u8>,
 }
 
 /// An enemy's health and death: the lean part that changes.
@@ -206,6 +211,8 @@ pub(in crate::survivors) struct NetRun {
     pub(in crate::survivors) elites: u32,
     pub(in crate::survivors) caches: u32,
     pub(in crate::survivors) bosses: u32,
+    /// Micro-events announced: each sounds the raid warning on every screen.
+    pub(in crate::survivors) events: u32,
     pub(in crate::survivors) won: bool,
     pub(in crate::survivors) banner: Option<String>,
     /// Every living player is choosing: the world runs slowed.
@@ -258,9 +265,10 @@ pub(in crate::survivors) fn passive(key: &str) -> Option<&'static data::PassiveD
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(in crate::survivors) enum WireChoice {
     NewAbility(String),
-    Upgrade(u8),
+    /// A rank-up by its slot, and the quality it rolled ([`Rarity::index`]).
+    Upgrade(u8, u8),
     NewPassive(String),
-    UpPassive(u8),
+    UpPassive(u8, u8),
     Heal,
     /// An [`Overcharge`], by its index.
     Overcharge(u8),
@@ -272,9 +280,9 @@ impl WireChoice {
     pub(in crate::survivors) fn of(choice: Choice) -> Self {
         match choice {
             Choice::NewAbility(def) => Self::NewAbility(def.key.to_string()),
-            Choice::Upgrade(i) => Self::Upgrade(i as u8),
+            Choice::Upgrade(i, r) => Self::Upgrade(i as u8, r.index()),
             Choice::NewPassive(def) => Self::NewPassive(def.key.to_string()),
-            Choice::UpPassive(i) => Self::UpPassive(i as u8),
+            Choice::UpPassive(i, r) => Self::UpPassive(i as u8, r.index()),
             Choice::Heal => Self::Heal,
             Choice::Overcharge(kind) => Self::Overcharge(kind.index() as u8),
             Choice::Jewel(piece) => Self::Jewel(piece.key.to_string()),
@@ -285,9 +293,9 @@ impl WireChoice {
     pub(in crate::survivors) fn choice(&self) -> Option<Choice> {
         Some(match self {
             Self::NewAbility(k) => Choice::NewAbility(ability(k)?),
-            Self::Upgrade(i) => Choice::Upgrade(usize::from(*i)),
+            Self::Upgrade(i, r) => Choice::Upgrade(usize::from(*i), Rarity::from_index(*r)?),
             Self::NewPassive(k) => Choice::NewPassive(passive(k)?),
-            Self::UpPassive(i) => Choice::UpPassive(usize::from(*i)),
+            Self::UpPassive(i, r) => Choice::UpPassive(usize::from(*i), Rarity::from_index(*r)?),
             Self::Heal => Choice::Heal,
             Self::Jewel(key) => Choice::Jewel(super::super::jewelry::piece(key)?),
             Self::Overcharge(i) => Choice::Overcharge(*Overcharge::ALL.get(usize::from(*i))?),
@@ -371,9 +379,13 @@ pub(in crate::survivors) struct Cosmetics {
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct FocusInput(pub(in crate::survivors) bool);
 
-/// A choice at the client's level-up hand.
+/// A choice at the client's level-up hand, and the hand it was made at ([`Hand::seq`]): the host
+/// drops one made at a hand it has since dealt over.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::survivors) struct HandAction(pub(in crate::survivors) WireDecision);
+pub(in crate::survivors) struct HandAction {
+    pub(in crate::survivors) decision: WireDecision,
+    pub(in crate::survivors) seq: u32,
+}
 
 /// The client's player pressed the self-resurrection key while its hero is down: a soulstone or
 /// an ankh gets it up on the host, as the local player's key does there.
@@ -446,6 +458,15 @@ pub(in crate::survivors) enum RunPhase {
 pub(in crate::survivors) struct Hand {
     pub(in crate::survivors) choices: Vec<WireChoice>,
     pub(in crate::survivors) build: NetBuild,
+    /// The hand's number, one more for each the host deals this player: its picks name it.
+    pub(in crate::survivors) seq: u32,
+}
+
+/// A boss chest's prizes for the client's own hero, as the host spun them
+/// ([`super::super::roulette`]): each one's line and its quality ([`Rarity::index`]).
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct NetRoulette {
+    pub(in crate::survivors) prizes: Vec<(String, u8)>,
 }
 
 /// A boss's yell or emote: its text and its sound's place in [`super::super::raid::SOUNDS`].
@@ -583,7 +604,11 @@ mod tests {
     #[test]
     fn every_card_round_trips_by_key() {
         let hero = super::super::super::HeroState::default();
-        let mut cards = vec![Choice::Heal, Choice::Upgrade(2), Choice::UpPassive(1)];
+        let mut cards = vec![
+            Choice::Heal,
+            Choice::Upgrade(2, Rarity::Epic),
+            Choice::UpPassive(1, Rarity::Rare),
+        ];
         cards.extend(Overcharge::ALL.map(Choice::Overcharge));
         cards.extend(
             super::super::super::jewelry::pieces()
@@ -658,7 +683,12 @@ mod tests {
             HandDecision::Banish(1),
             HandDecision::Skip,
         ] {
-            assert_eq!(round(&HandAction(WireDecision::of(d))).0.decision(), d);
+            let action = HandAction {
+                decision: WireDecision::of(d),
+                seq: 7,
+            };
+            assert_eq!(round(&action).decision.decision(), d);
+            assert_eq!(round(&action).seq, 7);
         }
         let lobby = Lobby {
             players: vec![Member {
@@ -687,6 +717,7 @@ mod tests {
             banished: vec![WireStruck::Ability("blizzard".into())],
             overcharges: [0, 1, 0, 0, 3, 0],
             jewels: 1,
+            empower: 1,
         };
         assert_eq!(round(&build), build);
         let hand = Hand {
@@ -695,8 +726,10 @@ mod tests {
                 WireChoice::NewPassive("might".into()),
                 WireChoice::Overcharge(2),
                 WireChoice::Jewel(super::super::super::jewelry::pieces()[0].key.into()),
+                WireChoice::Upgrade(1, Rarity::Epic.index()),
             ],
             build,
+            seq: 9,
         };
         assert_eq!(round(&hand), hand);
         let run = NetRun {
@@ -704,6 +737,7 @@ mod tests {
             level: 4,
             xp: 12.0,
             gold: 30,
+            events: 2,
             banner: Some("Hogger approaches!".into()),
             ..Default::default()
         };

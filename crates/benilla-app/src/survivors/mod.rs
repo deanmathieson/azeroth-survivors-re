@@ -31,6 +31,7 @@ mod menu;
 mod meta;
 mod minimap;
 mod mobility;
+mod moments;
 mod party;
 mod partyui;
 mod profile;
@@ -38,6 +39,7 @@ mod quests;
 mod racials;
 mod raid;
 mod rewards;
+mod roulette;
 mod run_options;
 mod settings;
 mod sfx;
@@ -104,6 +106,8 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(bossbar::plugin)
             .add_plugins(campfire::plugin)
             .add_plugins(strip::plugin)
+            .add_plugins(moments::plugin)
+            .add_plugins(roulette::plugin)
             .add_plugins(partyui::plugin)
             .init_state::<Phase>()
             .init_resource::<party::NetRole>()
@@ -195,6 +199,12 @@ impl Plugin for SurvivorsPlugin {
                         .before(enemies::move_enemies),
                     treasure::open_caches
                         .after(enemies::collect_gems)
+                        .before(hero::hero_vitals),
+                    enemies::level_up_nova
+                        .after(enemies::collect_gems)
+                        .before(hero::hero_vitals),
+                    (enemies::run_couriers, enemies::touch_shrines)
+                        .after(enemies::move_enemies)
                         .before(hero::hero_vitals),
                 )
                     .run_if(strip::world_runs)
@@ -574,6 +584,8 @@ pub(super) struct Run {
     pub slow: bool,
     /// The local account's run-start trinket has been applied for this run.
     pub pinned_trinket: bool,
+    /// Micro-events announced so far ([`enemies::spawn_enemies`]): each sounds the raid warning.
+    pub events: u32,
 }
 
 impl Default for Run {
@@ -605,6 +617,7 @@ impl Default for Run {
             breather: 0.0,
             slow: false,
             pinned_trinket: false,
+            events: 0,
         }
     }
 }
@@ -648,8 +661,9 @@ impl HeroState {
         let mut speed_pct = b.get(StatKey::MoveSpeed);
         let mut magnet_pct = b.get(StatKey::Pickup);
         let overcharge = |kind: Overcharge| self.overcharges[kind.index()] as f32;
-        let paragon = self.overcharges.iter().sum::<u32>() / 5;
-        s.might += overcharge(Overcharge::Damage) * 0.06 + paragon as f32 * 0.10;
+        // A Paragon for every five Overcharges taken in all ([`moments::paragons`]).
+        let paragon = moments::paragons(self) as f32;
+        s.might += overcharge(Overcharge::Damage) * 0.06 + paragon * moments::PARAGON_DAMAGE;
         s.haste += overcharge(Overcharge::Haste) * 0.04;
         hp_pct += overcharge(Overcharge::MaxHp) * 0.06;
         speed_pct += overcharge(Overcharge::Speed) * 0.05;
@@ -830,12 +844,13 @@ mod tests {
         hero.overcharges[Overcharge::Magnet.index()] = 6;
         hero.overcharges[Overcharge::Gold.index()] = 7;
         let stats = hero.stats();
-        assert!(close(stats.might, base.might + 0.12));
-        assert!(close(stats.haste, base.haste + 0.06));
-        assert!(close(stats.max_hp, base.max_hp * 1.20));
-        assert!(close(stats.speed, base.speed * 1.20));
-        assert!(close(stats.magnet, base.magnet * 1.60));
-        assert!(close(stats.gold, base.gold + 0.70));
+        // 27 stacks in all: five Paragons, each +10% damage on top of the Damage stacks' own.
+        assert!(close(stats.might, base.might + 3.0 * 0.06 + 5.0 * 0.10));
+        assert!(close(stats.haste, base.haste + 0.08));
+        assert!(close(stats.max_hp, base.max_hp * 1.24));
+        assert!(close(stats.speed, base.speed * 1.25));
+        assert!(close(stats.magnet, base.magnet * 1.72));
+        assert!(close(stats.gold, base.gold + 0.84));
     }
 
     #[test]

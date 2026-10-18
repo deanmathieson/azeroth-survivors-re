@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientState, ClientSystems};
 
 use super::super::campfire::{Camp, CampAsk, CampRequest};
+use super::super::cards::Rarity;
 use super::super::data;
 use super::super::enemies::{self, Enemy};
 use super::super::gear::{wear, Dresser, GearRead, HeroNames, Slot};
@@ -18,6 +19,7 @@ use super::super::party::{self, HandOutbox};
 use super::super::partyui::{self, FillPartyView, HeroRead, PartyView};
 use super::super::profile::Profile;
 use super::super::raid::Yelled;
+use super::super::roulette::{Prize, RouletteWon};
 use super::super::run_options::RunOptions;
 use super::super::synergy::{self, PartyBuff};
 use super::super::talents;
@@ -51,6 +53,7 @@ fn linked(session: Res<Session>) -> bool {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<HostStart>()
+        .init_resource::<HandSeq>()
         .add_systems(
             PreUpdate,
             (
@@ -66,6 +69,7 @@ pub(super) fn plugin(app: &mut App) {
                     receive_hands,
                     play_fx,
                     receive_yells,
+                    receive_roulettes,
                 )
                     .chain()
                     .run_if(joined),
@@ -372,6 +376,7 @@ pub(super) fn apply_build(hero: &mut HeroState, build: &NetBuild) {
         .collect();
     hero.overcharges = build.overcharges;
     hero.jewelry.picks = build.jewels;
+    hero.empower = build.empower;
 }
 
 /// The hero's numbers so far, into the mirror `hero`: the meter and the awards read them.
@@ -481,6 +486,10 @@ fn materialize(
             };
             // Its shared debuffs and elite mark show as the host's do ([`mirror_auras`]).
             ec.try_insert(Marks::debuffs());
+            // A micro-event's named rare wears its silver frame here too.
+            if let Some(rare) = n.rare {
+                ec.try_insert(enemies::RareMob(rare));
+            }
             ec.try_insert(Enemy {
                 def,
                 hp: n.max_hp,
@@ -658,6 +667,7 @@ fn copy_run(
     run.elites = net.elites;
     run.caches = net.caches;
     run.bosses = net.bosses;
+    run.events = net.events;
     run.won = net.won;
     run.breather = net.camp_left;
     *camp = camp_of(net, session.me);
@@ -678,14 +688,38 @@ fn receive_yells(mut msgs: MessageReader<NetYell>, mut yells: MessageWriter<Yell
     }
 }
 
+/// The host spun this player's hero a boss chest's prizes: its screen spins them too.
+fn receive_roulettes(
+    mut msgs: MessageReader<NetRoulette>,
+    local: Query<Entity, With<LocalHero>>,
+    mut won: MessageWriter<RouletteWon>,
+) {
+    let Ok(me) = local.single() else {
+        return;
+    };
+    for m in msgs.read() {
+        let prizes = m
+            .prizes
+            .iter()
+            .filter_map(|(text, r)| {
+                Some(Prize {
+                    text: text.clone(),
+                    rarity: Rarity::from_index(*r)?,
+                })
+            })
+            .collect();
+        won.write(RouletteWon { hero: me, prizes });
+    }
+}
+
 /// The cards of a hand this machine can show `hero`: the slots its build has.
 pub(super) fn playable(hand: &Hand, hero: &HeroState) -> Vec<Choice> {
     hand.choices
         .iter()
         .filter_map(WireChoice::choice)
         .filter(|c| match *c {
-            Choice::Upgrade(k) => k < hero.abilities.len(),
-            Choice::UpPassive(k) => k < hero.passives.len(),
+            Choice::Upgrade(k, _) => k < hero.abilities.len(),
+            Choice::UpPassive(k, _) => k < hero.passives.len(),
             _ => true,
         })
         .collect()
@@ -697,6 +731,7 @@ fn receive_hands(
     mut offer: ResMut<Offer>,
     mut local: Query<&mut HeroState, With<LocalHero>>,
     mut run: ResMut<Run>,
+    mut seq: ResMut<HandSeq>,
     mut pending: Local<Option<Hand>>,
 ) {
     if let Some(hand) = hands.read().last().cloned() {
@@ -712,6 +747,7 @@ fn receive_hands(
     };
     apply_build(&mut me, &hand.build);
     run.version += 1;
+    seq.0 = hand.seq;
     // The hand waits in the strip until this player opens it (Tab); an empty one closes it.
     offer.deal(playable(&hand, &me));
 }
@@ -922,10 +958,21 @@ fn send_self_res(
     }
 }
 
-/// The cards' and tools' choices, to the host.
-fn send_hand(mut outbox: ResMut<HandOutbox>, mut out: MessageWriter<HandAction>) {
+/// The number of the hand the host last dealt this player ([`Hand::seq`]).
+#[derive(Resource, Default)]
+pub(super) struct HandSeq(pub(super) u32);
+
+/// The cards' and tools' choices, to the host, each naming the hand it was made at.
+fn send_hand(
+    mut outbox: ResMut<HandOutbox>,
+    seq: Res<HandSeq>,
+    mut out: MessageWriter<HandAction>,
+) {
     for d in outbox.0.drain(..) {
-        out.write(HandAction(WireDecision::of(d)));
+        out.write(HandAction {
+            decision: WireDecision::of(d),
+            seq: seq.0,
+        });
     }
 }
 

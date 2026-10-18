@@ -164,6 +164,9 @@ pub(super) struct HeroState {
     pub rerolls: u32,
     pub banishes: u32,
     pub banished: Vec<hand::Struck>,
+    /// Empower tokens held: the next rank-up card taken rolls at least Rare
+    /// ([`super::cards::rarity`]).
+    pub empower: u32,
     /// How hard the horde wants this hero, against distance ([`pick_target`]): 1, or more for a
     /// tank in its stance or form in a party ([`super::synergy`]).
     pub threat: f32,
@@ -222,6 +225,7 @@ impl Default for HeroState {
             rerolls: hand::REROLLS_PER_RUN,
             banishes: hand::BANISHES_PER_RUN,
             banished: Vec::new(),
+            empower: 0,
             threat: 1.0,
             damage_done: 0.0,
             healing_done: 0.0,
@@ -286,19 +290,33 @@ pub(super) fn pick_at_random(hero: &mut HeroState, rng: &mut Rng) {
     }
 }
 
-/// Drain a backed-up build without stopping the run.  This uses the normal weighted offer pool,
-/// so established spells remain the preferred direction instead of a random pile of new buttons.
-pub(super) fn auto_build(hero: &mut HeroState, rng: &mut Rng) -> u32 {
-    let mut spent = 0;
-    while hero.picks > 0 {
-        let Some(choice) = hud::draw(hud::offer_pool(hero), 1, rng).pop() else {
-            break;
-        };
-        hud::take(hero, choice);
-        hero.picks -= 1;
-        spent += 1;
+/// Auto-build's card from `hand` ([`super::strip::AutoBuild`]): a weighted draw that favours
+/// ranking up the spells `hero` already owns, so a backed-up build deepens rather than piling on
+/// new buttons; a jewelry hand leans to its rarest piece. `None` for an empty hand.
+pub(super) fn auto_pick(hand: &[Choice], hero: &HeroState, rng: &mut Rng) -> Option<usize> {
+    let weight = |choice: &Choice| match *choice {
+        Choice::Upgrade(..) => 4.0,
+        Choice::UpPassive(..) => 1.5,
+        Choice::NewAbility(_) if hero.abilities.len() < 3 => 1.5,
+        Choice::NewAbility(_) => 0.6,
+        Choice::NewPassive(_) => 0.8,
+        Choice::Overcharge(_) => 1.0,
+        Choice::Heal => 0.4,
+        Choice::Jewel(piece) => 1.0 + piece.rarity as i32 as f32,
+    };
+    let total: f32 = hand.iter().map(weight).sum();
+    if hand.is_empty() || total <= 0.0 {
+        return None;
     }
-    spent
+    let mut pick = rng.f32() * total;
+    for (i, choice) in hand.iter().enumerate() {
+        let w = weight(choice);
+        if pick < w {
+            return Some(i);
+        }
+        pick -= w;
+    }
+    Some(hand.len() - 1)
 }
 
 /// Whether a hero takes its cards at random the moment they are dealt: a [`Bot`] that is up. A
@@ -348,11 +366,21 @@ pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run, held: &[Choice]) -
     if !hero.alive() || held.is_empty() {
         return None;
     }
+    // The bank the held hand came from: a jewelry hand's, else the level-up hands'.
+    let jewel = held.iter().any(|choice| matches!(choice, Choice::Jewel(_)));
+    let left = if jewel {
+        hero.jewelry.picks
+    } else {
+        hero.picks
+    };
+    if left == 0 {
+        return None;
+    }
     let gold = hand::skip_gold(run, hero);
     run.gold += gold;
     hero.gold += gold;
     hero.gold_collected += gold;
-    if held.iter().any(|choice| matches!(choice, Choice::Jewel(_))) {
+    if jewel {
         hero.jewelry.picks -= 1;
     } else {
         hero.picks -= 1;
@@ -360,16 +388,20 @@ pub(super) fn apply_skip(hero: &mut HeroState, run: &mut Run, held: &[Choice]) -
     Some(gold)
 }
 
-/// The next hand a co-op hero holds of its banked ones: a jewelry choice first, rolled from the
-/// whole catalog (one with nothing left to offer becomes a level-up hand), then a level-up hand.
-/// `None` with none banked, or the hero down.
-pub(super) fn next_hand(hero: &mut HeroState, level: u32, rng: &mut Rng) -> Option<Vec<Choice>> {
+/// The next hand a hero holds of its banked ones: a jewelry choice first, rolled from `catalog`
+/// (the player's own pool: [`jewelry::pool`]; one with nothing left to offer becomes a level-up
+/// hand), then a level-up hand. `None` with none banked, or the hero down.
+pub(super) fn next_hand(
+    hero: &mut HeroState,
+    catalog: &[&'static jewelry::Piece],
+    level: u32,
+    rng: &mut Rng,
+) -> Option<Vec<Choice>> {
     if !hero.alive() {
         return None;
     }
     while hero.jewelry.picks > 0 {
-        let pool: Vec<_> = jewelry::pieces().iter().collect();
-        let pieces = jewelry::roll_pool(&pool, &hero.jewelry, &hero.stats(), level, rng);
+        let pieces = jewelry::roll_pool(catalog, &hero.jewelry, &hero.stats(), level, rng);
         if !pieces.is_empty() {
             return Some(pieces.into_iter().map(Choice::Jewel).collect());
         }
@@ -419,6 +451,7 @@ pub(super) fn open_banked_picks(
     mut heroes: Query<(&mut HeroState, Has<Bot>, Has<LocalHero>)>,
     mut rng: ResMut<Rng>,
     mut next: ResMut<NextState<Phase>>,
+    profile: Option<Res<super::profile::Profile>>,
 ) {
     let mut open = None;
     for (mut hero, bot, local) in &mut heroes {
@@ -427,7 +460,7 @@ pub(super) fn open_banked_picks(
         }
         if bot {
             if hero.picks > 0 || hero.jewelry.picks > 0 {
-                let pool: Vec<_> = jewelry::pieces().iter().collect();
+                let pool = jewelry::pool(profile.as_deref());
                 jewelry::choose_at_random(&mut hero, &pool, run.level, &mut rng);
                 pick_at_random(&mut hero, &mut rng);
             }
@@ -1168,6 +1201,57 @@ mod tests {
         assert_eq!(b, 2 * a);
         assert_eq!(run.gold, a + b);
         assert_eq!((plain.picks, rich.picks), (0, 0));
+    }
+
+    #[test]
+    fn a_skip_spends_the_bank_of_the_hand_held() {
+        let mut run = Run::default();
+        let mut hero = HeroState {
+            picks: 1,
+            ..HeroState::default()
+        };
+        hero.jewelry.picks = 1;
+        // A level-up hand held while jewelry is banked too: the level-up bank pays for it.
+        let cards = hud::choices_for(&hero, &mut Rng(3));
+        assert!(apply_skip(&mut hero, &mut run, &cards).is_some());
+        assert_eq!((hero.picks, hero.jewelry.picks), (0, 1));
+        // A jewelry hand spends the jewelry bank.
+        let piece = Choice::Jewel(&jewelry::pieces()[0]);
+        assert!(apply_skip(&mut hero, &mut run, &[piece]).is_some());
+        assert_eq!((hero.picks, hero.jewelry.picks), (0, 0));
+        // A hand from a bank already empty pays nothing and spends nothing.
+        let gold = run.gold;
+        assert!(apply_skip(&mut hero, &mut run, &[piece]).is_none());
+        assert!(apply_skip(&mut hero, &mut run, &cards).is_none());
+        assert_eq!(run.gold, gold);
+    }
+
+    #[test]
+    fn auto_pick_favours_ranking_up_owned_spells() {
+        let hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
+        let new = data::ability(
+            hero.class
+                .pool
+                .iter()
+                .find(|k| **k != hero.class.start)
+                .unwrap(),
+        );
+        let hand = [
+            Choice::NewAbility(new),
+            Choice::Upgrade(0, super::super::cards::Rarity::Common),
+            Choice::NewPassive(&data::PASSIVES[0]),
+        ];
+        let mut rng = Rng(41);
+        let mut upgrades = 0;
+        for _ in 0..600 {
+            let i = auto_pick(&hand, &hero, &mut rng).unwrap();
+            assert!(i < hand.len());
+            if i == 1 {
+                upgrades += 1;
+            }
+        }
+        assert!(upgrades > 300, "owned spells first: {upgrades} of 600");
+        assert_eq!(auto_pick(&[], &hero, &mut rng), None);
     }
 
     #[test]

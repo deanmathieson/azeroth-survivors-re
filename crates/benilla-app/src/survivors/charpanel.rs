@@ -734,6 +734,10 @@ fn hero_column(p: &mut ChildSpawnerCommands, ctx: &TabCtx, sheet: &Sheet) {
             10.0,
             GOLD,
         );
+        // A set held says what it does.
+        if let Some(line) = super::synergy::build_set_line(hero, school) {
+            armory::para(p, ctx, &line, 10.0, Color::WHITE);
+        }
     }
     p.spawn(Node {
         flex_grow: 1.0,
@@ -903,7 +907,12 @@ mod tests {
         assert_eq!(row(&rows, Line::Health).total, s.max_hp);
         assert_eq!(row(&rows, Line::Cooldowns).total, s.haste);
         assert_eq!(row(&rows, Line::Revives).total, s.revives as f32);
-        assert_eq!(rows.len(), Line::STATS.len() + 1, "one school raised: Fire");
+        // Two schools raised: Fire by the talents, Physical by the warrior's Attunement (its
+        // start spell and Band of Accuria make two of the school).
+        assert_eq!(rows.len(), Line::STATS.len() + 2, "two schools raised");
+        assert!(rows
+            .iter()
+            .any(|r| r.line == Line::School(School::Physical)));
         // Each source's share where it is plain: the warrior's 40 health on the base, the extra
         // life from the jewelry, the luck from the test aid, the gold from the perks.
         assert_eq!(share(&rows, Line::Health, Source::Base), BASE_HP + 40.0);

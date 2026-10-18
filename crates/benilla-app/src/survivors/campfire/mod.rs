@@ -83,25 +83,30 @@ const HEALTHSTONE_HEAL: f32 = 0.5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) enum VendorItem {
     Reroll,
-    Banish,
     Healthstone,
     ElixirOfTheMongoose,
     ElixirOfFortitude,
+    Banish,
+    /// The next rank-up card taken rolls at least Rare ([`HeroState::empower`]).
+    Empower,
 }
 
 impl VendorItem {
-    pub(super) const ALL: [Self; 5] = [
+    /// In wire order ([`Self::index`]): a new item goes on the end, so the others keep their place.
+    pub(super) const ALL: [Self; 6] = [
         Self::Reroll,
-        Self::Banish,
         Self::Healthstone,
         Self::ElixirOfTheMongoose,
         Self::ElixirOfFortitude,
+        Self::Banish,
+        Self::Empower,
     ];
 
     pub(super) const fn price(self) -> u32 {
         match self {
             Self::Reroll => 25,
             Self::Banish => 25,
+            Self::Empower => 40,
             Self::Healthstone => 35,
             Self::ElixirOfTheMongoose | Self::ElixirOfFortitude => 50,
         }
@@ -111,6 +116,7 @@ impl VendorItem {
         match self {
             Self::Reroll => "Reroll Token",
             Self::Banish => "Banish Token",
+            Self::Empower => "Empower Token",
             Self::Healthstone => "Healthstone",
             Self::ElixirOfTheMongoose => "Elixir of the Mongoose",
             Self::ElixirOfFortitude => "Elixir of Fortitude",
@@ -123,6 +129,7 @@ impl VendorItem {
         match self {
             Self::Reroll => "Interface\\Icons\\INV_Misc_Token_ArgentDawn",
             Self::Banish => "Interface\\Icons\\Spell_Shadow_AnimateDead",
+            Self::Empower => "Interface\\Icons\\Spell_Holy_PowerInfusion",
             Self::Healthstone => "Interface\\Icons\\INV_Stone_04",
             Self::ElixirOfTheMongoose => "Interface\\Icons\\INV_Potion_32",
             Self::ElixirOfFortitude => "Interface\\Icons\\INV_Potion_44",
@@ -133,6 +140,7 @@ impl VendorItem {
         match self {
             Self::Reroll => "One more reroll of a hand",
             Self::Banish => "Remove one offer from future hands",
+            Self::Empower => "Your next rank-up rolls at least Rare",
             Self::Healthstone => "Restores half your health",
             Self::ElixirOfTheMongoose => "+4% crit, +5% speed, 2 min",
             Self::ElixirOfFortitude => "+30 maximum health, 2 min",
@@ -299,6 +307,7 @@ pub(in crate::survivors) fn buy(run: &mut Run, hero: &mut HeroState, item: Vendo
     match item {
         VendorItem::Reroll => hero.rerolls += 1,
         VendorItem::Banish => hero.banishes += 1,
+        VendorItem::Empower => hero.empower += 1,
         VendorItem::Healthstone => {
             let amount = hero.stats().max_hp * HEALTHSTONE_HEAL;
             party::heal(hero, amount);
@@ -656,6 +665,30 @@ mod tests {
             assert!(!item.name().is_empty() && item.price() > 0);
         }
         assert_eq!(VendorItem::from_index(9), None);
+        // The wares sold before the Banish Token keep their places on the wire.
+        assert_eq!(VendorItem::Reroll.index(), 0);
+        assert_eq!(VendorItem::Healthstone.index(), 1);
+        assert_eq!(VendorItem::ElixirOfTheMongoose.index(), 2);
+        assert_eq!(VendorItem::ElixirOfFortitude.index(), 3);
+        assert_eq!(VendorItem::Banish.index(), 4);
+        assert_eq!(VendorItem::Empower.index(), 5);
+    }
+
+    #[test]
+    fn tokens_add_to_the_buyers_hand_tools() {
+        let mut run = Run {
+            gold: 200,
+            ..default()
+        };
+        let mut hero = HeroState::default();
+        let banishes = hero.banishes;
+        assert!(buy(&mut run, &mut hero, VendorItem::Banish));
+        assert!(buy(&mut run, &mut hero, VendorItem::Empower));
+        assert_eq!((hero.banishes, hero.empower), (banishes + 1, 1));
+        assert_eq!(
+            run.gold,
+            200 - VendorItem::Banish.price() - VendorItem::Empower.price()
+        );
     }
 
     #[test]

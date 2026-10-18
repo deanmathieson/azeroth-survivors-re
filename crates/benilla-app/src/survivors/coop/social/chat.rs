@@ -9,7 +9,7 @@
 //! (`EmotesTextSound`). A Faire pull in the lobby is told to everyone, an Epic or Legendary with a
 //! fanfare and a banner.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
@@ -19,7 +19,8 @@ use bevy_replicon::prelude::*;
 use super::super::super::faire::{FairePulled, PrizeRarity};
 use super::super::super::gear;
 use super::super::super::hud::HudFont;
-use super::super::super::{Phase, Rng};
+use super::super::super::moments;
+use super::super::super::{HeroState, LocalHero, Phase, Rng};
 use super::super::host::Peer;
 use super::super::wire::NetHero;
 use super::super::Session;
@@ -230,6 +231,7 @@ pub(super) fn plugin(app: &mut App) {
             (
                 host_chat.run_if(super::hosting),
                 faire_pulls.run_if(linked),
+                ally_legendaries.run_if(linked),
                 hear_chat,
                 build_chat,
                 refresh_chat,
@@ -359,6 +361,28 @@ fn host_chat(
             }
             _ => {}
         }
+    }
+}
+
+/// An ally's spell transforming: its player sees the big moment ([`moments`]); everyone else, a
+/// line here. Each machine reads the replicated builds, so nothing travels for it; an ally seen for
+/// the first time (a run joined) announces nothing.
+fn ally_legendaries(
+    heroes: Query<(Entity, &HeroState, &NetHero), Without<LocalHero>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    mut seen: Local<HashMap<Entity, Vec<&'static str>>>,
+    mut chat: ResMut<Chat>,
+) {
+    seen.retain(|e, _| heroes.contains(*e));
+    for (e, hero, net) in &heroes {
+        let now = moments::transformed(hero);
+        if let Some(before) = seen.get(&e) {
+            for legend in moments::fresh(before, &now) {
+                let line = moments::transform_line(spells.as_deref(), legend);
+                chat.note(format!("{}'s {line}", net.name));
+            }
+        }
+        seen.insert(e, now.iter().map(|l| l.ability).collect());
     }
 }
 

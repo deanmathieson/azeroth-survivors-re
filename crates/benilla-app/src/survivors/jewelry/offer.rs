@@ -12,7 +12,9 @@ use super::super::gear::{rarity_label, ItemIcon};
 use super::super::hud::{self, HudFont};
 use super::super::profile::Profile;
 use super::super::{HeroState, LocalHero, Phase, Rng, Run};
-use super::{act, close, gold_instead, proc_text, Act, Done, JewelOffer, Jewelry, Piece};
+use super::{
+    act, close, gold_instead, proc_text, stat_deltas, Act, Done, JewelOffer, Jewelry, Piece,
+};
 
 const CARD_W: f32 = 220.0;
 const CARD_H: f32 = 300.0;
@@ -20,6 +22,8 @@ const CARD_H: f32 = 300.0;
 const SETTLE_SECS: f32 = 0.25;
 /// `GREEN_FONT_COLOR`: what a piece grants.
 const GRANTS: Color = Color::srgb(0.1, 1.0, 0.1);
+/// `RED_FONT_COLOR`: what a replacement takes away.
+const LOSES: Color = Color::srgb(1.0, 0.125, 0.125);
 const PARCHMENT: Color = Color::srgb(0.85, 0.78, 0.6);
 const FULL: Color = Color::srgb(1.0, 0.55, 0.2);
 const FACE: Color = Color::srgba(0.18, 0.06, 0.04, 0.95);
@@ -296,7 +300,7 @@ pub(super) fn refresh_offer(
                 .filter_map(|s| me.jewelry.slot(s).map(|p| (s, p)))
                 .collect();
             commands.entity(row).with_children(|r| {
-                card(r, f, piece, "New".into(), None, None);
+                card(r, f, piece, "New".into(), None, None, None);
                 r.spawn(hud::centered_bundle(f, "»", 40.0, hud::GOLD_TONE));
                 for (n, &(slot, old)) in worn.iter().enumerate() {
                     card(
@@ -306,6 +310,7 @@ pub(super) fn refresh_offer(
                         format!("{}  Replace", n + 1),
                         Some(Act::Replace(slot)),
                         None,
+                        Some(piece),
                     );
                 }
             });
@@ -335,7 +340,15 @@ pub(super) fn refresh_offer(
                             FULL,
                         )),
                     };
-                    card(r, f, piece, format!("{}", i + 1), Some(Act::Take(i)), note);
+                    card(
+                        r,
+                        f,
+                        piece,
+                        format!("{}", i + 1),
+                        Some(Act::Take(i)),
+                        note,
+                        None,
+                    );
                 }
             });
             let gold = gold_instead(&run, me);
@@ -363,7 +376,9 @@ pub(super) fn refresh_offer(
 
 /// One piece as a card: the key and rarity along the top, the icon in a socket, the name in its
 /// rarity's colour, its slot, a note when there is one, and what it grants. A card with `act` is a
-/// button.
+/// button. A worn piece the `replaced_by` piece would replace shows, under what it grants, what
+/// the swap changes ([`stat_deltas`]): gains in green, losses in red.
+#[allow(clippy::too_many_arguments)]
 fn card(
     row: &mut ChildSpawnerCommands,
     f: &Handle<Font>,
@@ -371,12 +386,14 @@ fn card(
     top: String,
     act: Option<Act>,
     note: Option<(String, Color)>,
+    replaced_by: Option<&'static Piece>,
 ) {
     let rc = piece.rarity.color();
     let mut c = row.spawn((
         Node {
             width: Val::Px(CARD_W),
-            height: Val::Px(CARD_H),
+            // A replacement's comparison may stretch it.
+            min_height: Val::Px(CARD_H),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             padding: UiRect::new(Val::Px(14.0), Val::Px(14.0), Val::Px(16.0), Val::Px(12.0)),
@@ -488,6 +505,13 @@ fn card(
         ));
         for b in piece.bonuses {
             c.spawn(hud::centered_bundle(f, b.describe(), 14.0, GRANTS));
+        }
+        if let Some(new) = replaced_by {
+            c.spawn(hud::centered_bundle(f, "If replaced:", 12.0, PARCHMENT));
+            for b in stat_deltas(new, piece) {
+                let color = if b.value > 0.0 { GRANTS } else { LOSES };
+                c.spawn(hud::centered_bundle(f, b.describe(), 13.0, color));
+            }
         }
     });
 }

@@ -20,6 +20,7 @@ use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
 use super::super::profile::Profile;
 use super::super::raid::{Telegraph, Yelled};
+use super::super::roulette::RouletteWon;
 use super::super::run_options::RunOptions;
 use super::super::synergy;
 use super::super::talents::{self, HeroSpec};
@@ -54,9 +55,18 @@ pub(super) struct Peer {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Owner(pub(super) Entity);
 
-/// On a remote hero: the hand its player holds now, rolled here.
+/// On a remote hero: the hand its player holds now, rolled here, and the number of the last hand
+/// sent ([`Hand::seq`]): a pick made at an older one is stale.
 #[derive(Component, Default)]
-pub(super) struct HeldHand(pub(super) Option<Vec<Choice>>);
+pub(super) struct HeldHand(pub(super) Option<Vec<Choice>>, pub(super) u32);
+
+impl HeldHand {
+    /// The next hand's number, taken as it is sent.
+    fn next_seq(&mut self) -> u32 {
+        self.1 = self.1.wrapping_add(1);
+        self.1
+    }
+}
 
 /// The replicated entity carrying [`NetRun`].
 #[derive(Component)]
@@ -110,6 +120,7 @@ pub(super) fn plugin(app: &mut App) {
                 sync_slow,
                 relay_fx,
                 relay_yells,
+                relay_roulettes,
             )
                 .run_if(hosting_run),
             tick,
@@ -414,14 +425,17 @@ pub(super) fn build_of(hero: &HeroState) -> NetBuild {
         banished: hero.banished.iter().map(|&s| WireStruck::of(s)).collect(),
         overcharges: hero.overcharges,
         jewels: hero.jewelry.picks,
+        empower: hero.empower,
     }
 }
 
-/// The hand message for `choices` dealt to `hero`, with the build its slots index into.
-pub(super) fn hand_for(hero: &HeroState, choices: &[Choice]) -> Hand {
+/// The hand message for `choices` dealt to `hero`, with the build its slots index into and its
+/// number `seq`.
+pub(super) fn hand_for(hero: &HeroState, choices: &[Choice], seq: u32) -> Hand {
     Hand {
         choices: choices.iter().map(|&c| WireChoice::of(c)).collect(),
         build: build_of(hero),
+        seq,
     }
 }
 
@@ -470,16 +484,20 @@ pub(super) fn decide(
         }
     }
     // A hand closed: the next is dealt by `serve_hands`; with none left the client is told.
-    Some(match party::next_hand(hero, run.level, rng) {
-        Some(next) => {
-            *held = Some(next.clone());
-            next
-        }
-        None => Vec::new(),
-    })
+    // Another player's jewelry rolls from the catalog: its own completed decks are its profile's.
+    Some(
+        match party::next_hand(hero, &jewelry::pool(None), run.level, rng) {
+            Some(next) => {
+                *held = Some(next.clone());
+                next
+            }
+            None => Vec::new(),
+        },
+    )
 }
 
-/// Each remote player's picks, rerolls, banishes and skips, on its own hero only.
+/// Each remote player's picks, rerolls, banishes and skips, on its own hero only, at the hand it
+/// holds now: one made at a hand since dealt over (a reroll's, the next one's) is dropped.
 pub(super) fn hand_actions(
     mut actions: MessageReader<FromClient<HandAction>>,
     mut heroes: Query<(&Owner, &mut HeroState, &mut HeldHand), With<party::Remote>>,
@@ -489,20 +507,21 @@ pub(super) fn hand_actions(
 ) {
     for a in actions.read() {
         for (owner, mut hero, mut held) in &mut heroes {
-            if !owns(*owner, a.client_id) {
+            if !owns(*owner, a.client_id) || a.message.seq != held.1 {
                 continue;
             }
             let next = decide(
                 &mut hero,
                 &mut held.0,
-                a.message.0.decision(),
+                a.message.decision.decision(),
                 &mut run,
                 &mut rng,
             );
             if let Some(next) = next {
+                let seq = held.next_seq();
                 out.write(ToClients {
                     targets: SendTargets::Single(a.client_id),
-                    message: hand_for(&hero, &next),
+                    message: hand_for(&hero, &next, seq),
                 });
             }
         }
@@ -516,13 +535,15 @@ pub(super) fn serve_hands(
     mut rng: ResMut<Rng>,
     mut out: MessageWriter<ToClients<Hand>>,
 ) {
+    let pool = jewelry::pool(None);
     for (owner, mut hero, mut held) in &mut heroes {
         // A player going down puts its hand away; it is dealt again once revived.
         if !hero.alive() {
             if held.0.take().is_some() {
+                let seq = held.next_seq();
                 out.write(ToClients {
                     targets: SendTargets::Single(ClientId::Client(owner.0)),
-                    message: hand_for(&hero, &[]),
+                    message: hand_for(&hero, &[], seq),
                 });
             }
             continue;
@@ -531,12 +552,13 @@ pub(super) fn serve_hands(
             continue;
         }
         // The player's next banked hand (a jewelry choice first), ready for its strip.
-        let Some(choices) = party::next_hand(&mut hero, run.level, &mut rng) else {
+        let Some(choices) = party::next_hand(&mut hero, &pool, run.level, &mut rng) else {
             continue;
         };
+        let seq = held.next_seq();
         out.write(ToClients {
             targets: SendTargets::Single(ClientId::Client(owner.0)),
-            message: hand_for(&hero, &choices),
+            message: hand_for(&hero, &choices, seq),
         });
         held.0 = Some(choices);
     }
@@ -586,7 +608,13 @@ pub(super) fn spawn_peer_hero(
     state.picks = super::super::strip::catch_up(run.level);
     // Caches already opened paid every existing player a jewelry choice.
     state.jewelry.picks = run.caches;
-    if let Some(piece) = peer.pinned_trinket.as_deref().and_then(jewelry::piece) {
+    // Its deck is its own profile's to have completed; what the host holds it to is that the key
+    // names a Darkmoon trinket, never any other piece of the catalog.
+    if let Some(piece) = peer
+        .pinned_trinket
+        .as_deref()
+        .and_then(jewelry::darkmoon_piece)
+    {
         jewelry::put_on(&mut state, piece);
     }
     let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
@@ -663,6 +691,7 @@ pub(super) fn tag(
             Option<&HeroState>,
             Option<&Marks>,
             Has<NetHero>,
+            Option<&enemies::RareMob>,
         ),
         (
             With<super::super::units::Look>,
@@ -674,7 +703,7 @@ pub(super) fn tag(
         ),
     >,
 ) {
-    for (e, tf, mv, enemy, hero, marks, described) in &fresh {
+    for (e, tf, mv, enemy, hero, marks, described, rare) in &fresh {
         let mut ec = commands.entity(e);
         ec.try_insert((Replicated, pos_of(tf, mv)));
         if hero.is_some() || enemy.is_some() {
@@ -727,6 +756,7 @@ pub(super) fn tag(
                     elite: enemy.elite,
                     guardian: enemy.guardian,
                     max_hp: enemy.max_hp,
+                    rare: rare.map(|r| r.0),
                 },
                 life_of(enemy),
             ));
@@ -815,6 +845,29 @@ pub(super) fn relay_yells(
     }
 }
 
+/// A boss chest's prizes for another player's hero, to its player's screen.
+pub(super) fn relay_roulettes(
+    mut won: MessageReader<RouletteWon>,
+    heroes: Query<&Owner, With<party::Remote>>,
+    mut out: MessageWriter<ToClients<NetRoulette>>,
+) {
+    for w in won.read() {
+        let Ok(owner) = heroes.get(w.hero) else {
+            continue;
+        };
+        out.write(ToClients {
+            targets: SendTargets::Single(ClientId::Client(owner.0)),
+            message: NetRoulette {
+                prizes: w
+                    .prizes
+                    .iter()
+                    .map(|p| (p.text.clone(), p.rarity.index()))
+                    .collect(),
+            },
+        });
+    }
+}
+
 /// The auras `marks` shows, in slot order.
 fn auras_of(marks: Option<&Marks>) -> NetAuras {
     NetAuras(marks.map(|m| m.spells().collect()).unwrap_or_default())
@@ -887,6 +940,7 @@ pub(super) fn run_of(run: &Run, camp: &Camp) -> NetRun {
         elites: run.elites,
         caches: run.caches,
         bosses: run.bosses,
+        events: run.events,
         won: run.won,
         banner: run.banner.as_ref().map(|b| b.0.clone()),
         slow: run.slow,

@@ -11,6 +11,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet2::RepliconRenetPlugins;
 
 use super::super::bonus::Bonuses;
+use super::super::cards::Rarity;
 use super::super::hand;
 use super::super::hero;
 use super::super::hero::Hero;
@@ -43,8 +44,8 @@ fn ranks(h: &HeroState) -> u32 {
 fn fits(c: Choice, h: &HeroState) -> bool {
     match c {
         Choice::NewAbility(def) => h.class.pool.contains(&def.key),
-        Choice::Upgrade(k) => k < h.abilities.len(),
-        Choice::UpPassive(k) => k < h.passives.len(),
+        Choice::Upgrade(k, _) => k < h.abilities.len(),
+        Choice::UpPassive(k, _) => k < h.passives.len(),
         Choice::NewPassive(_) | Choice::Heal | Choice::Overcharge(_) | Choice::Jewel(_) => true,
     }
 }
@@ -297,13 +298,67 @@ fn every_machine_sees_itself_as_player_zero() {
 }
 
 #[test]
+fn a_pick_at_a_hand_dealt_over_is_dropped() {
+    let mut world = World::new();
+    world.init_resource::<Run>();
+    world.insert_resource(Rng(3));
+    world.init_resource::<Messages<FromClient<HandAction>>>();
+    world.init_resource::<Messages<ToClients<Hand>>>();
+    let client = world.spawn_empty().id();
+    let hero = hero_of(1, 0);
+    let hand = super::super::hud::choices_for(&hero, &mut Rng(1));
+    let remote = world
+        .spawn((
+            hero,
+            party::Remote,
+            host::Owner(client),
+            host::HeldHand(Some(hand), 4),
+        ))
+        .id();
+    let pick_at = |world: &mut World, seq: u32| {
+        world.write_message(FromClient {
+            client_id: ClientId::Client(client),
+            message: HandAction {
+                decision: WireDecision::Pick(0),
+                seq,
+            },
+        });
+        world.run_system_once(host::hand_actions).unwrap();
+        world.get::<HeroState>(remote).unwrap().picks
+    };
+    // Made at hand 3, which hand 4 has replaced (a reroll's, say): stale, and dropped.
+    assert_eq!(pick_at(&mut world, 3), 2);
+    assert!(world
+        .resource_mut::<Messages<ToClients<Hand>>>()
+        .drain()
+        .next()
+        .is_none());
+    // At the hand held: taken, and the next hand goes out as hand 5.
+    assert_eq!(pick_at(&mut world, 4), 1);
+    let sent: Vec<_> = world
+        .resource_mut::<Messages<ToClients<Hand>>>()
+        .drain()
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].message.seq, 5);
+    assert_eq!(world.get::<host::HeldHand>(remote).unwrap().1, 5);
+    // The same pick again names a hand no longer held.
+    assert_eq!(pick_at(&mut world, 4), 1);
+}
+
+#[test]
 fn a_build_and_its_hand_arrive_together() {
     let mut host_hero = hero_of(1, 0);
     super::super::hud::take(&mut host_hero, Choice::NewPassive(&data::PASSIVES[0]));
     host_hero.abilities[0].level = 3;
     let hand = host::hand_for(
         &host_hero,
-        &[Choice::Upgrade(0), Choice::UpPassive(0), Choice::Heal],
+        &[
+            Choice::Upgrade(0, Rarity::Common),
+            Choice::UpPassive(0, Rarity::Rare),
+            Choice::Heal,
+        ],
+        1,
     );
     // A mirror that has not caught up would offer slots it lacks.
     let mut mirror = hero_of(1, 0);
@@ -594,9 +649,10 @@ fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopb
     let hand = hands.remove(0);
     assert!(!hand.choices.is_empty() && hand.build.picks == 1);
     let before = ranks(host_app.world().get::<HeroState>(theirs).unwrap());
-    client_app
-        .world_mut()
-        .write_message(HandAction(WireDecision::Pick(0)));
+    client_app.world_mut().write_message(HandAction {
+        decision: WireDecision::Pick(0),
+        seq: hand.seq,
+    });
     let mut closed = false;
     pump(&mut host_app, &mut client_app, |_, c| {
         closed |= drain::<Hand>(c).iter().any(|h| h.choices.is_empty());
@@ -604,8 +660,9 @@ fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopb
     });
     let after = host_app.world().get::<HeroState>(theirs).unwrap();
     assert_eq!(after.picks, 0);
+    // A rank-up's rolled quality may add more than one rank.
     assert!(
-        ranks(after) == before + 1 || after.hp == after.stats().max_hp,
+        ranks(after) > before || after.hp == after.stats().max_hp,
         "the pick landed"
     );
     assert_eq!(
@@ -995,6 +1052,7 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
         talents: Vec::new(),
         mount_display: 0,
         mount_hat: None,
+        pinned_trinket: None,
         hero: Some(theirs),
     });
     let hat = CosmeticHat {
