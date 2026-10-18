@@ -7,6 +7,7 @@
 //! walking back to it turns the quest in for a cache's worth ([`treasure::open_cache`]: gold, and a
 //! jewelry choice for every hero) and a bonus. Failed or ignored, the giver walks off and fades.
 
+use benilla_world::collision::WorldCollision;
 use benilla_world::model_fade::DespawnFade;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
@@ -29,6 +30,8 @@ use crate::ui_quest::QuestGiver;
 
 /// A hero this near a giver's edge accepts or turns in its quest.
 const GIVER_REACH: f32 = 2.2;
+/// How far a giver's post may move to stand on outdoor ground, never under a roof, in yards.
+const POST_REACH: f32 = 9.0;
 /// Seconds a giver waits for the party before it moves on.
 pub(in crate::survivors) const OFFER_SECS: f32 = 45.0;
 /// A giver leaving walks this long, at this pace, before it fades.
@@ -565,6 +568,7 @@ pub(super) fn offer_quests(
     selection: Res<Selection>,
     heroes: Query<(&Transform, &HeroState), With<Hero>>,
     world: WorldPoint,
+    collide: Option<WorldCollision>,
 ) {
     if quests.active.is_some() || run.elapsed < quests.next_due {
         return;
@@ -621,7 +625,8 @@ pub(super) fn offer_quests(
         angle,
         schedule::GIVER_GAP,
     );
-    let post = enemies::ground(&world, post, centre.y);
+    let post = enemies::nearest_outdoor(collide.as_ref(), &world, post, 0.0, POST_REACH, |_| true)
+        .unwrap_or_else(|| enemies::ground(&world, post, centre.y));
     let serial = run.guid();
     let giver = units::spawn_unit(
         &mut commands,

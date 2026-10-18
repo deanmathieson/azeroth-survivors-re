@@ -70,6 +70,9 @@ pub(super) enum Command {
     },
     /// An index into [`EMOTES`].
     Emote(u8),
+    /// `/unstuck`: this player's own hero to the nearest outdoor ground; it walks itself, so
+    /// nothing travels.
+    Unstuck,
     /// A `/command` the chat does not know.
     Unknown(String),
     Nothing,
@@ -100,6 +103,7 @@ pub(super) fn parse(input: &str) -> Command {
             };
             Command::Roll { max }
         }
+        "unstuck" | "stuck" => Command::Unstuck,
         "s" | "say" | "p" | "party" => match arg {
             "" => Command::Nothing,
             a => Command::Say(a.chars().take(MAX_LINE).collect()),
@@ -249,6 +253,7 @@ fn chat_keys(
     phase: Res<State<Phase>>,
     session: Res<Session>,
     mut say: MessageWriter<Say>,
+    unstuck: Option<ResMut<super::super::super::hero::Unstuck>>,
 ) {
     let linked = matches!(
         session.link,
@@ -314,6 +319,10 @@ fn chat_keys(
         Command::Emote(i) => {
             say.write(Say(Speech::Emote(i)));
         }
+        Command::Unstuck => match unstuck {
+            Some(mut unstuck) => unstuck.requested = true,
+            None => chat.note("You cannot get unstuck here."),
+        },
         Command::Unknown(c) => chat.note(format!("Unknown command: /{c}")),
         Command::Nothing => {}
     }
@@ -690,6 +699,8 @@ mod tests {
         );
         assert_eq!(parse("/s"), Command::Nothing);
         assert_eq!(parse("/kiss"), Command::Unknown("kiss".into()));
+        assert_eq!(parse("/unstuck"), Command::Unstuck);
+        assert_eq!(parse("/STUCK"), Command::Unstuck);
         let long = "a".repeat(500);
         assert_eq!(parse(&long), Command::Say("a".repeat(MAX_LINE)));
         // Every emote's command reads back to itself.
