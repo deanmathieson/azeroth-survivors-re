@@ -256,6 +256,8 @@ pub(super) enum UiAction {
     PlayAgain,
     MainMenu,
     Quit,
+    /// `/unstuck`: the hero to the nearest outdoor ground ([`super::hero::Unstuck`]).
+    Unstuck,
 }
 
 /// "Play again" on the results: the menu the run goes back through starts the next one at once, on
@@ -892,6 +894,7 @@ pub(super) fn setup_hud(
             for (label, action) in [
                 ("Resume", UiAction::Resume),
                 ("Options", UiAction::Options),
+                ("Unstuck", UiAction::Unstuck),
                 ("Abandon run", UiAction::MainMenu),
                 ("Quit game", UiAction::Quit),
             ] {
@@ -1475,6 +1478,7 @@ pub(super) fn buttons(
     mut replay: ResMut<Replay>,
     coop: Option<Res<super::strip::CoopRun>>,
     mut coop_menu: Option<ResMut<CoopMenu>>,
+    mut unstuck: Option<ResMut<super::hero::Unstuck>>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
@@ -1484,6 +1488,22 @@ pub(super) fn buttons(
                 bg.0 = BUTTON_HOT;
                 match (*action, *phase.get()) {
                     (UiAction::Resume, Phase::Paused) => next.set(Phase::Playing),
+                    // Asked for, and back to the run, where the hero is moved.
+                    (UiAction::Unstuck, Phase::Paused) => {
+                        if let Some(u) = unstuck.as_deref_mut() {
+                            u.requested = true;
+                        }
+                        next.set(Phase::Playing);
+                    }
+                    (UiAction::Unstuck, Phase::Playing) if coop.as_deref().is_some_and(|c| c.0) => {
+                        if let Some(u) = unstuck.as_deref_mut() {
+                            u.requested = true;
+                        }
+                        if let Some(menu) = coop_menu.as_deref_mut() {
+                            menu.open = false;
+                            menu.leaving = false;
+                        }
+                    }
                     (UiAction::PlayAgain, Phase::GameOver) => {
                         replay.0 = true;
                         next.set(Phase::Menu);
@@ -3384,5 +3404,38 @@ mod tests {
         click(&mut app, UiAction::MainMenu);
         app.update();
         assert_eq!(phase(&app), Phase::Menu);
+    }
+
+    #[test]
+    fn unstuck_in_the_game_menu_asks_for_it_and_goes_back_to_the_run() {
+        use super::super::hero::Unstuck;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .init_state::<Phase>()
+            .init_resource::<Replay>()
+            .init_resource::<CoopMenu>()
+            .init_resource::<Unstuck>()
+            .add_message::<AppExit>()
+            .add_systems(Update, buttons);
+        let asked = |app: &App| app.world().resource::<Unstuck>().requested;
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Paused);
+        app.update();
+        assert_eq!(phase(&app), Phase::Paused);
+        click(&mut app, UiAction::Unstuck);
+        app.update();
+        assert_eq!(phase(&app), Phase::Playing, "solo, it closes the pause");
+        assert!(asked(&app));
+
+        // In co-op the menu is an overlay over the run: it closes, and the run never stopped.
+        app.world_mut().resource_mut::<Unstuck>().requested = false;
+        app.world_mut()
+            .insert_resource(super::super::strip::CoopRun(true));
+        app.world_mut().resource_mut::<CoopMenu>().open = true;
+        click(&mut app, UiAction::Unstuck);
+        assert_eq!(phase(&app), Phase::Playing);
+        assert!(!app.world().resource::<CoopMenu>().open);
+        assert!(asked(&app));
     }
 }

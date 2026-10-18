@@ -858,7 +858,8 @@ fn deal_jewelry(
     {
         Some((mut hero, ..)) => {
             offer.pool = pool(profile.as_deref());
-            if !next_offer(&mut hero, &mut offer, &offer.pool.clone(), level, &mut rng) {
+            let pool = offer.pool.clone();
+            if !next_offer(&mut hero, &mut offer, &pool, level, &mut rng) {
                 next.set(resume(&hero));
             }
         }

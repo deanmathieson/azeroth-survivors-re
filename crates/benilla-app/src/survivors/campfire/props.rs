@@ -9,6 +9,7 @@ use benilla_world::collision::WorldCollision;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
+use super::super::enemies;
 use super::super::hero::AimPoint;
 use super::super::party::LocalHero;
 use super::super::units::{self, flat, yaw_toward, UnitSpec};
@@ -28,6 +29,8 @@ pub(super) const GOBLIN_GREETING: &str = "GoblinMaleGruffVendorNPCGreetin";
 /// Where the merchant and the fishing spot stand from the fire, in yards.
 const VENDOR_OFFSET: Vec3 = Vec3::new(4.5, 0.0, 2.5);
 const FISHING_OFFSET: Vec3 = Vec3::new(-5.0, 0.0, 3.5);
+/// How far a prop may move off its place to stand outdoors, in yards: one ring of the search.
+const PROP_REACH: f32 = 3.0;
 /// The bobber is drawn larger than life, to be seen and clicked from the run's camera.
 const BOBBER_SCALE: f32 = 2.5;
 /// How far below its float the bobber sinks while a fish bites, in yards.
@@ -101,9 +104,10 @@ fn place_props(
     *built = want;
     *spots = CampSpots::default();
     let Some(fire) = want else { return };
+    // Each prop stands on certified outdoor ground near its place, never under a roof.
     let ground = |p: Vec3| {
-        super::super::enemies::valid_outdoor_point(collide.as_ref(), &world, p, fire.y)
-            .unwrap_or_else(|| super::super::enemies::ground(&world, p, fire.y))
+        enemies::nearest_outdoor(collide.as_ref(), &world, p, 0.0, PROP_REACH, |_| true)
+            .unwrap_or_else(|| enemies::ground(&world, p, fire.y))
     };
     let (vendor, fishing) = layout(fire);
     let (fire, vendor, fishing) = (ground(fire), ground(vendor), ground(fishing));

@@ -9,7 +9,7 @@ use bevy::prelude::*;
 
 use super::body::{self, Body};
 use super::data;
-use super::enemies::Enemy;
+use super::enemies::{self, Enemy, Heightfield};
 use super::party;
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
 use super::view::{self, View};
@@ -29,13 +29,42 @@ pub(super) struct Hero {
     pub(super) face: f32,
 }
 
-/// A local-only escape watchdog.  It deliberately requires both sustained input and no progress,
-/// so a player who is reading a menu or standing in combat is never teleported.
+/// The local hero's watch on its own body: how long input has been held without getting anywhere,
+/// and how long it has waited on colliders still streaming in. Each machine watches only the
+/// hero it walks, so a co-op client escapes on its own and the host takes the new place as sent.
 #[derive(Default)]
-struct StuckWatch {
+pub(super) struct StuckWatch {
+    /// Where the current no-progress stretch began.
     at: Option<Vec3>,
+    /// Seconds of movement input since [`at`](Self::at) without leaving it.
     held_for: f32,
+    /// Seconds the walk has been held for colliders not yet under the feet.
+    frozen_for: f32,
 }
+
+/// `/unstuck` and the game menu's Unstuck: asked for here, carried out by [`drive_hero`] on the
+/// local hero, at most once per [`UNSTUCK_COOLDOWN`].
+#[derive(Resource, Default)]
+pub(super) struct Unstuck {
+    /// Asked for; taken by the next frame of play.
+    pub(super) requested: bool,
+    /// Seconds before the next escape.
+    cooldown: f32,
+}
+
+/// Seconds between two asked-for escapes.
+pub(super) const UNSTUCK_COOLDOWN: f32 = 10.0;
+/// Seconds the walk waits on colliders still streaming under the feet before it goes on anyway,
+/// so a hole in the collision never holds a player in place.
+const STREAM_WAIT: f32 = 2.0;
+/// Seconds of movement input without [`STUCK_PROGRESS`] yards of headway that count as wedged.
+const STUCK_SECS: f32 = 3.0;
+const STUCK_PROGRESS: f32 = 0.5;
+/// How far an escape looks for outdoor ground, yards.
+const ESCAPE_REACH: f32 = 24.0;
+/// An asked-for escape always moves at least this far, so a hero wedged on ground that looks
+/// fine (inside a rock's hull) still gets out.
+const MANUAL_ESCAPE: f32 = 3.0;
 
 /// The body radius enemies stop at.
 pub(super) const HERO_RADIUS: f32 = 0.7;
@@ -124,6 +153,42 @@ struct Shown {
 /// Where a battleground's runs start.
 pub(super) fn arena(map: &data::MapDef) -> Vec3 {
     wow_to_bevy(map.center)
+}
+
+/// Whether the hero at `feet` has fallen where it must be lifted out: more than
+/// [`enemies::OUTDOOR_SLACK`] under both the heightfield and the floor of the battleground centred
+/// on `arena`, which is not itself under the heightfield (a cave stage, or an arena sunk into the
+/// ground, is fought down there). Outside any building that is a fall through the world, lifted at
+/// once; inside one (a cellar) only once `wedged`, held against its walls. A map with no
+/// heightfield (Molten Core) has no outdoors to fall out of.
+pub(super) fn fallen(world: &impl Heightfield, feet: Vec3, arena: Vec3, wedged: bool) -> bool {
+    let under = |p: Vec3| {
+        world
+            .height_under(p)
+            .is_some_and(|t| p.y < t - enemies::OUTDOOR_SLACK)
+    };
+    under(feet)
+        && feet.y < arena.y - enemies::OUTDOOR_SLACK
+        && !under(arena)
+        && (wedged || !world.indoors(feet))
+}
+
+/// Where an escape takes the hero at `feet`: the nearest outdoor point at least `from` yards off
+/// and inside the battleground's leash round `center`, else `center` on its `floor`, the place
+/// every run on the battleground starts from.
+pub(super) fn escape_point(
+    collide: Option<&WorldCollision>,
+    world: &impl Heightfield,
+    feet: Vec3,
+    from: f32,
+    center: Vec3,
+    leash: f32,
+    floor: f32,
+) -> Vec3 {
+    enemies::nearest_outdoor(collide, world, feet, from, ESCAPE_REACH, |p| {
+        flat(p - center).length() <= leash
+    })
+    .unwrap_or_else(|| enemies::ground_on_collision(collide, world, center, floor))
 }
 
 /// The world is the battleground being stood in ([`Selection::stage`]): entering one on another
@@ -271,6 +336,8 @@ pub(super) fn drive_hero(
     ),
     auto: Option<Res<super::auto::Auto>>,
     mut stuck: Local<StuckWatch>,
+    mut unstuck: ResMut<Unstuck>,
+    mut run: ResMut<Run>,
     mut frame: ResMut<WowFrame>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<
@@ -295,12 +362,7 @@ pub(super) fn drive_hero(
             let mut feet = hm.body.start(tf.translation);
             if flat(feet - center).length() > map.leash * 2.0 {
                 // Just entered another battleground: start at its centre.
-                feet = super::enemies::ground_on_collision(
-                    collide.as_ref(),
-                    points,
-                    center,
-                    map.floor,
-                );
+                feet = enemies::ground_on_collision(collide.as_ref(), points, center, map.floor);
                 hm.body.placed(feet);
             }
             let speed = me.stats().speed * me.haste_mult();
@@ -324,20 +386,30 @@ pub(super) fn drive_hero(
                 Some(v) => forced_gait(&mut tf, &mut hm, v),
                 None => (vel, flags, pace),
             };
+            let wants = flat(vel).length_squared() > 0.01;
             // Space hops: WoW's jump keeps its launch; the classic hop steers in the air.
             let jump = playing && keys.just_pressed(KeyCode::Space);
             let vel = leash_velocity(center, map.leash, feet, vel, dt);
             let mut vel = hm.body.air_velocity(vel, wow);
-            // Do not let input advance across a tile which has a heightfield but whose body
-            // colliders have not arrived yet.  Advancing here is how a hero could enter below a
-            // WMO floor before the next streamed frame catches it.
-            if collide.as_ref().is_some_and(|c| {
-                c.ray_body(feet + Vec3::Y * 4.0, bevy::math::Dir3::NEG_Y, 64.0)
-                    .is_none()
-            }) {
+            let terrain = points.terrain_height_under(feet);
+            // The walk waits while the heightfield under the feet is in but its colliders are
+            // not, so a hero cannot walk in under a WMO floor before it arrives; never longer
+            // than STREAM_WAIT, so a hole in the collision holds no one in place. Under a loading
+            // screen the body is held on the heightfield anyway, and the wait starts after it.
+            let unstreamed = !loading.covering()
+                && terrain.is_some()
+                && collide.as_ref().is_some_and(|c| {
+                    c.ray_body(feet + Vec3::Y * 4.0, bevy::math::Dir3::NEG_Y, 64.0)
+                        .is_none()
+                });
+            stuck.frozen_for = if unstreamed {
+                stuck.frozen_for + dt
+            } else {
+                0.0
+            };
+            if unstreamed && stuck.frozen_for <= STREAM_WAIT {
                 vel = Vec3::ZERO;
             }
-            let terrain = points.terrain_height_under(feet);
             let mut out = match collide.as_ref().filter(|_| !loading.covering()) {
                 Some(collide) => {
                     body::step(collide, capsule, &mut hm.body, feet, vel, jump, dt, terrain)
@@ -374,65 +446,60 @@ pub(super) fn drive_hero(
                 frame.flags = word;
                 frame.speed = pace;
             }
-            let moving_input = [
-                KeyCode::KeyW,
-                KeyCode::KeyA,
-                KeyCode::KeyS,
-                KeyCode::KeyD,
-                KeyCode::ArrowUp,
-                KeyCode::ArrowDown,
-                KeyCode::ArrowLeft,
-                KeyCode::ArrowRight,
-            ]
-            .into_iter()
-            .any(|key| keys.pressed(key));
-            let below_terrain = points
-                .terrain_height_under(out)
-                .is_some_and(|ground| out.y < ground - 2.0);
-            if !moving_input {
-                *stuck = StuckWatch::default();
-            } else {
-                let origin = stuck.at.get_or_insert(out);
-                if flat(out - *origin).length() > 0.5 {
-                    *origin = out;
+            // The watchdog counts held input that gets nowhere; headway or letting go resets it.
+            if playing && wants {
+                let origin = *stuck.at.get_or_insert(out);
+                if flat(out - origin).length() > STUCK_PROGRESS {
+                    stuck.at = Some(out);
                     stuck.held_for = 0.0;
                 } else {
                     stuck.held_for += dt;
                 }
-                if below_terrain || stuck.held_for >= 3.0 {
-                    // Search a short, deterministic ring for the nearest streamed outdoor floor.
-                    let mut safe = None;
-                    for radius in [0.0, 2.0, 4.0, 8.0, 12.0] {
-                        for n in 0..8 {
-                            let a = n as f32 * std::f32::consts::TAU / 8.0;
-                            let p = out + Vec3::new(a.cos(), 0.0, a.sin()) * radius;
-                            if let Some(p) = super::enemies::valid_outdoor_point(
-                                collide.as_ref(),
-                                points,
-                                p,
-                                map.floor,
-                            ) {
-                                safe = Some(p);
-                                break;
-                            }
-                        }
-                        if safe.is_some() {
-                            break;
-                        }
-                    }
-                    if let Some(p) = safe {
-                        out = p;
-                        hm.body.placed(out);
-                    }
-                    *stuck = StuckWatch::default();
+            } else {
+                stuck.at = None;
+                stuck.held_for = 0.0;
+            }
+            unstuck.cooldown = (unstuck.cooldown - dt).max(0.0);
+            if !playing && (me.dead_t.is_some() || *phase.get() == Phase::Menu) {
+                unstuck.requested = false;
+            }
+            let settled = collide.is_some() && !loading.covering();
+            let wedged = stuck.held_for >= STUCK_SECS;
+            let escape = if playing && std::mem::take(&mut unstuck.requested) {
+                if unstuck.cooldown > 0.0 {
+                    let wait = unstuck.cooldown.ceil() as u32;
+                    run.banner = Some((format!("You can try to get unstuck in {wait} s."), 2.0));
+                    None
+                } else {
+                    unstuck.cooldown = UNSTUCK_COOLDOWN;
+                    run.banner = Some(("Unstuck.".into(), 1.5));
+                    Some(MANUAL_ESCAPE)
                 }
+            } else if playing && settled && fallen(points, out, center, wedged) {
+                Some(0.0)
+            } else {
+                None
+            };
+            if let Some(from) = escape {
+                out = escape_point(
+                    collide.as_ref(),
+                    points,
+                    out,
+                    from,
+                    center,
+                    map.leash,
+                    map.floor,
+                );
+                hm.body.placed(out);
+                stuck.at = None;
+                stuck.held_for = 0.0;
             }
             if tf.translation != out {
                 tf.translation = out;
             }
             out
         }
-        Err(_) => super::enemies::ground_on_collision(
+        Err(_) => enemies::ground_on_collision(
             collide.as_ref(),
             points,
             arena(selection.stage_def()),

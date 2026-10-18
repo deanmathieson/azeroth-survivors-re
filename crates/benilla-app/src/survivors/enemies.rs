@@ -282,101 +282,292 @@ pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
     p
 }
 
+/// What grounding asks of the world besides its colliders: the ADT heightfield and whether a point
+/// is inside a building. [`WorldPoint`] in the game; a synthetic plane in the tests.
+pub(super) trait Heightfield {
+    /// The MCNK heightfield's height under `p`, `None` off the streamed set or on a map without
+    /// one (a WMO-only instance such as Molten Core).
+    fn height_under(&self, p: Vec3) -> Option<f32>;
+    /// Whether `p` is inside a WMO group.
+    fn indoors(&self, p: Vec3) -> bool;
+}
+
+impl Heightfield for WorldPoint<'_, '_> {
+    fn height_under(&self, p: Vec3) -> Option<f32> {
+        self.terrain_height_under(p)
+    }
+
+    fn indoors(&self, p: Vec3) -> bool {
+        self.indoors_at(p)
+    }
+}
+
 /// The clearance above a known stage or hero floor that a spawn probe starts from.  It stays under
 /// a cave roof, unlike the old 64 yd outdoor probe, while still clearing a floor-plane roundoff.
 const GROUND_PROBE_LIFT: f32 = 4.0;
-/// A walking enemy may step this far up in a frame.  A higher collision hit is a roof, shelf, or
+/// A walking body may step this far up in a frame.  A higher collision hit is a roof, shelf, or
 /// streamed-in interior and must not replace the floor it was already walking on.
-const ENEMY_STEP_UP: f32 = 1.5;
+const STEP_UP: f32 = 1.5;
+/// How far a certified outdoor point may sit from the ADT heightfield, and how far under it a
+/// walking body counts as fallen into a cellar or through the world.
+pub(super) const OUTDOOR_SLACK: f32 = 2.0;
+/// How high over an outdoor point a roof or ceiling disqualifies it.
+const ROOF_CLEARANCE: f32 = 30.0;
+/// How far round a spawn candidate the outdoor search looks before it settles for the candidate.
+const SPAWN_REACH: f32 = 6.0;
+/// The ring spacing of the outdoor search, yards.
+const RING_STEP: f32 = 3.0;
 
+/// The floor under `p` from collision: the first face under a probe from just over the reference
+/// floor, unless it is more than [`STEP_UP`] over it (a roof, a shelf, a wall top), in which case
+/// a second probe from step height looks under it.
 fn collision_ground_y(collide: &WorldCollision, p: Vec3, fallback: f32) -> Option<f32> {
     let reference = p.y.max(fallback);
-    let from = p.with_y(reference + GROUND_PROBE_LIFT);
-    collide
-        .ray_body(from, Dir3::NEG_Y, 128.0)
-        .map(|hit| from.y - hit.distance)
-        .filter(|&y| y <= reference + ENEMY_STEP_UP)
+    let limit = reference + STEP_UP;
+    let probe = |lift: f32| {
+        let from = p.with_y(reference + lift);
+        collide
+            .ray_body(from, Dir3::NEG_Y, 128.0)
+            .map(|hit| from.y - hit.distance)
+    };
+    match probe(GROUND_PROBE_LIFT) {
+        Some(y) if y <= limit => Some(y),
+        Some(_) => probe(STEP_UP).filter(|&y| y <= limit),
+        None => None,
+    }
 }
 
-/// A point which can safely be used by outdoor survivor content.  It stays close to the ADT
-/// heightfield, accepts a streamed outdoor walkable surface, and rejects a ceiling/roof above it.
-/// The collision layer does not expose WMO group ownership, so the vertical roof test is also the
-/// conservative interior/footprint test while a group is streaming.
+/// A point outdoor content may stand on: a collision floor (the heightfield while there is no
+/// collision at all) within [`OUTDOOR_SLACK`] of the ADT heightfield, no roof or ceiling within
+/// [`ROOF_CLEARANCE`] over it, and not inside a WMO group. `None` without a heightfield: a map
+/// with no ADT has no outdoors to certify.
 pub(super) fn valid_outdoor_point(
     collide: Option<&WorldCollision>,
-    world: &WorldPoint,
+    world: &impl Heightfield,
     p: Vec3,
-    fallback: f32,
 ) -> Option<Vec3> {
-    let terrain = world.terrain_height_under(p).unwrap_or(fallback);
-    let grounded = ground_on_collision(collide, world, p.with_y(terrain), terrain);
-    if (grounded.y - terrain).abs() > 2.0 {
+    let terrain = world.height_under(p)?;
+    let y = match collide {
+        Some(c) => collision_ground_y(c, p.with_y(terrain), terrain)?,
+        None => terrain,
+    };
+    if (y - terrain).abs() > OUTDOOR_SLACK {
         return None;
     }
-    if let Some(c) = collide {
-        // A body ray is one-sided, so this finds a roof's downward-facing underside without
-        // treating the outdoor ground as an obstruction.
-        if c.ray_body(grounded + Vec3::Y * 0.05, Dir3::Y, 30.0)
-            .is_some()
-        {
-            return None;
-        }
+    let grounded = p.with_y(y);
+    let lifted = grounded + Vec3::Y * 0.05;
+    // A body ray is one-sided: going up it meets a roof's or ceiling's downward faces only, never
+    // the ground it starts on.
+    if collide.is_some_and(|c| c.ray_body(lifted, Dir3::Y, ROOF_CLEARANCE).is_some()) {
+        return None;
+    }
+    if world.indoors(lifted) {
+        return None;
     }
     Some(grounded)
 }
 
-/// Ground a spawn candidate, preferring certified exterior ground.  Callers retain a deterministic
-/// fallback so an arena can still start while its collision tile is streaming.
+/// Candidates round `p` out to `reach`, nearest ring first, eight to a ring.
+fn rings(p: Vec3, from: f32, reach: f32) -> impl Iterator<Item = Vec3> {
+    let n = (reach / RING_STEP).floor().max(0.0) as u32;
+    let first = (from / RING_STEP).ceil().max(1.0) as u32;
+    (first..=n).flat_map(move |k| {
+        let r = k as f32 * RING_STEP;
+        (0..8).map(move |i| {
+            let a = i as f32 * std::f32::consts::TAU / 8.0;
+            p + Vec3::new(a.cos(), 0.0, a.sin()) * r
+        })
+    })
+}
+
+/// The nearest certified outdoor point to `p` that `keep` allows, searching rings from `from` out
+/// to `reach` yards (`p` itself first when `from` is zero).
+pub(super) fn nearest_outdoor(
+    collide: Option<&WorldCollision>,
+    world: &impl Heightfield,
+    p: Vec3,
+    from: f32,
+    reach: f32,
+    keep: impl Fn(Vec3) -> bool,
+) -> Option<Vec3> {
+    let here = (from <= 0.0).then_some(p);
+    here.into_iter()
+        .chain(rings(p, from, reach))
+        .filter(|&q| keep(q))
+        .find_map(|q| valid_outdoor_point(collide, world, q))
+}
+
+/// Ground a spawn candidate on the nearest certified outdoor point round it, else as a walking
+/// body: a cave stage has no outdoors, and an arena still starts while its collision streams.
 pub(super) fn outdoor_ground(
     collide: Option<&WorldCollision>,
-    world: &WorldPoint,
+    world: &impl Heightfield,
     p: Vec3,
     fallback: f32,
 ) -> Vec3 {
-    valid_outdoor_point(collide, world, p, fallback)
+    nearest_outdoor(collide, world, p, 0.0, SPAWN_REACH, |_| true)
         .unwrap_or_else(|| ground_on_collision(collide, world, p, fallback))
 }
 
-/// Sweep the enemy's small horizontal body and slide the remaining intended displacement along a
-/// wall.  One cast is cheap enough for enemies in fighting range; distant enemies use the same
-/// robust path only every fourth frame (the frame-derived phase avoids a herd-sized burst).
+/// Enemies this near a hero sweep their body every frame; farther ones feel ahead with a ray.
+const SWEEP_RANGE: f32 = 50.0;
+/// The swept body rides this far over the feet, so the ground, a slope and a kerb the ground probe
+/// steps onto are not walls.
+const STEP_CLEAR: f32 = 0.6;
+/// The swept sphere's radius bounds: a small body still sweeps a real one, and a giant's does not
+/// wedge in every gap its model would clip through anyway.
+const PROBE_MIN: f32 = 0.3;
+const PROBE_MAX: f32 = 1.0;
+/// The sweep's skin.
+const SKIN: f32 = 0.02;
+
+/// Where an enemy at `pos` that wants to move `movement` (flat) ends up against the world's walls,
+/// before grounding, and the flat normal of the last wall it met. Near a hero it sweeps a sphere
+/// ([`WorldCollision::cast_body`]); farther away a ray feeler at the same height does. Either
+/// slides along what it meets, at most twice.
 fn enemy_step(
     collide: Option<&WorldCollision>,
     pos: Vec3,
     movement: Vec3,
     radius: f32,
     near_hero: bool,
-    phase: u32,
-) -> Vec3 {
+) -> (Vec3, Option<Vec3>) {
+    let movement = flat(movement);
     let Some(c) = collide else {
-        return pos + movement;
+        return (pos + movement, None);
     };
-    if !near_hero && phase % 4 != 0 {
-        return pos + movement;
+    if movement.length_squared() <= 1e-10 {
+        return (pos, None);
     }
-    if movement.length_squared() <= f32::EPSILON {
-        return pos;
+    let r = radius.clamp(PROBE_MIN, PROBE_MAX);
+    let center = pos + Vec3::Y * (STEP_CLEAR + r);
+    let shape = near_hero.then(|| Collider::sphere(r));
+    let mut moved = Vec3::ZERO;
+    let mut left = movement;
+    let mut wall = None;
+    for _ in 0..2 {
+        let Ok((dir, len)) = Dir3::new_and_length(left) else {
+            break;
+        };
+        // How far along `left` it gets, and the wall's normal there.
+        let hit = match &shape {
+            Some(shape) => c
+                .cast_body(shape, center + moved, left, SKIN)
+                .map(|h| (h.distance.min(len), h.normal1)),
+            None => c
+                .ray_body(center + moved, dir, len + r)
+                .map(|h| ((h.distance - r).clamp(0.0, len), h.normal)),
+        };
+        let Some((reach, normal)) = hit else {
+            return (pos + moved + left, wall);
+        };
+        let along = *dir * reach;
+        moved += along;
+        left -= along;
+        let n = flat(normal).normalize_or_zero();
+        if n == Vec3::ZERO {
+            break;
+        }
+        wall = Some(n);
+        // Keep what runs along the wall, drop what runs into it.
+        left -= n * left.dot(n).min(0.0);
     }
-    let shape = Collider::sphere(radius.max(0.2));
-    let center = pos + Vec3::Y * radius.max(0.2);
-    let Some(hit) = c.cast_body(&shape, center, movement, 0.02) else {
-        return pos + movement;
+    (pos + moved, wall)
+}
+
+/// How long an enemy a wall stopped keeps walking along it before it turns to its prey again.
+const DETOUR_SECS: f32 = 1.0;
+/// How long after a detour ends the next one still keeps its way round, so a horde member does
+/// not swing back and forth at the same wall.
+const DETOUR_MEMORY: f32 = 3.0;
+
+/// A wall-follow: the way along the wall that stopped the chase, until when, and that wall's flat
+/// normal.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Detour {
+    along: Vec3,
+    wall: Vec3,
+    until: f32,
+}
+
+/// One enemy's walk this frame: where it stands, the chase's and the crowd's flat displacement,
+/// its body radius, whether a hero is near enough for the full sweep, and the way round (`±1`)
+/// it takes when a wall faces its prey square on.
+#[derive(Clone, Copy)]
+pub(super) struct Stride {
+    pub(super) pos: Vec3,
+    pub(super) chase: Vec3,
+    pub(super) shove: Vec3,
+    pub(super) radius: f32,
+    pub(super) near: bool,
+    pub(super) side: f32,
+}
+
+impl Detour {
+    fn active(&self, now: f32) -> bool {
+        self.until > now
+    }
+}
+
+/// One frame of an enemy's walk over the world at time `now`: the chase (or the wall-follow a
+/// wall started, [`Detour`]) and the crowd's shove, slid along walls ([`enemy_step`]), then
+/// grounded. A chase a wall stops nearly dead turns along the wall, the way that leads towards
+/// its prey, and keeps on round it for [`DETOUR_SECS`]: enemies go round a house, not into it.
+pub(super) fn walk_step(
+    collide: Option<&WorldCollision>,
+    world: &impl Heightfield,
+    fallback: f32,
+    s: Stride,
+    detour: &mut Option<Detour>,
+    now: f32,
+) -> Vec3 {
+    if detour.is_some_and(|d| d.until + DETOUR_MEMORY <= now) {
+        *detour = None;
+    }
+    let len = s.chase.length();
+    let chase_dir = flat(s.chase).normalize_or_zero();
+    let chase = match *detour {
+        Some(d) if d.active(now) => d.along * len,
+        _ => s.chase,
     };
-    let first = movement.normalize_or_zero() * hit.distance.max(0.0);
-    let left = movement - first;
-    let slide = left - hit.normal1 * left.dot(hit.normal1);
-    let slid = c
-        .cast_body(&shape, center + first, slide, 0.02)
-        .map_or(slide, |second| {
-            slide.normalize_or_zero() * second.distance.max(0.0)
-        });
-    pos + first + slid
+    let (next, wall) = enemy_step(collide, s.pos, chase + s.shove, s.radius, s.near);
+    if let Some(n) = wall {
+        let progress = flat(next - s.pos).dot(flat(chase).normalize_or_zero());
+        if len > 1e-4 && progress < 0.5 * len {
+            let tangent = Vec3::new(-n.z, 0.0, n.x);
+            let sign = match *detour {
+                // Round the same wall the same way; at a corner, away from the wall left.
+                Some(d) => {
+                    let keep = tangent.dot(d.along);
+                    if keep.abs() > 0.1 {
+                        keep.signum()
+                    } else {
+                        tangent.dot(d.wall).signum()
+                    }
+                }
+                None => {
+                    let toward = tangent.dot(chase_dir);
+                    if toward.abs() > 0.05 {
+                        toward.signum()
+                    } else {
+                        s.side
+                    }
+                }
+            };
+            *detour = Some(Detour {
+                along: tangent * sign,
+                wall: n,
+                until: now + DETOUR_SECS,
+            });
+        }
+    }
+    ground_on_collision(collide, world, next, fallback)
 }
 
 /// Ground a walking body on collision first, falling back to terrain while the collider streams.
 pub(super) fn ground_on_collision(
     collide: Option<&WorldCollision>,
-    world: &WorldPoint,
+    world: &impl Heightfield,
     mut p: Vec3,
     fallback: f32,
 ) -> Vec3 {
@@ -384,9 +575,36 @@ pub(super) fn ground_on_collision(
     // keeps a WMO ceiling out of the ray, so its nearest hit is the floor below the reference.
     p.y = collide
         .and_then(|collide| collision_ground_y(collide, p, fallback))
-        .or_else(|| world.terrain_height_under(p))
+        .or_else(|| world.height_under(p))
         .unwrap_or(fallback);
     p
+}
+
+/// How far along its path to the hero a lost enemy is looked for a way out, yards.
+const RESCUE_REACH: f32 = 24.0;
+
+/// An enemy whose step left it under the heightfield (in a cellar, under a WMO floor, through the
+/// world) while the hero it chases, at `hero`, is not: the first outdoor point along its path to
+/// that hero, `None` while it is where it should be or no way out is found.
+fn rescue_enemy(
+    collide: Option<&WorldCollision>,
+    world: &impl Heightfield,
+    at: Vec3,
+    hero: Vec3,
+) -> Option<Vec3> {
+    let under = |p: Vec3| {
+        world
+            .height_under(p)
+            .is_some_and(|t| p.y < t - OUTDOOR_SLACK)
+    };
+    if !under(at) || under(hero) {
+        return None;
+    }
+    let dir = flat(hero - at).normalize_or_zero();
+    let gap = flat(hero - at).length();
+    (1..=(RESCUE_REACH / RING_STEP) as u32)
+        .map(|k| at + dir * (k as f32 * RING_STEP).min(gap))
+        .find_map(|p| valid_outdoor_point(collide, world, p))
 }
 
 /// A horde ring never steps beyond the battle circle, even when its target is already at the edge.
@@ -678,6 +896,7 @@ pub(super) fn move_enemies(
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
     mut fx: Fx,
     mut hits: MessageWriter<Hit>,
+    mut detours: Local<HashMap<Entity, Detour>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -746,6 +965,9 @@ pub(super) fn move_enemies(
         }
         push.insert(ent, acc);
     }
+    // Forgotten detours go, and so do any from an earlier run's clock.
+    let now = run.elapsed;
+    detours.retain(|_, d| d.until + DETOUR_MEMORY > now && d.until <= now + DETOUR_SECS);
 
     for (ent, mut tf, mut e, mut mv) in &mut enemies {
         let e = &mut *e;
@@ -797,7 +1019,7 @@ pub(super) fn move_enemies(
         // Strays far behind are brought back in front, as the reference genre does.
         if dist > 75.0 {
             let back = spawn_site(map, hpos, to_hero.z.atan2(to_hero.x), 38.0);
-            tf.translation = ground_on_collision(collide.as_ref(), &world, back, map.floor);
+            tf.translation = outdoor_ground(collide.as_ref(), &world, back, map.floor);
             continue;
         }
 
@@ -810,32 +1032,62 @@ pub(super) fn move_enemies(
         let contact = chase.is_some() && to_target.length() <= HERO_RADIUS + e.radius + 0.35;
         let mut step = Vec3::ZERO;
         let mut speed = 0.0;
+        let mut face = Vec3::ZERO;
         if !held && !hero_down {
-            let dir = if e.fear_t > 0.0 {
+            face = if e.fear_t > 0.0 {
                 -to_target.normalize_or_zero()
             } else {
                 to_target.normalize_or_zero()
             };
             if !contact || e.fear_t > 0.0 {
                 speed = e.speed * e.slow;
-                step = dir * speed;
-            }
-            if dir != Vec3::ZERO {
-                let target = Quat::from_rotation_y(yaw_toward(dir));
-                tf.rotation = tf.rotation.slerp(target, (dt * 10.0).min(1.0));
+                step = face * speed;
             }
         }
         let shove = push.get(&ent).copied().unwrap_or_default();
-        let intended = step * dt + shove * (dt * 8.0).min(0.5);
-        let mut next = enemy_step(
-            collide.as_ref(),
+        let mut detour = detours.get(&ent).copied();
+        let stride = Stride {
             pos,
-            intended,
-            e.radius,
-            dist <= 50.0,
-            (run.elapsed * 60.0) as u32 ^ ent.to_bits() as u32,
+            chase: step * dt,
+            shove: shove * (dt * 8.0).min(0.5),
+            radius: e.radius,
+            near: dist <= SWEEP_RANGE,
+            side: if ent.to_bits() & 1 == 0 { 1.0 } else { -1.0 },
+        };
+        let mut next = walk_step(
+            collide.as_ref(),
+            &world,
+            map.floor,
+            stride,
+            &mut detour,
+            run.elapsed,
         );
-        next = ground_on_collision(collide.as_ref(), &world, next, map.floor);
+        match detour {
+            Some(d) => {
+                // Going round a wall, it looks the way it walks.
+                if step != Vec3::ZERO && d.active(run.elapsed) {
+                    face = d.along;
+                }
+                detours.insert(ent, d);
+            }
+            None => {
+                detours.remove(&ent);
+            }
+        }
+        if face != Vec3::ZERO {
+            let target = Quat::from_rotation_y(yaw_toward(face));
+            tf.rotation = tf.rotation.slerp(target, (dt * 10.0).min(1.0));
+        }
+        // An enemy found under the heightfield (a cellar, under a floor) is put back outdoors
+        // along its path: each one is looked at every eighth frame, staggered over the horde.
+        let phase = ((run.elapsed * 60.0) as u32) ^ (ent.to_bits() as u32);
+        if let Some(out) = phase
+            .is_multiple_of(8)
+            .then(|| rescue_enemy(collide.as_ref(), &world, next, hpos))
+            .flatten()
+        {
+            next = out;
+        }
         tf.translation = next;
         if speed > 0.0 {
             mv.speed = speed;
@@ -1212,6 +1464,415 @@ mod tests {
             })
             .expect("ground probe runs");
         assert_eq!(ground, Some(0.0), "the 32 yd roof is never considered");
+    }
+
+    type Mesh3 = (Vec<Vec3>, Vec<[u32; 3]>);
+
+    /// A heightfield flat at y = 0 everywhere and indoors nowhere, so the colliders alone decide.
+    struct OpenField;
+
+    impl Heightfield for OpenField {
+        fn height_under(&self, _: Vec3) -> Option<f32> {
+            Some(0.0)
+        }
+
+        fn indoors(&self, _: Vec3) -> bool {
+            false
+        }
+    }
+
+    /// A map with no heightfield at all, as Molten Core's.
+    struct NoField;
+
+    impl Heightfield for NoField {
+        fn height_under(&self, _: Vec3) -> Option<f32> {
+            None
+        }
+
+        fn indoors(&self, _: Vec3) -> bool {
+            false
+        }
+    }
+
+    /// The flat heightfield, inside a building everywhere: a cellar.
+    struct Cellar;
+
+    impl Heightfield for Cellar {
+        fn height_under(&self, _: Vec3) -> Option<f32> {
+            Some(0.0)
+        }
+
+        fn indoors(&self, _: Vec3) -> bool {
+            true
+        }
+    }
+
+    /// A planar quad `c` (corners in order round it), wound to face `out`.
+    fn quad(mesh: &mut Mesh3, c: [Vec3; 4], out: Vec3) {
+        let i = mesh.0.len() as u32;
+        mesh.0.extend(c);
+        if (c[1] - c[0]).cross(c[2] - c[0]).dot(out) >= 0.0 {
+            mesh.1.extend([[i, i + 1, i + 2], [i, i + 2, i + 3]]);
+        } else {
+            mesh.1.extend([[i, i + 2, i + 1], [i, i + 3, i + 2]]);
+        }
+    }
+
+    /// A box's four walls, and its top when `top`, every face wound outwards (`facing` 1) or
+    /// inwards (−1).
+    fn shell(mesh: &mut Mesh3, min: Vec3, max: Vec3, facing: f32, top: bool) {
+        let v = Vec3::new;
+        let ([x0, y0, z0], [x1, y1, z1]) = (min.to_array(), max.to_array());
+        let walls = [
+            (
+                [v(x0, y0, z0), v(x0, y1, z0), v(x0, y1, z1), v(x0, y0, z1)],
+                Vec3::NEG_X,
+            ),
+            (
+                [v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), v(x1, y0, z1)],
+                Vec3::X,
+            ),
+            (
+                [v(x0, y0, z0), v(x1, y0, z0), v(x1, y1, z0), v(x0, y1, z0)],
+                Vec3::NEG_Z,
+            ),
+            (
+                [v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1)],
+                Vec3::Z,
+            ),
+        ];
+        for (c, out) in walls {
+            quad(mesh, c, out * facing);
+        }
+        if top {
+            let roof = [v(x0, y1, z0), v(x1, y1, z0), v(x1, y1, z1), v(x0, y1, z1)];
+            quad(mesh, roof, Vec3::Y * facing);
+        }
+    }
+
+    /// Up-facing ground at y = 0 over x and z in `[min, max]`.
+    fn ground_patch(mesh: &mut Mesh3, min: Vec2, max: Vec2) {
+        let v = |x, z| Vec3::new(x, 0.0, z);
+        let c = [
+            v(min.x, min.y),
+            v(max.x, min.y),
+            v(max.x, max.y),
+            v(min.x, max.y),
+        ];
+        quad(mesh, c, Vec3::Y);
+    }
+
+    /// The test house's footprint: a WMO-like building 10 × 10 yd and 6 high.
+    const HOUSE_MIN: Vec3 = Vec3::new(10.0, 0.0, -5.0);
+    const HOUSE_MAX: Vec3 = Vec3::new(20.0, 6.0, 5.0);
+
+    fn in_house(p: Vec3) -> bool {
+        p.x > HOUSE_MIN.x && p.x < HOUSE_MAX.x && p.z > HOUSE_MIN.z && p.z < HOUSE_MAX.z
+    }
+
+    /// Open ground with the house on it: outer walls and roof facing out, inner walls and
+    /// ceiling facing in, as a building's two skins are.
+    fn house_world() -> App {
+        let mut ground = Mesh3::default();
+        ground_patch(&mut ground, Vec2::splat(-60.0), Vec2::splat(60.0));
+        let mut house = Mesh3::default();
+        shell(&mut house, HOUSE_MIN, HOUSE_MAX, 1.0, true);
+        let skin = Vec3::new(0.3, 0.0, 0.3);
+        shell(
+            &mut house,
+            HOUSE_MIN + skin,
+            HOUSE_MAX - skin - Vec3::Y * 0.3,
+            -1.0,
+            true,
+        );
+        physics_world(vec![ground, house])
+    }
+
+    fn physics_world(meshes: Vec<Mesh3>) -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::transform::TransformPlugin,
+            bevy::asset::AssetPlugin::default(),
+            bevy::scene::ScenePlugin,
+            PhysicsPlugins::new(bevy::app::PostUpdate),
+        ));
+        app.init_asset::<Mesh>();
+        app.init_resource::<benilla_world::collision::MoverTraceExclusions>();
+        for (verts, tris) in meshes {
+            app.world_mut().spawn((
+                RigidBody::Static,
+                Collider::trimesh(verts, tris),
+                Transform::default(),
+            ));
+        }
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    /// An enemy chasing prey straight through the house, 20 s of frames: how many frames it spent
+    /// inside the footprint, how high it ever stood, and where it ended.
+    fn chase_past_the_house(c: &WorldCollision, near: bool) -> (usize, f32, Vec3) {
+        let prey = Vec3::new(30.0, 0.0, 1.0);
+        let mut pos = Vec3::new(0.0, 0.0, 1.0);
+        let mut detour = None;
+        let (mut inside, mut highest) = (0, f32::MIN);
+        let dt = 1.0 / 60.0;
+        for frame in 0..60 * 20 {
+            let chase = flat(prey - pos);
+            if chase.length() < 1.0 {
+                break;
+            }
+            let stride = Stride {
+                pos,
+                chase: chase.normalize() * 5.0 * dt,
+                shove: Vec3::ZERO,
+                radius: 0.5,
+                near,
+                side: 1.0,
+            };
+            pos = walk_step(
+                Some(c),
+                &OpenField,
+                0.0,
+                stride,
+                &mut detour,
+                frame as f32 * dt,
+            );
+            inside += usize::from(in_house(pos));
+            highest = highest.max(pos.y);
+        }
+        (inside, highest, pos)
+    }
+
+    #[test]
+    fn an_enemy_goes_round_a_house_not_through_it() {
+        let mut app = house_world();
+        for near in [true, false] {
+            let (inside, highest, end) = app
+                .world_mut()
+                .run_system_once(move |c: WorldCollision| chase_past_the_house(&c, near))
+                .expect("the chase runs");
+            let how = if near { "swept" } else { "feeler" };
+            assert_eq!(inside, 0, "{how}: frames spent inside the house's walls");
+            assert!(
+                highest < 0.1,
+                "{how}: it walked the ground, never onto the roof, but stood {highest} yd up"
+            );
+            assert!(
+                flat(end - Vec3::new(30.0, 0.0, 1.0)).length() < 1.5,
+                "{how}: it found its way round to the prey, but ended at {end}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wall_stops_an_enemy_and_it_slides_along() {
+        let mut app = house_world();
+        let (square, glancing) = app
+            .world_mut()
+            .run_system_once(|c: WorldCollision| {
+                // Square on, 2 yd of step from 1 yd off the wall: it stops at its body's width.
+                let square =
+                    enemy_step(Some(&c), Vec3::new(9.0, 0.0, 0.0), Vec3::X * 2.0, 0.5, true);
+                // At 45 degrees, it keeps what runs along the wall.
+                let glancing = enemy_step(
+                    Some(&c),
+                    Vec3::new(9.0, 0.0, 0.0),
+                    Vec3::new(2.0, 0.0, 2.0),
+                    0.5,
+                    true,
+                );
+                (square, glancing)
+            })
+            .expect("the steps run");
+        let (at, wall) = square;
+        assert!(
+            at.x <= HOUSE_MIN.x - 0.45,
+            "stopped short of the wall, not at {at}"
+        );
+        assert!(at.x > 9.3, "but it did walk up to it, to {at}");
+        assert_eq!(wall.map(|n| n.x.round()), Some(-1.0), "the wall faces it");
+        let (at, _) = glancing;
+        assert!(
+            at.x <= HOUSE_MIN.x - 0.45,
+            "the glancing step stays outside, at {at}"
+        );
+        assert!(at.z > 1.5, "and slides along the wall, to {at}");
+    }
+
+    #[test]
+    fn a_kerb_is_stepped_onto_and_a_roof_is_not() {
+        let mut ground = Mesh3::default();
+        ground_patch(&mut ground, Vec2::splat(-20.0), Vec2::splat(20.0));
+        let mut blocks = Mesh3::default();
+        // A 1 yd kerb, and a shed whose roof is 2.5 yd up.
+        shell(
+            &mut blocks,
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::new(4.0, 1.0, 2.0),
+            1.0,
+            true,
+        );
+        shell(
+            &mut blocks,
+            Vec3::new(8.0, 0.0, -2.0),
+            Vec3::new(12.0, 2.5, 2.0),
+            1.0,
+            true,
+        );
+        let mut app = physics_world(vec![ground, blocks]);
+        let (kerb, shed) = app
+            .world_mut()
+            .run_system_once(|c: WorldCollision| {
+                let at = |x| ground_on_collision(Some(&c), &OpenField, Vec3::new(x, 0.0, 0.0), 0.0);
+                (at(2.0).y, at(10.0).y)
+            })
+            .expect("the probes run");
+        assert!((kerb - 1.0).abs() < 1e-3, "a kerb is a step up, got {kerb}");
+        assert!(
+            shed.abs() < 1e-3,
+            "a roof over the feet is never the floor, got {shed}"
+        );
+    }
+
+    #[test]
+    fn spawns_avoid_the_inside_of_a_house() {
+        let mut app = house_world();
+        let (open, under_roof, moved, indoors) = app
+            .world_mut()
+            .run_system_once(|c: WorldCollision| {
+                let c = Some(&c);
+                (
+                    valid_outdoor_point(c, &OpenField, Vec3::new(0.0, 0.0, 0.0)),
+                    valid_outdoor_point(c, &OpenField, Vec3::new(15.0, 0.0, 0.0)),
+                    outdoor_ground(c, &OpenField, Vec3::new(15.0, 0.0, 0.0), 0.0),
+                    valid_outdoor_point(c, &Cellar, Vec3::new(0.0, 0.0, 0.0)),
+                )
+            })
+            .expect("the checks run");
+        assert_eq!(
+            open.map(|p| p.y.abs() < 1e-3),
+            Some(true),
+            "open ground is fine"
+        );
+        assert_eq!(
+            under_roof, None,
+            "under the house's ceiling is no spawn point"
+        );
+        assert!(
+            !in_house(moved),
+            "a spawn asked for inside is moved out, to {moved}"
+        );
+        assert!(moved.y.abs() < 1e-3, "onto the ground, at {moved}");
+        assert_eq!(indoors, None, "inside a WMO group is no spawn point either");
+    }
+
+    #[test]
+    fn a_hero_in_a_pit_is_lifted_out() {
+        // Ground at y = 0 with a 4 × 4 yd hole in it, and a 6 yd pit under the hole that the
+        // heightfield knows nothing of.
+        let mut ground = Mesh3::default();
+        ground_patch(&mut ground, Vec2::new(-40.0, -40.0), Vec2::new(-2.0, 40.0));
+        ground_patch(&mut ground, Vec2::new(2.0, -40.0), Vec2::new(40.0, 40.0));
+        ground_patch(&mut ground, Vec2::new(-2.0, -40.0), Vec2::new(2.0, -2.0));
+        ground_patch(&mut ground, Vec2::new(-2.0, 2.0), Vec2::new(2.0, 40.0));
+        let mut pit = Mesh3::default();
+        let (lo, hi) = (Vec3::new(-2.0, -6.0, -2.0), Vec3::new(2.0, 0.0, 2.0));
+        shell(&mut pit, lo, hi, -1.0, false);
+        let v = |x, z| Vec3::new(x, -6.0, z);
+        quad(
+            &mut pit,
+            [v(-2.0, -2.0), v(2.0, -2.0), v(2.0, 2.0), v(-2.0, 2.0)],
+            Vec3::Y,
+        );
+        let mut app = physics_world(vec![ground, pit]);
+
+        let feet = Vec3::new(0.0, -6.0, 0.0);
+        let arena = Vec3::new(10.0, 0.0, 0.0);
+        assert!(super::super::hero::fallen(&OpenField, feet, arena, false));
+        // Not on a cave battleground, nor on a map with no heightfield, nor in a cellar until
+        // the player is held against its walls.
+        assert!(!super::super::hero::fallen(&OpenField, feet, feet, true));
+        assert!(!super::super::hero::fallen(&NoField, feet, arena, true));
+        assert!(!super::super::hero::fallen(&Cellar, feet, arena, false));
+        assert!(super::super::hero::fallen(&Cellar, feet, arena, true));
+        // Standing on open ground is never a fall.
+        assert!(!super::super::hero::fallen(
+            &OpenField,
+            Vec3::ZERO,
+            arena,
+            true
+        ));
+
+        let (lifted, no_field) = app
+            .world_mut()
+            .run_system_once(move |c: WorldCollision| {
+                use super::super::hero::escape_point;
+                (
+                    escape_point(Some(&c), &OpenField, feet, 0.0, arena, 40.0, 0.0),
+                    escape_point(Some(&c), &NoField, feet, 3.0, arena, 40.0, 0.0),
+                )
+            })
+            .expect("the escapes run");
+        assert!(lifted.y.abs() < 1e-3, "lifted onto the ground, to {lifted}");
+        assert!(
+            lifted.x.abs() > 2.0 || lifted.z.abs() > 2.0,
+            "beside the pit, not over it: {lifted}"
+        );
+        assert!(
+            flat(lifted - feet).length() <= 6.0,
+            "and to the nearest ground, not far off: {lifted}"
+        );
+        assert!(
+            no_field.distance(arena) < 1e-3,
+            "with no outdoors anywhere the battleground's centre is the way out, not {no_field}"
+        );
+    }
+
+    /// Six hundred enemies, the horde's cap and then some, all within sweep range of the hero and
+    /// pressing on the house: a frame of their walk must stay a small share of a frame.
+    #[test]
+    fn six_hundred_enemies_walk_the_world_in_a_frame() {
+        let mut app = house_world();
+        let elapsed = app
+            .world_mut()
+            .run_system_once(|c: WorldCollision| {
+                let prey = Vec3::new(30.0, 0.0, 0.0);
+                let mut horde: Vec<(Vec3, Option<Detour>)> = (0..600)
+                    .map(|i| {
+                        let (row, col) = ((i / 30) as f32, (i % 30) as f32);
+                        (Vec3::new(-20.0 + row * 1.4, 0.0, -21.0 + col * 1.4), None)
+                    })
+                    .collect();
+                let dt = 1.0 / 60.0;
+                let frames = 10;
+                let start = std::time::Instant::now();
+                for frame in 0..frames {
+                    for (i, (pos, detour)) in horde.iter_mut().enumerate() {
+                        let stride = Stride {
+                            pos: *pos,
+                            chase: flat(prey - *pos).normalize_or_zero() * 5.0 * dt,
+                            shove: Vec3::ZERO,
+                            radius: 0.5,
+                            near: !i.is_multiple_of(3),
+                            side: 1.0,
+                        };
+                        *pos =
+                            walk_step(Some(&c), &OpenField, 0.0, stride, detour, frame as f32 * dt);
+                    }
+                }
+                start.elapsed() / frames
+            })
+            .expect("the horde walks");
+        println!("600 enemies: {elapsed:?} a frame");
+        // Generous for an unoptimised test build on a busy machine; a shipped frame is far less.
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "600 enemies took {elapsed:?} a frame"
+        );
     }
 
     #[test]
