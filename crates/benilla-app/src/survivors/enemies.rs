@@ -75,6 +75,42 @@ pub(super) struct Spawner {
     pub xp_carry: XpCarry,
     /// Spawns made round a standing hero so far: the heroes take turns ([`party::spawn_anchor`]).
     pub turn: u32,
+    /// The next host-authoritative micro-event.  It shares the horde's clock, so clients never
+    /// independently roll an event.
+    micro_next: f32,
+    micro_kind: u8,
+}
+
+/// The small rewards that punctuate a quiet stretch between boss and elite moments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MicroEvent {
+    GoldRush,
+    Shrine,
+    Swarm,
+    ElitePack,
+}
+
+fn micro_event(n: u8) -> MicroEvent {
+    match n % 4 {
+        0 => MicroEvent::GoldRush,
+        1 => MicroEvent::Shrine,
+        2 => MicroEvent::Swarm,
+        _ => MicroEvent::ElitePack,
+    }
+}
+
+#[cfg(test)]
+mod micro_tests {
+    use super::*;
+
+    #[test]
+    fn micro_events_rotate_through_all_rewards() {
+        assert_eq!(micro_event(0), MicroEvent::GoldRush);
+        assert_eq!(micro_event(1), MicroEvent::Shrine);
+        assert_eq!(micro_event(2), MicroEvent::Swarm);
+        assert_eq!(micro_event(3), MicroEvent::ElitePack);
+        assert_eq!(micro_event(4), MicroEvent::GoldRush);
+    }
 }
 
 /// An enemy died here, worth this much.
@@ -328,6 +364,103 @@ pub(super) fn spawn_enemies(
     let map = selection.stage_def();
     let roster = data::roster(selection.map);
     let pool = data::wave_pool(elapsed, roster.enemies.len());
+
+    // One deterministic host event every 45 seconds, held clear of a boss approach.  The event
+    // itself only creates ordinary replicated enemies/pickups, which is why co-op clients need
+    // no special wire message.
+    if elapsed >= spawner.micro_next {
+        let event = micro_event(spawner.micro_kind);
+        spawner.micro_kind = spawner.micro_kind.wrapping_add(1);
+        spawner.micro_next = elapsed + 45.0;
+        let hpos = party::spawn_anchor(&standing, &mut spawner.turn).unwrap_or(standing[0]);
+        let def = &roster.enemies[pool[0]];
+        match event {
+            MicroEvent::GoldRush => {
+                let at = party::spawn_point(
+                    hpos,
+                    rng.range(0.0, std::f32::consts::TAU),
+                    24.0,
+                    &everyone,
+                    leash,
+                );
+                let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                spawn_enemy(
+                    &mut commands,
+                    &mut run,
+                    def,
+                    pos,
+                    hpos,
+                    Rank::Elite,
+                    &opts,
+                    &mut spawner.xp_carry,
+                );
+                spawn_gem(
+                    &mut commands,
+                    run.guid(),
+                    pos + Vec3::X,
+                    GemKind::Gold(treasure::Coins::new(20, elapsed, rng.f32())),
+                );
+                run.banner = Some(("Gold Rush! Treasure Courier incoming!".into(), 4.0));
+            }
+            MicroEvent::Shrine => {
+                // A short-lived shrine is represented by its real gold game-object pickup: on
+                // touch it pays an immediate cache-sized reward while the banner names the buff.
+                spawn_gem(
+                    &mut commands,
+                    run.guid(),
+                    hpos + Vec3::Z * 10.0,
+                    GemKind::Heal(45.0),
+                );
+                run.banner = Some(("Shrine of Overcharge! Touch it for a blessing!".into(), 4.0));
+            }
+            MicroEvent::Swarm => {
+                for i in 0..12 {
+                    let at = party::spawn_point(
+                        hpos,
+                        i as f32 / 12.0 * std::f32::consts::TAU,
+                        22.0,
+                        &everyone,
+                        leash,
+                    );
+                    let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                    spawn_enemy(
+                        &mut commands,
+                        &mut run,
+                        def,
+                        pos,
+                        hpos,
+                        Rank::Horde,
+                        &opts,
+                        &mut spawner.xp_carry,
+                    );
+                }
+                run.banner = Some(("Swarm! Double experience prey!".into(), 4.0));
+            }
+            MicroEvent::ElitePack => {
+                for i in 0..3 {
+                    let at = party::spawn_point(
+                        hpos,
+                        i as f32 / 3.0 * std::f32::consts::TAU,
+                        24.0,
+                        &everyone,
+                        leash,
+                    );
+                    let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                    spawn_enemy(
+                        &mut commands,
+                        &mut run,
+                        def,
+                        pos,
+                        hpos,
+                        Rank::Elite,
+                        &opts,
+                        &mut spawner.xp_carry,
+                    );
+                }
+                run.banner = Some((format!("Rare pack! {} leads the hunt!", def.name), 4.0));
+            }
+        }
+    }
 
     // On a raid stage the last boss walks out after the trash ([`data::next_boss`]).
     while let Some(next) = data::next_boss(map, elapsed, run.bosses, roster.bosses.len()) {

@@ -1628,7 +1628,11 @@ pub(super) fn describe_card(
                 name: spell_name(spells, def.spell, def.key),
                 tag: "New spell".into(),
                 tag_color: new,
-                desc: format!("{}.", ability_body(def, &c)),
+                desc: format!(
+                    "{}.\n{}",
+                    ability_body(def, &c),
+                    super::synergy::build_progress(hero, super::synergy::build_school(def))
+                ),
                 ranks: Some((0, data::MAX_ABILITY_LEVEL)),
                 legendary: None,
             }
@@ -1675,7 +1679,11 @@ pub(super) fn describe_card(
                 name: spell_name(spells, o.def.spell, o.def.key),
                 tag: format!("Rank {} » {next}", o.level),
                 tag_color: Color::WHITE,
-                desc: lines.join("\n"),
+                desc: format!(
+                    "{}\n{}",
+                    lines.join("\n"),
+                    super::synergy::build_progress(hero, super::synergy::build_school(o.def))
+                ),
                 ranks: Some((o.level, data::MAX_ABILITY_LEVEL)),
                 legendary: data::legendary(o.def.key).filter(|_| next == data::MAX_ABILITY_LEVEL),
             }

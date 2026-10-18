@@ -154,9 +154,7 @@ pub(super) struct Piece {
     /// The display's inventory icon: an `Interface\Icons\` basename without extension.
     pub icon: &'static str,
     pub bonuses: &'static [Bonus],
-    /// The shared mechanics library's proc, by its key, once procs are wired through it; `None`
-    /// for every piece until then, and read by nothing yet.
-    #[allow(dead_code)]
+    /// The shared mechanics library's stable proc key.  Greens are intentionally stat-only.
     pub proc: Option<&'static str>,
 }
 
@@ -277,9 +275,143 @@ fn darkmoon_specs(key: &str) -> &'static [MechanicSpec] {
     }
 }
 
+/// The small, distinct procs on blue-and-better jewelry.  Their flat values are deliberately
+/// below a rank-one spell: a find changes the build's rhythm, not its whole damage budget.
+fn proc_specs(key: &str) -> &'static [MechanicSpec] {
+    const SPELL_BURST: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::Periodic { every: 18.0 },
+        Effect::Burst {
+            duration: 6.0,
+            bonuses: &[Bonus::new(StatKey::Damage, 0.12)],
+        },
+    )
+    .visual(23271)
+    .cooldown(18.0)];
+    const EXTRA_ATTACK: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnHit {
+            of: Of::Any,
+            chance: 0.10,
+        },
+        Effect::Echo { extra_casts: 1 },
+    )
+    .visual(15600)
+    .cooldown(4.0)];
+    const CRIT: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnCrit {
+            of: Of::Any,
+            chance: 1.0,
+        },
+        Effect::NextCast {
+            instant: false,
+            crit: true,
+            cooldown: 0.8,
+            aura: 12043,
+        },
+    )
+    .visual(12043)
+    .cooldown(12.0)];
+    const SHIELD: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnLowHealth { threshold: 0.35 },
+        Effect::Shield {
+            amount: 28.0,
+            duration: 5.0,
+        },
+    )
+    .visual(17)
+    .cooldown(30.0)];
+    const DECAYING_POWER: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::Periodic { every: 24.0 },
+        Effect::Burst {
+            duration: 8.0,
+            bonuses: &[Bonus::new(StatKey::Damage, 0.16)],
+        },
+    )
+    .visual(24571)
+    .cooldown(24.0)];
+    const RESET: [MechanicSpec; 1] =
+        [
+            MechanicSpec::new(Trigger::Periodic { every: 35.0 }, Effect::ResetCooldowns)
+                .visual(23513)
+                .cooldown(35.0),
+        ];
+    const HOLY_NOVA: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnKill {
+            of: Of::Any,
+            chance: 0.12,
+        },
+        Effect::Nova {
+            school: School::Holy,
+            radius: 4.0,
+            damage: 16.0,
+            knockback: 0.0,
+            cc: None,
+        },
+    )
+    .visual(23455)
+    .cooldown(5.0)];
+    const CHAIN: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnHit {
+            of: Of::Any,
+            chance: 0.12,
+        },
+        Effect::Chain {
+            jumps: 2,
+            falloff: 0.65,
+        },
+    )
+    .visual(421)
+    .cooldown(3.0)];
+    const HEAL: [MechanicSpec; 1] = [MechanicSpec::new(
+        Trigger::OnKill {
+            of: Of::Any,
+            chance: 0.15,
+        },
+        Effect::HealPulse {
+            radius: 10.0,
+            amount: 12.0,
+        },
+    )
+    .visual(2054)
+    .cooldown(5.0)];
+    match key {
+        "talisman_of_ephemeral_power" => &SPELL_BURST,
+        "hand_of_justice" | "band_of_accuria" => &EXTRA_ATTACK,
+        "blackhands_breadth" => &CRIT,
+        "royal_seal_of_eldre_thalas" => &SHIELD,
+        "zandalarian_hero_charm" => &DECAYING_POWER,
+        "eye_of_moam" => &RESET,
+        "mark_of_the_champion" => &HOLY_NOVA,
+        "painweaver_band" | "ring_of_spell_power" | "choker_of_the_fire_lord" => &CHAIN,
+        "diamond_flask" | "mark_of_fordring" | "gem_of_trapped_innocents" => &HEAL,
+        // The remaining real pieces keep a quiet, useful on-hit extra strike.  They still have
+        // individual card text and an independent cooldown when two are worn together.
+        _ => &EXTRA_ATTACK,
+    }
+}
+
+/// Compact card copy for an item's real-proc echo.  The mechanic is the authority; this is only
+/// the player-facing explanation.
+pub(super) fn proc_text(key: &str) -> &'static str {
+    match key {
+        "talisman_of_ephemeral_power" => "Every 18 sec: +12% spell power for 6 sec",
+        "hand_of_justice" => "10% on hit: strike again",
+        "band_of_accuria" => "10% on hit: strike again",
+        "blackhands_breadth" => "On crit: your next cast critically strikes",
+        "royal_seal_of_eldre_thalas" => "Below 35% health: absorb 28 damage",
+        "zandalarian_hero_charm" => "Every 24 sec: +16% spell power for 8 sec",
+        "eye_of_moam" => "Every 35 sec: reset ability cooldowns",
+        "mark_of_the_champion" => "Kills may smite nearby undead and demons",
+        _ => "12% on hit: strike again",
+    }
+}
+
 /// Give a worn Darkmoon trinket its run mechanic.
 pub(super) fn grant_darkmoon(hero: &mut HeroState, piece: &Piece) {
-    let specs = darkmoon_specs(piece.key);
+    let specs = if piece.proc.is_some() {
+        proc_specs(piece.key)
+    } else {
+        darkmoon_specs(piece.key)
+    };
     if !specs.is_empty() {
         mechanics::grant(
             hero,
@@ -850,9 +982,10 @@ mod tests {
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'));
             assert!(!p.icon.is_empty() && p.display_id > 0, "{}", p.name);
             assert_ne!(p.rarity, Rarity::Common, "{}", p.name);
-            assert!(
-                p.proc.is_none(),
-                "{}: procs wait for the mechanics library",
+            assert_eq!(
+                p.proc.is_some(),
+                matches!(p.rarity, Rarity::Rare | Rarity::Epic | Rarity::Legendary),
+                "{}",
                 p.name
             );
             assert_eq!(piece(p.key), Some(p));

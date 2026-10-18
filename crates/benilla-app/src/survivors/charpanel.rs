@@ -724,6 +724,17 @@ fn hero_column(p: &mut ChildSpawnerCommands, ctx: &TabCtx, sheet: &Sheet) {
             });
         });
     }
+    gap(p, 8.0);
+    heading(p, ctx, "Build synergies");
+    for school in SCHOOLS {
+        armory::para(
+            p,
+            ctx,
+            &super::synergy::build_progress(hero, school),
+            10.0,
+            GOLD,
+        );
+    }
     p.spawn(Node {
         flex_grow: 1.0,
         ..default()

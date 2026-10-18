@@ -22,6 +22,7 @@
 //! every number is the mode's own.
 
 mod buffs;
+mod build;
 mod debuffs;
 mod res;
 mod threat;
@@ -32,6 +33,7 @@ use super::partyui::MemberName;
 use super::{abilities, enemies, hero, party, HeroState, Phase};
 
 pub(super) use buffs::{bonuses as buff_bonuses, reflect, PartyBuff};
+pub(super) use build::{progress as build_progress, school as build_school};
 pub(super) use debuffs::{afflict, Debuffs};
 #[cfg(test)]
 pub(super) use threat::{taunts, TAUNT_SECS};

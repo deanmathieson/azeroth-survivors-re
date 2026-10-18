@@ -12,7 +12,7 @@ use super::super::gear::{rarity_label, ItemIcon};
 use super::super::hud::{self, HudFont};
 use super::super::profile::Profile;
 use super::super::{HeroState, LocalHero, Phase, Rng, Run};
-use super::{act, close, gold_instead, Act, Done, JewelOffer, Jewelry, Piece};
+use super::{act, close, gold_instead, proc_text, Act, Done, JewelOffer, Jewelry, Piece};
 
 const CARD_W: f32 = 220.0;
 const CARD_H: f32 = 300.0;
@@ -464,6 +464,14 @@ fn card(
         ));
         if let Some((text, color)) = note {
             c.spawn(hud::centered_bundle(f, text, 12.0, color));
+        }
+        if let Some(proc) = piece.proc {
+            c.spawn(hud::centered_bundle(
+                f,
+                proc_text(proc),
+                12.0,
+                hud::GOLD_TONE,
+            ));
         }
         c.spawn((
             Node {

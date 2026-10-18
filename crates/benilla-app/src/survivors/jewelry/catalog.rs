@@ -34,7 +34,13 @@ const fn pc(
         display_id,
         icon,
         bonuses,
-        proc: None,
+        // Greens are simple stat finds.  Every blue-or-better piece is a build choice and uses
+        // its stable key to select a modest mechanic in `jewelry::proc_specs`.
+        proc: match rarity {
+            Uncommon => None,
+            Rare | Epic | Legendary => Some(key),
+            Common => None,
+        },
     }
 }
 
