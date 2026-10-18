@@ -151,13 +151,15 @@ pub(in crate::survivors) struct NetStats {
 }
 
 /// A hero's part in a raid boss's fight that its own machine plays: the latest forced move (fear,
-/// knockback, mind control) by its count, and the seconds of fear or mind control left, in tenths
-/// (a dispel ends one early). Its debuffs travel as its auras ([`NetAuras`]).
+/// knockback, mind control) by its count, the seconds of fear or mind control left, in tenths
+/// (a dispel ends one early), and the share of its pace a slow takes off, in hundredths (Magma
+/// Shackles). Its debuffs travel as its auras ([`NetAuras`]).
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub(in crate::survivors) struct NetRaid {
     pub(in crate::survivors) moves: u16,
     pub(in crate::survivors) last: Option<ForcedMove>,
     pub(in crate::survivors) left_tenths: u16,
+    pub(in crate::survivors) slow_pct: u8,
 }
 
 impl NetRaid {
@@ -168,6 +170,7 @@ impl NetRaid {
             left_tenths: (raid.forced_left.max(0.0) * 10.0)
                 .ceil()
                 .min(f32::from(u16::MAX)) as u16,
+            slow_pct: (raid.slow.clamp(0.0, 1.0) * 100.0).round() as u8,
         }
     }
 
@@ -176,6 +179,7 @@ impl NetRaid {
         raid.moves = self.moves;
         raid.last_move = self.last;
         raid.forced_left = f32::from(self.left_tenths) / 10.0;
+        raid.slow = f32::from(self.slow_pct) / 100.0;
     }
 }
 
@@ -469,11 +473,13 @@ pub(in crate::survivors) struct NetRoulette {
     pub(in crate::survivors) prizes: Vec<(String, u8)>,
 }
 
-/// A boss's yell or emote: its text and its sound's place in [`super::super::raid::SOUNDS`].
+/// A boss's yell or emote: its text, its sound's place in [`super::super::raid::SOUNDS`], and the
+/// creature's own voice kit sounded instead (0 for none).
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct NetYell {
     pub(in crate::survivors) text: String,
     pub(in crate::survivors) sound: u8,
+    pub(in crate::survivors) kit: u32,
 }
 
 /// A cast edge's kind, as [`crate::creature_anim::CastEventKind`].
@@ -797,8 +803,24 @@ mod tests {
         let yell = NetYell {
             text: "Lucifron goes into a berserker rage!".into(),
             sound: 0,
+            kit: 0,
         };
         assert_eq!(round(&yell), yell);
+        // A slow reaches the machine that walks the hero, to the hundredth.
+        let slowed = HeroRaid {
+            slow: 0.5,
+            ..Default::default()
+        };
+        let net = round(&NetRaid::of(&slowed));
+        let mut mirror = HeroRaid::default();
+        net.apply(&mut mirror);
+        assert!((mirror.move_rate() - 0.5).abs() < 1e-6);
+        let roar = NetYell {
+            text: String::new(),
+            sound: 0,
+            kit: 3438,
+        };
+        assert_eq!(round(&roar), roar);
     }
 
     #[test]

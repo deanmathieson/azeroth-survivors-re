@@ -684,6 +684,7 @@ fn receive_yells(mut msgs: MessageReader<NetYell>, mut yells: MessageWriter<Yell
         yells.write(Yelled {
             text: y.text.clone(),
             sound: y.sound,
+            kit: y.kit,
         });
     }
 }

@@ -893,6 +893,18 @@ fn credit(dealt: &mut Vec<(Entity, f32)>, hero: Entity, amount: f32) {
     }
 }
 
+/// An enemy as a blow lands on it: its unit, its body, its marks, and whether it can't die yet
+/// ([`super::raid::Undying`]).
+type Struck = (
+    Entity,
+    &'static Guid,
+    &'static Transform,
+    &'static mut Enemy,
+    &'static mut ObjectStore,
+    &'static mut Marks,
+    Has<super::raid::Undying>,
+);
+
 /// Land every hit due: damage and its number, the over-time part, crowd control, the marks, and
 /// death with its loot. Each hero is credited with its own damage, and drains and leeches for it.
 /// An ability's own blows are recorded in [`Procs`] for its hero's mechanics, and put its class's
@@ -906,14 +918,7 @@ pub(super) fn apply_hits(
     mut heroes: Query<&mut HeroState>,
     mut pending: ResMut<PendingHits>,
     mut incoming: MessageReader<Hit>,
-    mut enemies: Query<(
-        Entity,
-        &Guid,
-        &Transform,
-        &mut Enemy,
-        &mut ObjectStore,
-        &mut Marks,
-    )>,
+    mut enemies: Query<Struck>,
     mut fx: Fx,
     mut loot: MessageWriter<Loot>,
     mut fields: MessageWriter<FieldChanged>,
@@ -976,7 +981,8 @@ pub(super) fn apply_hits(
         };
 
     for h in all {
-        let Ok((e, guid, tf, mut en, mut store, mut marks)) = enemies.get_mut(h.target) else {
+        let Ok((e, guid, tf, mut en, mut store, mut marks, undying)) = enemies.get_mut(h.target)
+        else {
             continue;
         };
         if en.dead {
@@ -1080,6 +1086,10 @@ pub(super) fn apply_hits(
                 }
             }
         }
+        // A raid add that can't die while its master stands keeps a sliver ([`super::raid`]).
+        if en.hp <= 0.0 && undying {
+            en.hp = 1.0;
+        }
         if en.hp <= 0.0 {
             kill(&mut commands, &mut run, e, tf.translation, &mut en);
             units::kill_unit(&mut store);
@@ -1091,7 +1101,7 @@ pub(super) fn apply_hits(
     // The over-time ticks, once a second each, credited by whose they are.
     let mut by: Vec<(Entity, f32)> = Vec::new();
     let mut by_school: Vec<(Entity, School, f32)> = Vec::new();
-    for (e, guid, tf, mut en, mut store, mut marks) in &mut enemies {
+    for (e, guid, tf, mut en, mut store, mut marks, undying) in &mut enemies {
         if en.dead || en.dots.is_empty() {
             continue;
         }
@@ -1123,6 +1133,9 @@ pub(super) fn apply_hits(
                 }
             }
             fx.number(e, dealt, false, COLOR_SPELL);
+            if en.hp <= 0.0 && undying {
+                en.hp = 1.0;
+            }
             if en.hp <= 0.0 {
                 kill(&mut commands, &mut run, e, tf.translation, en);
                 units::kill_unit(&mut store);

@@ -514,6 +514,8 @@ pub(super) fn heal(target: &mut HeroState, amount: f32) -> f32 {
         return 0.0;
     }
     let before = target.hp;
+    // A raid curse cuts the healing it receives ([`super::raid::HeroRaid::healing_rate`]).
+    let amount = amount * target.raid.healing_rate();
     target.hp = (target.hp + amount).min(target.stats().max_hp);
     (target.hp - before).max(0.0)
 }
@@ -843,10 +845,17 @@ pub(super) fn follow_leader(
                 tf.rotation = Quat::from_rotation_y(yaw_toward(v));
             }
         } else if hero.alive() && dt > 0.0 {
-            let to = flat(follow_spot(lead.translation, hero.player, extras) - tf.translation);
+            // A bot carrying a Living Bomb runs from the party until the fuse ([`super::raid`]).
+            let spot = match hero.raid.bomb() {
+                Some((_, radius)) => {
+                    super::raid::bomb_escape(tf.translation, lead.translation, radius)
+                }
+                None => follow_spot(lead.translation, hero.player, extras),
+            };
+            let to = flat(spot - tf.translation);
             let gap = to.length();
             if gap > FOLLOW_SLACK {
-                speed = hero.stats().speed * hero.haste_mult();
+                speed = hero.stats().speed * hero.haste_mult() * hero.raid.move_rate();
                 let dir = to / gap;
                 let step = dir * (speed * dt).min(gap);
                 let next = super::enemies::ground_on_collision(

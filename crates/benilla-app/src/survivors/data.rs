@@ -3060,9 +3060,44 @@ const MC_MAGMADAR_BOSSES: &[Foe] = &[
     giant("Magmadar", 10193, 63, 5.0, 1.8),
 ];
 
-/// The adds raid scripts call in, by name ([`super::raid::Does::Adds`]): Lucifron's Flamewaker
-/// Protectors (`CreatureDisplayInfo` 12029, the larger black salamander).
-const MC_ADDS: &[Foe] = &[foe("Flamewaker Protector", 12029, 62, 4.4, 2.0)];
+/// The five trash bosses before a Molten Core raid boss, then the boss.
+const fn mc_raid_bosses(boss: Foe) -> [Foe; 6] {
+    [
+        giant("Molten Giant", 8269, 62, 3.8, 1.35),
+        foe("Firelord", 12231, 62, 4.4, 2.0),
+        giant("Lava Surger", 12239, 62, 5.0, 1.2),
+        giant("Ancient Core Hound", 12189, 62, 4.0, 1.1),
+        foe("Flamewaker", 12030, 62, 4.2, 2.0),
+        boss,
+    ]
+}
+
+/// Gehennas (`CreatureDisplayInfo` 13030, the dark red Flamewaker salamander).
+const MC_GEHENNAS_BOSSES: &[Foe] = &mc_raid_bosses(foe("Gehennas", 13030, 63, 4.6, 2.4));
+/// Garr (12110, the great black rock elemental).
+const MC_GARR_BOSSES: &[Foe] = &mc_raid_bosses(giant("Garr", 12110, 63, 4.0, 1.6));
+/// Shazzrah (13032, the blue Flamewaker salamander).
+const MC_SHAZZRAH_BOSSES: &[Foe] = &mc_raid_bosses(foe("Shazzrah", 13032, 63, 4.8, 2.4));
+/// Baron Geddon (12129, the great fire elemental).
+const MC_GEDDON_BOSSES: &[Foe] = &mc_raid_bosses(giant("Baron Geddon", 12129, 63, 4.4, 1.5));
+/// Sulfuron Harbinger (12161, the great red Flamewaker salamander).
+const MC_SULFURON_BOSSES: &[Foe] = &mc_raid_bosses(foe("Sulfuron Harbinger", 12161, 63, 4.6, 2.2));
+/// Golemagg the Incinerator (11986, the great molten giant).
+const MC_GOLEMAGG_BOSSES: &[Foe] =
+    &mc_raid_bosses(giant("Golemagg the Incinerator", 11986, 63, 3.8, 1.9));
+
+/// The adds raid scripts call in, by name ([`super::raid::Does::Adds`]), each numbered at the boss
+/// ladder's first rung: Lucifron's Flamewaker Protectors (`CreatureDisplayInfo` 12029, the larger
+/// black salamander), Gehennas' Flamewakers (12030, red), Garr's Firesworn (12164, a small black
+/// rock elemental), Sulfuron's Flamewaker Priests (13029, dark red) and Golemagg's Core Ragers
+/// (11997, a core hound).
+const MC_ADDS: &[Foe] = &[
+    foe("Flamewaker Protector", 12029, 62, 4.4, 2.0),
+    foe("Flamewaker", 12030, 62, 4.2, 2.0),
+    foe("Firesworn", 12164, 62, 4.6, 1.2),
+    foe("Flamewaker Priest", 13029, 62, 4.0, 1.8),
+    giant("Core Rager", 11997, 62, 4.8, 1.4),
+];
 
 pub(crate) static MAPS: &[MapDef] = &[
     MapDef {
@@ -3760,6 +3795,81 @@ pub(crate) static MAPS: &[MapDef] = &[
         bosses: MC_BOSSES,
         raid: true,
     },
+    // The later raid bosses' rooms are the spike's caverns (docs/MC-SPIKE.md), by its guesses:
+    // Gehennas and Sulfuron the centre cavern, Shazzrah and Geddon the north-west, Garr the west
+    // and Golemagg the south-centre.
+    MapDef {
+        name: "Molten Core: Gehennas' Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [892.0, -600.0, -203.6],
+        floor: -203.6,
+        leash: 34.0,
+        victory: "Gehennas falls, and his curse with him.",
+        foes: MC_FOES,
+        bosses: MC_GEHENNAS_BOSSES,
+        raid: true,
+    },
+    MapDef {
+        name: "Molten Core: Garr's Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [732.0, -520.0, -217.0],
+        floor: -217.0,
+        leash: 40.0,
+        victory: "Garr crumbles, and his Firesworn gutter out.",
+        foes: MC_FOES,
+        bosses: MC_GARR_BOSSES,
+        raid: true,
+    },
+    MapDef {
+        name: "Molten Core: Shazzrah's Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [644.0, -816.0, -208.5],
+        floor: -208.5,
+        leash: 45.0,
+        victory: "Shazzrah's gates close.",
+        foes: MC_FOES,
+        bosses: MC_SHAZZRAH_BOSSES,
+        raid: true,
+    },
+    MapDef {
+        name: "Molten Core: Baron Geddon's Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [644.0, -816.0, -208.5],
+        floor: -208.5,
+        leash: 45.0,
+        victory: "Baron Geddon burns out.",
+        foes: MC_FOES,
+        bosses: MC_GEDDON_BOSSES,
+        raid: true,
+    },
+    MapDef {
+        name: "Molten Core: Sulfuron's Cavern",
+        zone: "Molten Core",
+        map: 409,
+        center: [892.0, -600.0, -203.6],
+        floor: -203.6,
+        leash: 34.0,
+        victory: "Ragnaros' herald falls silent.",
+        foes: MC_FOES,
+        bosses: MC_SULFURON_BOSSES,
+        raid: true,
+    },
+    MapDef {
+        name: "Molten Core: Golemagg's Ridge",
+        zone: "Molten Core",
+        map: 409,
+        center: [868.0, -1008.0, -196.4],
+        floor: -196.4,
+        leash: 34.0,
+        victory: "Golemagg falls, and his Core Ragers with him.",
+        foes: MC_FOES,
+        bosses: MC_GOLEMAGG_BOSSES,
+        raid: true,
+    },
 ];
 
 /// A battleground's horde and bosses with their numbers.
@@ -3805,9 +3915,12 @@ static ROSTERS: std::sync::LazyLock<Vec<Roster>> = std::sync::LazyLock::new(|| {
                 Roster {
                     enemies: ladder(m.foes, ENEMIES),
                     bosses: ladder(m.bosses, BOSSES),
-                    // Numbered at the ladder's first boss rung: an add, not a boss.
+                    // Each numbered at the ladder's first boss rung: an add, not a boss.
                     adds: if m.map == 409 {
-                        ladder(MC_ADDS, BOSSES)
+                        MC_ADDS
+                            .iter()
+                            .flat_map(|add| ladder(std::slice::from_ref(add), BOSSES))
+                            .collect()
                     } else {
                         Vec::new()
                     },
@@ -3982,6 +4095,12 @@ mod arena_probe {
             .chain(super::MC_BOSSES)
             .chain(super::MC_LUCIFRON_BOSSES)
             .chain(super::MC_MAGMADAR_BOSSES)
+            .chain(super::MC_GEHENNAS_BOSSES)
+            .chain(super::MC_GARR_BOSSES)
+            .chain(super::MC_SHAZZRAH_BOSSES)
+            .chain(super::MC_GEDDON_BOSSES)
+            .chain(super::MC_SULFURON_BOSSES)
+            .chain(super::MC_GOLEMAGG_BOSSES)
             .chain(super::MC_ADDS)
         {
             assert!(

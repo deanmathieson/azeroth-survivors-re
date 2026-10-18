@@ -1126,6 +1126,7 @@ fn a_raid_telegraph_a_fear_and_a_yell_reach_the_client_over_loopback() {
     host_app.world_mut().write_message(Yelled {
         text: "Magmadar goes into a killing frenzy!".into(),
         sound: 0,
+        kit: 0,
     });
 
     let mut yells: Vec<NetYell> = Vec::new();
@@ -1149,7 +1150,8 @@ fn a_raid_telegraph_a_fear_and_a_yell_reach_the_client_over_loopback() {
         yells[0],
         NetYell {
             text: "Magmadar goes into a killing frenzy!".into(),
-            sound: 0
+            sound: 0,
+            kit: 0,
         }
     );
     assert_eq!(raid::SOUNDS[0], "RaidWarning");

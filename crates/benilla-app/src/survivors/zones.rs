@@ -81,6 +81,12 @@ const TIERS: &[(&str, Tier)] = &[
     ("Molten Core: Majordomo's Camp", Tier::Raid),
     ("Molten Core: Ragnaros's Dry Ledge", Tier::Raid),
     ("Molten Core: Ragnaros' Lair", Tier::Raid),
+    ("Molten Core: Gehennas' Cavern", Tier::Raid),
+    ("Molten Core: Garr's Cavern", Tier::Raid),
+    ("Molten Core: Shazzrah's Cavern", Tier::Raid),
+    ("Molten Core: Baron Geddon's Cavern", Tier::Raid),
+    ("Molten Core: Sulfuron's Cavern", Tier::Raid),
+    ("Molten Core: Golemagg's Ridge", Tier::Raid),
 ];
 
 fn tier_of(name: &str) -> Option<Tier> {
@@ -381,7 +387,7 @@ mod tests {
         let count = |t| (0..data::MAPS.len()).filter(|&i| map_tier(i) == t).count();
         assert_eq!(
             [Tier::Starting, Tier::Frontier, Tier::Elite, Tier::Raid].map(count),
-            [6, 4, 3, 13]
+            [6, 4, 3, 19]
         );
     }
 

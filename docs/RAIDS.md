@@ -1,6 +1,6 @@
 # Raid mode: Molten Core
 
-Status: design only; nothing is built yet. This is the plan for the first raid. The ROADMAP's "Raid night" section points here.
+Status: the boss mechanics library (`survivors/raid/`) and eight Molten Core bosses are built, each as its own raid stage (map 409): Lucifron, Magmadar, Gehennas, Garr, Shazzrah, Baron Geddon, Sulfuron Harbinger and Golemagg. Each boss walks out at 6:00 and its kill wins the stage. Majordomo, Ragnaros, the raid shell (segments, lockout, wipes), loot and the social layer are still design only. This is the plan for the first raid. The ROADMAP's "Raid night" section points here.
 
 Ground rules, as for the rest of the fork:
 
@@ -170,6 +170,7 @@ A Flamewaker caster with two Flamewaker guards. NPC 12259 (verify).
 - **Soft enrage:** after 2:00, Rain of Fire drops five circles. **Hard:** 3:00.
 - **Loot:** T1 hands or feet; one shared-pool roll.
 - **Spells (verify against Spell.dbc):** Gehennas' Curse 19716, Rain of Fire 19717, Shadow Bolt 19728, Fist of Ragnaros 20277.
+- **Status: built** (stage "Molten Core: Gehennas' Cavern", the spike's centre cavern). Gehennas' Curse (every 25 s on everyone within 30 yd, healing received x0.25 for 30 s, a curse), Rain of Fire (8 yd circles on the curse count with a 2 s wind-up, burning 6 s; five from 2:00), Shadow Bolt (a 3 yd circle under a hero off the tank, 30%), two Flamewakers as plain adds, Berserk at 3:00. Display 13030; aggro and death are the salamander's `NagaAggro`/`NagaDeath` kits. Not built: the Flamewakers' Sunder Armor and Fist of Ragnaros.
 
 ### 4. Garr
 
@@ -186,6 +187,7 @@ The core giant and his Firesworn. NPC 12057 (verify).
 - **Soft enrage:** from 2:30, Garr detonates one living Firesworn every 15 s (Massive Eruption, 20 yd). **Hard:** 4:00.
 - **Loot:** T1 head. **Bindings of the Windseeker (left)** at a low chance (section 4). Gutgore Ripper, Aurastone Hammer, Drillborer Disk, Brutality Blade.
 - **Spells (verify against Spell.dbc):** Antimagic Pulse 19492, Magma Shackles 19496, Eruption 19497, Immolate 20294, Separation Anxiety 23492, Massive Eruption 20483.
+- **Status: built** (stage "Molten Core: Garr's Cavern", the west cavern). Firesworn 3/4/5/6/8 by party size; each erupts where it falls (a red 10 yd ring, 1.5 s, 25% to heroes and 60% of their health to the other Firesworn inside, so neighbours chain) and gives Garr a stack of Enrage 19516 (+15% damage). Antimagic Pulse (a blue 20 yd ring that strips shields and timed buffs), Magma Shackles (a yellow 15 yd ring, half pace for 6 s, magic), Massive Eruption detonating the nearest Firesworn every 15 s from 2:30, Berserk at 4:00. Display 12110, Firesworn 12164. Not built: Separation Anxiety, Banish, Immolate.
 
 ### 5. Shazzrah
 
@@ -202,6 +204,7 @@ The Flamewaker arcanist. NPC 12264 (verify).
 - **Soft enrage:** after 2:00 he blinks every 12 s. **Hard:** 3:00.
 - **Loot:** T1 hands or feet; one shared-pool roll.
 - **Spells (verify against Spell.dbc):** Arcane Explosion 19712, Shazzrah's Curse 19713, Magic Grounding 19714, Counterspell 19715, Gate of Shazzrah 23138.
+- **Status: built** (stage "Molten Core: Shazzrah's Cavern", the north-west cavern). Arcane Explosion (12 yd ring every 6 s), Shazzrah's Curse (magic damage taken x2 for 20 s, a curse), Counterspell (a purple 15 yd ring; heroes inside cast nothing for 2 s), Gate of Shazzrah (a purple sigil under a hero off the tank; 1.5 s later he stands there with his taunt dropped and an Arcane Explosion ring winds up; every 20 s, every 12 s from 2:00), Berserk at 3:00. Gate uses 23139, the blink with a visual (23138 has none; this client's Spell.dbc has no spell named Magic Grounding). Display 13032. Not built: Magic Grounding.
 
 ### 6. Baron Geddon
 
@@ -217,6 +220,7 @@ The fire elemental baron. NPC 12056 (verify).
 - **Soft enrage:** after 2:30 the bomb comes every 10 s. **Hard:** 3:30.
 - **Loot:** T1 shoulders. **Bindings of the Windseeker (right)** at a low chance.
 - **Spells (verify against Spell.dbc):** Living Bomb 20475, Inferno 19695, Ignite Mana 19659, Armageddon 20478.
+- **Status: built** (stage "Molten Core: Baron Geddon's Cavern", the north-west cavern). Living Bomb every 15 s (10 s from 2:30) on a random hero: a red 12 yd ring rides on the carrier and fills over the 8 s fuse, with the seconds counted over its head; at 0 the allies inside take 50%, the carrier 20%, and the horde inside (not bosses) 50% of its health. Party bots carrying it run 18 yd straight out from their leader. Inferno (rooted, a 2 s glow, then 8 pulses of a 20 yd ring a second apart, each 25% harder), Ignite Mana (cooldowns a third slower for 10 s, magic, on the curse count), the Armageddon emote at 2%, Berserk at 3:30. Display 12129. Not built: Armageddon's blast.
 
 ### 7. Sulfuron Harbinger
 
@@ -233,6 +237,7 @@ Ragnaros's herald and his four Flamewaker Priests. NPC 12098 (verify).
 - **Soft enrage:** Inspire also triggers at 2:30. **Hard:** 3:30.
 - **Loot:** T1 shoulders; one shared-pool roll.
 - **Spells (verify against Spell.dbc):** Demoralizing Shout 19778, Inspire 19779, Hand of Ragnaros 19780, Flame Spear 19781, Dark Mending 19775, Shadow Word: Pain 19776, Dark Strike 19777.
+- **Status: built** (stage "Molten Core: Sulfuron's Cavern", the centre cavern). Four Flamewaker Priests cast Dark Mending (a blue ring fills over the 2.5 s cast; a stun or fear on the Priest breaks it; done, it heals the most hurt of Sulfuron and the Priests within 40 yd 15%). Flame Spear (an orange 6 yd ring under a hero, 20%), Hand of Ragnaros (a yellow 12 yd ring, then a 2 s stun), Inspire (Sulfuron and the Priests within 40 yd act 50% faster) below half health and at 2:30, Berserk at 3:30. Display 12161, Priests 13029. Not built: Demoralizing Shout, the Priests' Shadow Word: Pain, the role interrupts.
 
 ### 8. Golemagg the Incinerator
 
@@ -248,6 +253,7 @@ The core giant and his two Core Ragers. NPC 11988 (verify).
 - **Soft enrage:** Earthquake. **Hard:** 4:00.
 - **Loot:** T1 chest and legs; a **Sulfuron Ingot** (for Sulfuras); one shared-pool roll.
 - **Spells (verify against Spell.dbc):** Magma Splash 13879, Pyroblast 20228, Earthquake 19798, Golemagg's Trust 20553, Mangle 19820.
+- **Status: built** (stage "Molten Core: Golemagg's Ridge", the south-centre cavern). Magma Splash stacks on his tank (13880, the debuff with a visual; 1.2% a second a stack, SWAP at 6, falling off solo), two Core Ragers (display 11997) that Mangle in a cone and can't die while he stands (a killing blow leaves a sliver, below half they heal to full with "refuses to die while its master is in trouble"; they fall with him), Earthquake (a 15 yd ring every 6 s, 20%) below 10%, Berserk at 4:00. Display 11986. Not built: Pyroblast's stack-to-split, Golemagg's Trust.
 
 ### 9. Majordomo Executus
 
@@ -286,6 +292,8 @@ The Firelord, waist-deep in his lava pool. NPC 11502 (verify).
 - **Soft enrage:** after his second emergence the lava rises, and a ring telegraph shrinks the safe platform by 2 yd every 15 s. **Hard:** 10:00 of total fight time.
 - **Loot:** the Eye of Sulfuras, Band of Accuria, Choker of the Fire Lord, Onslaught Girdle, Bonereaver's Edge, Perdition's Blade, the class's existing Epic (T2) legs from `gear/catalog.rs`, the Essence of the Firelord for a hero on the Thunderfury quest, and Elementium Ore at a low chance (section 4).
 - **Spells (verify against Spell.dbc):** Elemental Fire 20564, Magma Blast 20565, Wrath of Ragnaros 20566, Lava Burst 21158, Submerge 21107, Melt Weapon 21388. Sons of Flame NPC 12143 (verify).
+
+**Voices.** Each built boss roars its creature's own aggro kit as it walks out and gives its death cry as it falls, both from `CreatureSoundData` through its display (checked in the raid tests).
 
 **Yells.** In 1.12 only Majordomo and Ragnaros are voiced (verify). The other bosses use their emote text and the raid-warning sound. Every line's exact text and sound must come from the client's `SoundEntries.dbc` and the cores' `script_texts`, not from this doc. Which line plays at which moment is our staging:
 
@@ -360,6 +368,8 @@ pub(crate) struct BossAbility {
 | **Tank-swap stacks** | debuff, added by (the boss's swing on its target), per-stack effect, decay when not targeted (secs per stack), warn at, cap | Magma Splash, Sunder Armor |
 | **Yell / emote** | text, sound kit (`SoundEntries.dbc`), channel (yell, emote, raid warning), on (ability, phase, a hero dying, pull, kill), cooldown | Majordomo, Ragnaros, all emotes |
 | **Cleansing font** | position, radius, stand secs, removes (curse, magic), per-hero cooldown | every boss room (fallback dispel) |
+
+Built so far (`survivors/raid/mod.rs`): ground circles, cones, lines and donuts with pools; blows that also silence, stun, slow or strip buffs, and that can hurt the horde; curses and magic for the dispel pulses (cooldown rate, healing received, magic damage taken, delayed doom, mind control); the debuff bomb with its riding ring; tank-swap stacks; fear and knockback; add waves (party-scaled with a count of 0), an add's eruption on death and its master's enrage, adds that can't die while their master stands; the blink to a sigil; the rooted pulsing Inferno; the interruptible heal and Inspire; phases on health and time; Frenzy; the hard enrage; yells with a sound kit or the creature's own voice. In co-op the host runs every script; telegraphs replicate as entities, forced moves and slows as each hero's `NetRaid`, and yells as `NetYell` (co-op PROTOCOL 15).
 
 **Engine seams this uses or adds:**
 

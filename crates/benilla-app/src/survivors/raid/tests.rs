@@ -86,15 +86,25 @@ fn each_shape_holds_what_lies_inside_it() {
 
 #[test]
 fn every_scripted_telegraph_warns_long_enough_to_read() {
-    for script in [&LUCIFRON, &PROTECTOR, &MAGMADAR] {
+    for script in SCRIPTS {
         for a in script.abilities {
-            if let Does::Ground {
-                shape,
-                windup,
-                blow,
-                ..
-            } = a.does
-            {
+            let warned = match a.does {
+                Does::Ground {
+                    shape,
+                    windup,
+                    blow,
+                    ..
+                } => Some((shape, windup, blow)),
+                Does::Blink { windup, blow, .. } => Some((
+                    Shape::Circle {
+                        radius: SIGIL_RADIUS,
+                    },
+                    windup,
+                    blow,
+                )),
+                _ => None,
+            };
+            if let Some((shape, windup, blow)) = warned {
                 assert!(
                     windup >= shape.min_windup(),
                     "{}: {} winds up {windup}s",
@@ -103,6 +113,16 @@ fn every_scripted_telegraph_warns_long_enough_to_read() {
                 );
                 assert!(blow.damage <= 0.35, "{}: {}", script.name, a.name);
             }
+            // A blink's blow warns as it arrives; an Inferno glows before its first pulse.
+            let circle = Shape::Circle { radius: 1.0 }.min_windup();
+            if let Does::Inferno { windup, .. } = a.does {
+                assert!(windup >= circle, "{}", script.name);
+            }
+            assert!(BLINK_BLOW_WINDUP >= circle);
+        }
+        if let Some(e) = script.erupt {
+            assert!(e.windup >= e.shape.min_windup(), "{}", script.name);
+            assert!(e.blow.damage <= 0.35, "{}", script.name);
         }
     }
 }
@@ -113,6 +133,9 @@ fn every_scripted_telegraph_warns_long_enough_to_read() {
 
 static TEST_SCRIPT: Script = Script {
     name: "Test Dummy",
+    death: None,
+    erupt: None,
+    master: None,
     abilities: &[
         BossAbility::new(
             "Tick",
@@ -535,6 +558,7 @@ fn raid_world(dt: f32, now: f32, party: u8) -> World {
     world.init_resource::<Messages<crate::creature_anim::SpellGoTargets>>();
     world.init_resource::<Messages<crate::creature_anim::SwingMessage>>();
     world.init_resource::<Messages<crate::combat_text::CombatTextSpawn>>();
+    world.init_resource::<Messages<Hit>>();
     world
 }
 
@@ -546,15 +570,21 @@ fn hero_in(world: &mut World, state: HeroState, at: Vec3) -> Entity {
 
 /// A boss standing at the origin, as the pools' source.
 fn boss_in(world: &mut World) -> Entity {
-    let en = Enemy {
-        def: &data::roster(0).bosses[0],
+    let en = enemy_of(&data::roster(0).bosses[0], true);
+    world.spawn((en, Transform::default())).id()
+}
+
+/// A test enemy of `def` with 1000 health, a boss or not.
+fn enemy_of(def: &'static data::EnemyDef, boss: bool) -> Enemy {
+    Enemy {
+        def,
         hp: 1000.0,
         max_hp: 1000.0,
         speed: 0.0,
-        damage: 0.0,
+        damage: 10.0,
         radius: 1.0,
         xp: 1,
-        boss: true,
+        boss,
         elite: false,
         guardian: false,
         dormant: false,
@@ -570,8 +600,7 @@ fn boss_in(world: &mut World) -> Entity {
         dead: false,
         taunted: None,
         debuffs: Default::default(),
-    };
-    world.spawn((en, Transform::default())).id()
+    }
 }
 
 fn hp(world: &World, e: Entity) -> f32 {
@@ -590,6 +619,7 @@ fn a_living_bomb_hurts_the_allies_near_its_carrier_not_those_who_ran() {
             radius: 12.0,
             allies: 0.6,
             carrier: 0.25,
+            foes: 0.0,
         },
     ));
     let carrier = hero_in(&mut world, carrier, Vec3::ZERO);
@@ -859,7 +889,7 @@ fn lucifron_and_magmadar_close_their_stages_rosters_with_lucifrons_protectors_as
     let frames = crate::survivors::bossbar::frames(&[info], lucifron.bosses.len());
     assert!(frames[0].final_boss && frames[0].name == "Lucifron");
     // Every add a script calls in is on its stage's roster, and numbers back to itself.
-    for script in [&LUCIFRON, &PROTECTOR, &MAGMADAR] {
+    for script in SCRIPTS {
         for a in script.abilities {
             if let Does::Adds { name, .. } = a.does {
                 let def = lucifron.adds.iter().find(|d| d.name == name).unwrap();
@@ -903,6 +933,28 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         (TRANQUILIZING_SHOT, "Tranquilizing Shot"),
         (TREMOR_TOTEM, "Tremor Totem"),
         (POOL_VISUAL, "Flamestrike"),
+        (GEHENNAS_CURSE, "Gehennas' Curse"),
+        (RAIN_OF_FIRE, "Rain of Fire"),
+        (SHADOW_BOLT, "Shadow Bolt"),
+        (ANTIMAGIC_PULSE, "Antimagic Pulse"),
+        (MAGMA_SHACKLES, "Magma Shackles"),
+        (ERUPTION, "Eruption"),
+        (GARR_ENRAGE, "Enrage"),
+        (MASSIVE_ERUPTION, "Massive Eruption"),
+        (ARCANE_EXPLOSION, "Arcane Explosion"),
+        (SHAZZRAHS_CURSE, "Shazzrah's Curse"),
+        (COUNTERSPELL, "Counterspell"),
+        (GATE_OF_SHAZZRAH, "Gate of Shazzrah"),
+        (LIVING_BOMB, "Living Bomb"),
+        (INFERNO, "Inferno"),
+        (IGNITE_MANA, "Ignite Mana"),
+        (DARK_MENDING, "Dark Mending"),
+        (INSPIRE, "Inspire"),
+        (HAND_OF_RAGNAROS, "Hand of Ragnaros"),
+        (FLAME_SPEAR, "Flame Spear"),
+        (MAGMA_SPLASH, "Magma Splash"),
+        (EARTHQUAKE, "Earthquake"),
+        (MANGLE, "Mangle"),
     ];
     let mut bad = Vec::new();
     for (id, name) in named {
@@ -916,8 +968,9 @@ fn every_raid_spell_and_sound_is_the_real_one() {
             None => bad.push(format!("{id} ({name}) is not in Spell.dbc")),
         }
     }
-    // Every scripted spell is one of those, under its own name.
-    for script in [&LUCIFRON, &PROTECTOR, &MAGMADAR] {
+    // Every scripted spell is one of those, under its own name; and so is every spell a blink
+    // lands, a fall sets off or a master gains.
+    for script in SCRIPTS {
         for a in script.abilities.iter().filter(|a| a.spell != 0) {
             if !named
                 .iter()
@@ -928,6 +981,18 @@ fn every_raid_spell_and_sound_is_the_real_one() {
                     script.name, a.name, a.spell
                 ));
             }
+            if let Does::Blink { then, .. } = a.does {
+                if !named.iter().any(|&(id, _)| id == then) {
+                    bad.push(format!("{}: {then} is unchecked", script.name));
+                }
+            }
+        }
+        let erupt = script.erupt.map(|e| e.spell);
+        let enrage = script.master.and_then(|m| m.enrage).map(|(spell, _)| spell);
+        for spell in erupt.into_iter().chain(enrage) {
+            if !named.iter().any(|&(id, _)| id == spell) {
+                bad.push(format!("{}: {spell} is unchecked", script.name));
+            }
         }
     }
     // Curses and magic are what the 1.12 spells are: Dispel Type 2 curse, 1 magic.
@@ -935,6 +1000,10 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         (LUCIFRONS_CURSE, 2),
         (IMPENDING_DOOM, 1),
         (DOMINATE_MIND, 1),
+        (GEHENNAS_CURSE, 2),
+        (SHAZZRAHS_CURSE, 2),
+        (MAGMA_SHACKLES, 1),
+        (IGNITE_MANA, 1),
     ] {
         if spells.get(id).map(|d| d.dispel) != Some(kind) {
             bad.push(format!("{id}: dispel type is not {kind}"));
@@ -955,8 +1024,25 @@ fn every_raid_spell_and_sound_is_the_real_one() {
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
+/// A stage's final boss.
+fn final_boss(stage: &str) -> &'static data::EnemyDef {
+    data::roster(stage_of(stage)).bosses.last().unwrap()
+}
+
+/// A Molten Core add, by name.
+fn add_named(name: &str) -> &'static data::EnemyDef {
+    data::roster(stage_of("Molten Core: Lucifron's Cavern"))
+        .adds
+        .iter()
+        .find(|d| d.name == name)
+        .unwrap()
+}
+
 /// The bosses wear their 1.12 creature displays: Lucifron and his Protectors the Flamewaker
-/// salamander in black, Magmadar the core hound.
+/// salamander in black, Magmadar the core hound, Gehennas the salamander in dark red, Garr the
+/// black rock elemental and his Firesworn a small one, Shazzrah the salamander in blue, Baron
+/// Geddon the fire elemental, Sulfuron the salamander in red and his Priests in dark red, Golemagg
+/// the molten giant and his Core Ragers core hounds.
 #[test]
 fn the_bosses_wear_their_creature_displays() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -969,6 +1055,44 @@ fn the_bosses_wear_their_creature_displays() {
         (lucifron.bosses.last().unwrap(), "salamander", "black"),
         (&lucifron.adds[0], "salamander", "black"),
         (magmadar.bosses.last().unwrap(), "felbeast", "redblack"),
+        (
+            final_boss("Molten Core: Gehennas' Cavern"),
+            "salamander",
+            "darkred",
+        ),
+        (add_named(FLAMEWAKER_NAME), "salamander", "skinred"),
+        (
+            final_boss("Molten Core: Garr's Cavern"),
+            "elementalearth",
+            "rockelementalskinblack",
+        ),
+        (
+            add_named(FIRESWORN_NAME),
+            "elementalearth",
+            "rockelementalskinblack",
+        ),
+        (
+            final_boss("Molten Core: Shazzrah's Cavern"),
+            "salamander",
+            "blue",
+        ),
+        (
+            final_boss("Molten Core: Baron Geddon's Cavern"),
+            "fireelemental",
+            "fireelementalskin",
+        ),
+        (
+            final_boss("Molten Core: Sulfuron's Cavern"),
+            "salamander",
+            "skinred",
+        ),
+        (add_named(PRIEST_NAME), "salamander", "darkred"),
+        (
+            final_boss("Molten Core: Golemagg's Ridge"),
+            "mountaingiant",
+            "moltengiant",
+        ),
+        (add_named(CORE_RAGER_NAME), "felbeast", "redblack"),
     ];
     for (def, model, skin) in cases {
         let m = creatures
@@ -1004,6 +1128,14 @@ fn the_raid_systems_initialise_without_conflicting_access() {
     heroes.initialize(&mut world);
     let mut attach = IntoSystem::into_system(attach_scripts);
     attach.initialize(&mut world);
+    let mut blinks = IntoSystem::into_system(land_blinks);
+    blinks.initialize(&mut world);
+    let mut bombs = IntoSystem::into_system(follow_bombs);
+    bombs.initialize(&mut world);
+    let mut guard = IntoSystem::into_system(guard_undying);
+    guard.initialize(&mut world);
+    let mut deaths = IntoSystem::into_system(on_deaths);
+    deaths.initialize(&mut world);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1032,7 +1164,7 @@ fn walk_outs(stage: usize, secs: f32) -> Vec<(usize, f32)> {
 }
 
 #[test]
-fn only_the_three_molten_core_raid_stages_are_raids() {
+fn only_the_molten_core_boss_stages_are_raids() {
     let raids: Vec<&str> = data::MAPS
         .iter()
         .filter(|m| m.raid)
@@ -1043,9 +1175,29 @@ fn only_the_three_molten_core_raid_stages_are_raids() {
         [
             "Molten Core: Lucifron's Cavern",
             "Molten Core: Magmadar's Lair",
-            "Molten Core: Ragnaros' Lair"
+            "Molten Core: Ragnaros' Lair",
+            "Molten Core: Gehennas' Cavern",
+            "Molten Core: Garr's Cavern",
+            "Molten Core: Shazzrah's Cavern",
+            "Molten Core: Baron Geddon's Cavern",
+            "Molten Core: Sulfuron's Cavern",
+            "Molten Core: Golemagg's Ridge",
         ]
     );
+    // Each new boss closes its own stage's roster.
+    for (stage, boss) in [
+        ("Molten Core: Gehennas' Cavern", "Gehennas"),
+        ("Molten Core: Garr's Cavern", "Garr"),
+        ("Molten Core: Shazzrah's Cavern", "Shazzrah"),
+        ("Molten Core: Baron Geddon's Cavern", "Baron Geddon"),
+        ("Molten Core: Sulfuron's Cavern", "Sulfuron Harbinger"),
+        ("Molten Core: Golemagg's Ridge", "Golemagg the Incinerator"),
+    ] {
+        assert_eq!(final_boss(stage).name, boss);
+        assert!(script_for(boss).is_some(), "{boss} has a script");
+        let outs = walk_outs(stage_of(stage), 900.0);
+        assert_eq!(outs.last().map(|o| o.1), Some(data::RAID_BOSS_SECS));
+    }
 }
 
 #[test]
@@ -1155,4 +1307,596 @@ fn a_wiped_raid_is_lost_as_anywhere() {
     world.get_mut::<HeroState>(hero).unwrap().dead_t = Some(10.0);
     world.run_system_once(hero::hero_vitals).unwrap();
     assert!(!world.resource::<Run>().won);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gehennas, Garr, Shazzrah, Baron Geddon, Sulfuron Harbinger, Golemagg
+// ---------------------------------------------------------------------------------------------
+
+/// An enemy of `def` at `at`, with 1000 health.
+fn foe_at(world: &mut World, def: &'static data::EnemyDef, at: Vec3, boss: bool) -> Entity {
+    world
+        .spawn((enemy_of(def, boss), Transform::from_translation(at)))
+        .id()
+}
+
+/// A scripted foe of `def` at `at`, with its brain and marks.
+fn scripted_at(world: &mut World, def: &'static data::EnemyDef, at: Vec3) -> Entity {
+    let e = foe_at(world, def, at, false);
+    let script = script_for(def.name).unwrap();
+    world
+        .entity_mut(e)
+        .insert((RaidBoss::new(script), Marks::debuffs()));
+    e
+}
+
+fn drain_hits(world: &mut World) -> Vec<Hit> {
+    world.resource_mut::<Messages<Hit>>().drain().collect()
+}
+
+fn drain_yells(world: &mut World) -> Vec<Yelled> {
+    world.resource_mut::<Messages<Yelled>>().drain().collect()
+}
+
+#[test]
+fn every_new_boss_roars_as_it_walks_out_and_cries_as_it_falls() {
+    for (script, aggro, death) in [
+        (&GEHENNAS, SALAMANDER_AGGRO, SALAMANDER_DEATH),
+        (&GARR, ROCK_AGGRO, ROCK_DEATH),
+        (&SHAZZRAH, SALAMANDER_AGGRO, SALAMANDER_DEATH),
+        (&BARON_GEDDON, FIRE_AGGRO, FIRE_DEATH),
+        (&SULFURON, SALAMANDER_AGGRO, SALAMANDER_DEATH),
+        (&GOLEMAGG, GIANT_AGGRO, GIANT_DEATH),
+    ] {
+        let mut brain = RaidBoss::new(script);
+        let first: Vec<&BossAbility> = brain.due(0.0625, 1.0, 1);
+        let roar = first
+            .iter()
+            .find_map(|a| a.yell.filter(|y| y.kit != 0))
+            .unwrap_or_else(|| panic!("{} roars on its first beat", script.name));
+        let y = Yelled::of(&roar, script.name);
+        assert_eq!((y.kit, y.text.as_str()), (aggro, ""), "{}", script.name);
+        assert_eq!(script.death.map(|d| d.kit), Some(death), "{}", script.name);
+    }
+}
+
+#[test]
+fn gehennas_curses_rains_fire_bolts_and_enrages_on_schedule() {
+    let fired = schedule(&GEHENNAS, 185.0, 5, |_| 1.0);
+    assert_eq!(times(&fired, "Flamewakers"), [0.5]);
+    assert_eq!(
+        times(&fired, "Gehennas' Curse"),
+        [8.0, 33.0, 58.0, 83.0, 108.0, 133.0, 158.0, 183.0]
+    );
+    assert_eq!(times(&fired, "Rain of Fire")[..3], [5.0, 17.0, 29.0]);
+    assert_eq!(times(&fired, "Shadow Bolt")[..3], [7.0, 17.0, 27.0]);
+    assert_eq!(times(&fired, "Soft enrage"), [120.0]);
+    assert_eq!(times(&fired, "Berserk"), [180.0]);
+    // Before the soft enrage the rain falls on the curse count, after it on five.
+    let mut brain = RaidBoss::new(&GEHENNAS);
+    let mut picks = Vec::new();
+    for _ in 0..(185.0 / 0.0625) as usize {
+        for a in brain.due(0.0625, 1.0, 5) {
+            if a.name == "Rain of Fire" {
+                picks.push((brain.clock, a.pick));
+            }
+        }
+    }
+    assert!(picks
+        .iter()
+        .all(|&(t, pick)| (t < 120.0) == (pick == Pick::Random(0))));
+    assert!(picks.iter().any(|&(_, pick)| pick == Pick::Random(5)));
+    // The Flamewakers are plain adds: the horde's Flamewakers share their name.
+    assert!(script_for(FLAMEWAKER_NAME).is_none());
+}
+
+#[test]
+fn gehennas_curse_quarters_the_healing_a_hero_receives_until_decursed() {
+    let mut hero = hero_of(8);
+    let max = hero.stats().max_hp;
+    hero.hp = max - 100.0;
+    hero.raid.add(Debuff::new(
+        GEHENNAS_CURSE,
+        Dispel::Curse,
+        30.0,
+        Payload::HealingTaken(0.25),
+    ));
+    let healed = crate::survivors::party::heal(&mut hero, 40.0);
+    assert!(close(healed, 10.0), "{healed}");
+    assert!(hero.raid.dispel(Dispel::Curse).is_some());
+    let healed = crate::survivors::party::heal(&mut hero, 40.0);
+    assert!(close(healed, 40.0), "{healed}");
+}
+
+#[test]
+fn garr_calls_firesworn_by_party_size_pulses_shackles_and_detonates_them() {
+    assert_eq!([1, 2, 3, 4, 5].map(add_count), [3, 4, 5, 6, 8]);
+    assert_eq!(add_count(9), 8);
+    let row = GARR
+        .abilities
+        .iter()
+        .find(|a| a.name == "Firesworn")
+        .unwrap();
+    assert!(matches!(row.does, Does::Adds { count: 0, .. }));
+    let fired = schedule(&GARR, 245.0, 5, |_| 1.0);
+    assert_eq!(times(&fired, "Firesworn"), [0.5]);
+    assert_eq!(times(&fired, "Antimagic Pulse")[..3], [10.0, 25.0, 40.0]);
+    assert_eq!(times(&fired, "Magma Shackles")[..3], [6.0, 18.0, 30.0]);
+    assert_eq!(
+        times(&fired, "Massive Eruption"),
+        [150.0, 165.0, 180.0, 195.0, 210.0, 225.0, 240.0]
+    );
+    assert_eq!(times(&fired, "Berserk"), [240.0]);
+}
+
+#[test]
+fn magma_shackles_halve_the_pace_until_they_run_out_or_are_dispelled() {
+    let mut hero = hero_of(8);
+    let shackles = After::Slow {
+        rate: 0.5,
+        secs: 6.0,
+    };
+    after_blow(&mut hero, MAGMA_SHACKLES, shackles);
+    assert!(close(hero.raid.move_rate(), 0.5));
+    run_ticks(&mut hero.raid, 5.875, false);
+    assert!(close(hero.raid.move_rate(), 0.5));
+    run_ticks(&mut hero.raid, 0.25, false);
+    assert!(close(hero.raid.move_rate(), 1.0), "ran out");
+    after_blow(&mut hero, MAGMA_SHACKLES, shackles);
+    assert!(hero.raid.dispel(Dispel::Magic).is_some());
+    assert!(close(hero.raid.move_rate(), 1.0), "dispelled");
+}
+
+#[test]
+fn antimagic_pulse_strips_shields_and_timed_buffs() {
+    let mut hero = hero_of(5);
+    hero.shield = 80.0;
+    hero.shield_t = 6.0;
+    hero.thorns_t = 4.0;
+    hero.heal_t = 3.0;
+    after_blow(&mut hero, ANTIMAGIC_PULSE, After::Strip);
+    assert_eq!(
+        (hero.shield, hero.shield_t, hero.thorns_t, hero.heal_t),
+        (0.0, 0.0, 0.0, 0.0)
+    );
+}
+
+#[test]
+fn an_eruption_hurts_the_other_firesworn_inside_it_but_not_bosses() {
+    let mut world = raid_world(0.1, 2.0, 1);
+    let firesworn = add_named(FIRESWORN_NAME);
+    let garr = final_boss("Molten Core: Garr's Cavern");
+    let source = foe_at(&mut world, garr, Vec3::NEG_X * 30.0, true);
+    let near = foe_at(&mut world, firesworn, Vec3::X * 4.0, false);
+    foe_at(&mut world, firesworn, Vec3::X * 20.0, false);
+    foe_at(&mut world, garr, Vec3::X * 2.0, true);
+    let hero = hero_in(&mut world, hero_of(8), Vec3::Z * 5.0);
+    let full = hp(&world, hero);
+    let erupt = FIRESWORN.erupt.unwrap();
+    world.spawn((
+        telegraph(erupt.shape, Vec3::ZERO, 2.0),
+        Pending {
+            source,
+            spell: erupt.spell,
+            blow: erupt.blow,
+        },
+    ));
+    world.run_system_once(land_telegraphs).unwrap();
+    let hits = drain_hits(&mut world);
+    assert_eq!(hits.len(), 1, "only the Firesworn inside");
+    assert_eq!(hits[0].target, near);
+    assert!(close(hits[0].damage, 600.0));
+    assert!(hp(&world, hero) < full, "and the hero inside");
+}
+
+#[test]
+fn a_firesworns_fall_erupts_where_it_fell_and_enrages_garr() {
+    let mut world = raid_world(0.1, 50.0, 3);
+    world.init_resource::<Messages<enemies::Loot>>();
+    world.init_resource::<Messages<Yelled>>();
+    let garr = scripted_at(
+        &mut world,
+        final_boss("Molten Core: Garr's Cavern"),
+        Vec3::ZERO,
+    );
+    let before = world.get::<Enemy>(garr).unwrap().damage;
+    let at = Vec3::new(8.0, 0.0, 3.0);
+    world.write_message(enemies::Loot {
+        pos: at,
+        xp: 1,
+        boss: false,
+        elite: true,
+        def: add_named(FIRESWORN_NAME),
+    });
+    world.run_system_once(on_deaths).unwrap();
+    let mut q = world.query::<(&Telegraph, &Pending)>();
+    let (t, pending) = q.single(&world).unwrap();
+    assert_eq!(t.origin(), at);
+    assert!(close(t.land - t.start, 1.5));
+    assert_eq!((pending.spell, pending.source), (ERUPTION, garr));
+    assert!(pending.blow.foes > 0.0);
+    assert!(close(
+        world.get::<Enemy>(garr).unwrap().damage,
+        before * 1.15
+    ));
+    assert!(world
+        .get::<Marks>(garr)
+        .unwrap()
+        .spells()
+        .any(|s| s == GARR_ENRAGE));
+
+    // Garr's own fall: his death cry.
+    world.write_message(enemies::Loot {
+        pos: Vec3::ZERO,
+        xp: 1,
+        boss: true,
+        elite: false,
+        def: final_boss("Molten Core: Garr's Cavern"),
+    });
+    world.run_system_once(on_deaths).unwrap();
+    let yells = drain_yells(&mut world);
+    assert_eq!(yells.last().map(|y| y.kit), Some(ROCK_DEATH));
+}
+
+#[test]
+fn shazzrah_explodes_curses_counterspells_and_blinks_faster_after_two_minutes() {
+    let fired = schedule(&SHAZZRAH, 175.0, 3, |_| 1.0);
+    assert_eq!(times(&fired, "Arcane Explosion")[..3], [6.0, 12.0, 18.0]);
+    assert_eq!(times(&fired, "Shazzrah's Curse")[..2], [10.0, 35.0]);
+    assert_eq!(times(&fired, "Counterspell")[..2], [12.0, 27.0]);
+    assert_eq!(
+        times(&fired, "Gate of Shazzrah"),
+        [15.0, 35.0, 55.0, 75.0, 95.0, 115.0, 123.0, 135.0, 147.0, 159.0, 171.0]
+    );
+    assert_eq!(times(&fired, "Soft enrage"), [120.0]);
+}
+
+#[test]
+fn shazzrahs_curse_doubles_the_magic_a_hero_takes_not_the_physical() {
+    let curse = || {
+        Debuff::new(
+            SHAZZRAHS_CURSE,
+            Dispel::Curse,
+            20.0,
+            Payload::DamageTaken(2.0),
+        )
+    };
+    let mut cursed = hero_of(8);
+    cursed.raid.add(curse());
+    let mut fresh = hero_of(8);
+    let magic = hurt_school(&mut cursed, 0.1, School::Arcane);
+    assert!(close(magic, hurt_share(&mut fresh, 0.2)), "{magic}");
+    let mut cursed = hero_of(8);
+    cursed.raid.add(curse());
+    let mut fresh = hero_of(8);
+    let physical = hurt_school(&mut cursed, 0.1, School::Physical);
+    assert!(close(physical, hurt_share(&mut fresh, 0.1)), "{physical}");
+}
+
+#[test]
+fn counterspell_silences_and_a_stun_holds_for_their_seconds() {
+    let mut hero = hero_of(8);
+    after_blow(&mut hero, COUNTERSPELL, After::Silence(2.0));
+    assert!(!hero.raid.can_cast() && hero.raid.silenced());
+    run_ticks(&mut hero.raid, 1.875, false);
+    assert!(!hero.raid.can_cast());
+    run_ticks(&mut hero.raid, 0.25, false);
+    assert!(hero.raid.can_cast(), "the silence ran out");
+
+    after_blow(&mut hero, HAND_OF_RAGNAROS, After::Stun(2.0));
+    assert!(!hero.raid.can_cast());
+    assert_eq!(hero.raid.last_move.map(|m| m.kind), Some(MoveKind::Hold));
+    let mut walk = Walk::default();
+    assert_eq!(walk.step(&hero.raid, 0.1), Some(Vec3::ZERO), "held");
+}
+
+#[test]
+fn a_gate_of_shazzrah_puts_him_on_the_sigil_drops_his_taunt_and_explodes() {
+    let mut world = raid_world(0.1, 2.0, 2);
+    let boss = foe_at(
+        &mut world,
+        final_boss("Molten Core: Shazzrah's Cavern"),
+        Vec3::ZERO,
+        true,
+    );
+    let tank = world.spawn_empty().id();
+    world.get_mut::<Enemy>(boss).unwrap().taunted = Some((tank, 99.0));
+    let sigil_at = Vec3::new(20.0, 0.0, -5.0);
+    let blow = Blow::hit(0.12, School::Arcane);
+    let sigil = world
+        .spawn((
+            telegraph(
+                Shape::Circle {
+                    radius: SIGIL_RADIUS,
+                },
+                sigil_at,
+                2.5,
+            ),
+            BlinkTo {
+                boss,
+                spell: GATE_OF_SHAZZRAH,
+                radius: 12.0,
+                blow,
+                then: ARCANE_EXPLOSION,
+            },
+        ))
+        .id();
+    world.run_system_once(land_blinks).unwrap();
+    assert!(world.get_entity(sigil).is_ok(), "still winding up");
+    world.resource_mut::<Run>().elapsed = 2.5;
+    world.run_system_once(land_blinks).unwrap();
+    assert!(world.get_entity(sigil).is_err());
+    assert_eq!(world.get::<Transform>(boss).unwrap().translation, sigil_at);
+    assert_eq!(world.get::<Enemy>(boss).unwrap().taunted, None);
+    let mut q = world.query::<(&Telegraph, &Pending)>();
+    let (t, pending) = q.single(&world).unwrap();
+    assert_eq!(t.origin(), sigil_at);
+    assert_eq!(t.shape, Shape::Circle { radius: 12.0 });
+    assert!(close(t.land - t.start, BLINK_BLOW_WINDUP));
+    assert_eq!((pending.spell, pending.blow), (ARCANE_EXPLOSION, blow));
+}
+
+#[test]
+fn baron_geddon_bombs_infernos_ignites_and_bombs_faster_after_two_and_a_half_minutes() {
+    let fired = schedule(&BARON_GEDDON, 175.0, 5, |_| 1.0);
+    assert_eq!(
+        times(&fired, "Living Bomb"),
+        [10.0, 25.0, 40.0, 55.0, 70.0, 85.0, 100.0, 115.0, 130.0, 145.0, 160.0, 170.0]
+    );
+    assert_eq!(times(&fired, "Inferno")[..3], [20.0, 50.0, 80.0]);
+    assert_eq!(times(&fired, "Ignite Mana")[..2], [8.0, 28.0]);
+    assert_eq!(times(&fired, "Soft enrage"), [150.0]);
+    // His last service, at 2% of his health.
+    let low = schedule(
+        &BARON_GEDDON,
+        20.0,
+        1,
+        |t| if t < 12.0 { 0.5 } else { 0.01 },
+    );
+    assert_eq!(times(&low, "Armageddon"), [12.0]);
+    let bomb = BARON_GEDDON
+        .abilities
+        .iter()
+        .find(|a| a.name == "Living Bomb")
+        .unwrap();
+    assert!(matches!(
+        bomb.does,
+        Does::Debuff {
+            dispel: Dispel::None,
+            secs: 8.0,
+            payload: Payload::Bomb { radius: 12.0, .. },
+        }
+    ));
+}
+
+#[test]
+fn an_inferno_glows_then_pulses_harder_each_beat() {
+    let beats = inferno_beats(2.0, 8, 1.0, 0.03, 0.25);
+    assert_eq!(beats.len(), 8);
+    assert_eq!((beats[0].0, beats[0].1), (0.0, 2.0), "the glow warns first");
+    assert_eq!((beats[1].0, beats[1].1), (2.0, 3.0));
+    assert_eq!((beats[7].0, beats[7].1), (8.0, 9.0));
+    assert!(close(beats[0].2, 0.03) && close(beats[7].2, 0.03 * 2.75));
+    // Each pulse's warning ends as the next begins: one ring at a time.
+    for w in beats.windows(2) {
+        assert!(close(w[0].1, w[1].0));
+    }
+}
+
+#[test]
+fn a_living_bombs_ring_follows_its_carrier_and_goes_with_the_bomb() {
+    let mut world = raid_world(0.1, 1.0, 3);
+    let mut carrier = hero_of(8);
+    carrier.raid.add(Debuff::new(
+        LIVING_BOMB,
+        Dispel::None,
+        8.0,
+        Payload::Bomb {
+            radius: 12.0,
+            allies: 0.5,
+            carrier: 0.2,
+            foes: 0.5,
+        },
+    ));
+    assert_eq!(carrier.raid.bomb(), Some((8.0, 12.0)));
+    let hero = hero_in(&mut world, carrier, Vec3::ZERO);
+    let ring = world
+        .spawn((
+            telegraph(Shape::Circle { radius: 12.0 }, Vec3::ZERO, 9.0),
+            Carried {
+                hero,
+                spell: LIVING_BOMB,
+            },
+        ))
+        .id();
+    world.get_mut::<Transform>(hero).unwrap().translation = Vec3::X * 10.0;
+    world.run_system_once(follow_bombs).unwrap();
+    assert_eq!(
+        world.get::<Telegraph>(ring).unwrap().origin(),
+        Vec3::X * 10.0
+    );
+    world.get_mut::<HeroState>(hero).unwrap().raid.clear();
+    world.run_system_once(follow_bombs).unwrap();
+    assert!(world.get_entity(ring).is_err(), "gone with the bomb");
+}
+
+#[test]
+fn a_living_bomb_blasts_the_horde_round_its_carrier_but_not_bosses() {
+    let mut world = raid_world(0.25, 0.0, 1);
+    let mut carrier = hero_of(8);
+    carrier.raid.add(Debuff::new(
+        LIVING_BOMB,
+        Dispel::None,
+        0.25,
+        Payload::Bomb {
+            radius: 12.0,
+            allies: 0.5,
+            carrier: 0.2,
+            foes: 0.5,
+        },
+    ));
+    let carrier = hero_in(&mut world, carrier, Vec3::ZERO);
+    let def = &data::roster(0).enemies[0];
+    let near = foe_at(&mut world, def, Vec3::X * 6.0, false);
+    foe_at(&mut world, def, Vec3::X * 20.0, false);
+    foe_at(&mut world, def, Vec3::X * 3.0, true);
+    world.run_system_once(tick_heroes).unwrap();
+    let hits = drain_hits(&mut world);
+    assert_eq!(hits.len(), 1);
+    assert_eq!((hits[0].target, hits[0].source), (near, carrier));
+    assert!(close(hits[0].damage, 500.0));
+}
+
+#[test]
+fn a_bot_carrying_the_bomb_runs_away_from_its_party() {
+    let leader = Vec3::new(5.0, 0.0, 5.0);
+    let spot = bomb_escape(leader + Vec3::X * 2.0, leader, 12.0);
+    assert!(close(spot.distance(leader), 12.0 + BOMB_MARGIN));
+    assert!(spot.x > leader.x, "straight away");
+    // Standing on its leader it still picks a way out.
+    let spot = bomb_escape(leader, leader, 12.0);
+    assert!(close(spot.distance(leader), 12.0 + BOMB_MARGIN));
+}
+
+#[test]
+fn sulfuron_calls_priests_spears_stuns_and_inspires_at_half_health_and_two_and_a_half_minutes() {
+    let fired = schedule(&SULFURON, 215.0, 5, |t| if t < 60.0 { 1.0 } else { 0.4 });
+    assert_eq!(times(&fired, "Flamewaker Priests"), [0.5]);
+    assert_eq!(times(&fired, "Flame Spear")[..2], [8.0, 20.0]);
+    assert_eq!(times(&fired, "Hand of Ragnaros")[..2], [14.0, 34.0]);
+    assert_eq!(times(&fired, "Inspire"), [60.0, 150.0]);
+    assert_eq!(times(&fired, "Berserk"), [210.0]);
+    let priest = schedule(&FLAMEWAKER_PRIEST, 30.0, 5, |_| 1.0);
+    assert_eq!(times(&priest, "Dark Mending"), [5.0, 14.0, 23.0]);
+}
+
+#[test]
+fn dark_mending_heals_the_most_hurt_in_reach_unless_a_stun_breaks_it() {
+    let mut world = World::new();
+    let [a, b, c, d] = [(); 4].map(|_| world.spawn_empty().id());
+    let allies = [
+        (a, Vec3::ZERO, 1.0),
+        (b, Vec3::X * 10.0, 0.4),
+        (c, Vec3::X * 50.0, 0.2),
+        (d, Vec3::X * 20.0, 0.7),
+    ];
+    assert_eq!(mend_target(Vec3::ZERO, 40.0, &allies), Some(b));
+    assert_eq!(
+        mend_target(Vec3::ZERO, 40.0, &allies[..1]),
+        None,
+        "none hurt"
+    );
+    let cast = Casting {
+        spell: DARK_MENDING,
+        done: 12.5,
+        share: 0.15,
+        range: 40.0,
+        ring: a,
+    };
+    assert_eq!(cast_state(&cast, 11.0, false), CastState::Casting);
+    assert_eq!(cast_state(&cast, 11.0, true), CastState::Interrupted);
+    assert_eq!(cast_state(&cast, 12.5, false), CastState::Done);
+}
+
+#[test]
+fn golemagg_splashes_his_tank_and_quakes_below_a_tenth() {
+    let fired = schedule(&GOLEMAGG, 130.0, 5, |t| if t < 100.0 { 0.5 } else { 0.05 });
+    assert_eq!(times(&fired, "Core Ragers"), [0.5]);
+    assert_eq!(times(&fired, "Magma Splash").len(), 130);
+    assert_eq!(times(&fired, "Soft enrage"), [100.0]);
+    assert_eq!(times(&fired, "Earthquake")[..3], [102.0, 108.0, 114.0]);
+    let full = schedule(&GOLEMAGG, 245.0, 5, |_| 1.0);
+    assert!(times(&full, "Earthquake").is_empty());
+    assert_eq!(times(&full, "Berserk"), [240.0]);
+}
+
+#[test]
+fn a_core_rager_refuses_to_die_while_golemagg_stands_and_falls_with_him() {
+    let mut world = raid_world(0.1, 10.0, 2);
+    world.init_resource::<Messages<Yelled>>();
+    let golemagg = scripted_at(
+        &mut world,
+        final_boss("Molten Core: Golemagg's Ridge"),
+        Vec3::ZERO,
+    );
+    let rager = scripted_at(&mut world, add_named(CORE_RAGER_NAME), Vec3::X * 25.0);
+    world.run_system_once(guard_undying).unwrap();
+    world.flush();
+    assert!(world.get::<Undying>(rager).is_some(), "tied to its master");
+    // Below half it heals to full, with its emote.
+    world.get_mut::<Enemy>(rager).unwrap().hp = 300.0;
+    world.run_system_once(guard_undying).unwrap();
+    assert!(close(world.get::<Enemy>(rager).unwrap().hp, 1000.0));
+    let yells = drain_yells(&mut world);
+    assert_eq!(
+        yells.last().map(|y| y.text.as_str()),
+        Some("Core Rager refuses to die while its master is in trouble.")
+    );
+    assert_eq!(undying_heal(600.0, 1000.0), None);
+    assert_eq!(undying_heal(400.0, 1000.0), Some(1000.0));
+    // Golemagg falls: the tie is cut and a killing blow lands.
+    world.get_mut::<Enemy>(golemagg).unwrap().dead = true;
+    world.run_system_once(guard_undying).unwrap();
+    world.flush();
+    assert!(world.get::<Undying>(rager).is_none());
+    let hits = drain_hits(&mut world);
+    assert!(hits.iter().any(|h| h.target == rager && h.damage > 1000.0));
+}
+
+#[test]
+fn the_new_adds_are_scripted_and_tied_to_their_masters() {
+    for (name, master) in [
+        (FIRESWORN_NAME, "Garr"),
+        (CORE_RAGER_NAME, "Golemagg the Incinerator"),
+    ] {
+        let script = script_for(name).unwrap();
+        assert_eq!(script.master.map(|m| m.name), Some(master));
+        assert!(script_for(master).is_some());
+    }
+    assert!(FIRESWORN.erupt.is_some() && FIRESWORN.master.unwrap().enrage.is_some());
+    assert!(CORE_RAGER.master.unwrap().undying);
+    assert_eq!(script_for(PRIEST_NAME).map(|s| s.name), Some(PRIEST_NAME));
+}
+
+/// Each new boss's aggro roar and death cry are its display's own `CreatureSoundData` kits.
+#[test]
+fn the_new_bosses_voices_are_their_creatures_own() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    let voices = benilla_formats::load_creature_voice_catalog(&mut chain).expect("voices");
+    let kits = benilla_formats::load_sound_kit_catalog(&mut chain).expect("SoundEntries.dbc");
+    let mut bad = Vec::new();
+    for (stage, script) in [
+        ("Molten Core: Gehennas' Cavern", &GEHENNAS),
+        ("Molten Core: Garr's Cavern", &GARR),
+        ("Molten Core: Shazzrah's Cavern", &SHAZZRAH),
+        ("Molten Core: Baron Geddon's Cavern", &BARON_GEDDON),
+        ("Molten Core: Sulfuron's Cavern", &SULFURON),
+        ("Molten Core: Golemagg's Ridge", &GOLEMAGG),
+    ] {
+        let def = final_boss(stage);
+        let aggro = script
+            .abilities
+            .iter()
+            .find_map(|a| a.yell.filter(|y| y.kit != 0))
+            .map(|y| y.kit);
+        let death = script.death.map(|y| y.kit);
+        match voices.for_display(def.display) {
+            Some(v) => {
+                if aggro != Some(v.aggro) || death != Some(v.death) {
+                    bad.push(format!(
+                        "{}: aggro {aggro:?} death {death:?}, the display's are {} {}",
+                        def.name, v.aggro, v.death
+                    ));
+                }
+            }
+            None => bad.push(format!("{} display {} has no voice", def.name, def.display)),
+        }
+        for kit in aggro.into_iter().chain(death) {
+            if kits.get(kit).is_none() {
+                bad.push(format!("{}: kit {kit} is not in SoundEntries", def.name));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
 }

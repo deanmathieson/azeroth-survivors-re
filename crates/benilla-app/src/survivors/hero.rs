@@ -365,7 +365,8 @@ pub(super) fn drive_hero(
                 feet = enemies::ground_on_collision(collide.as_ref(), points, center, map.floor);
                 hm.body.placed(feet);
             }
-            let speed = me.stats().speed * me.haste_mult();
+            // A raid boss's slow (Magma Shackles) holds the hero back ([`super::raid`]).
+            let speed = me.stats().speed * me.haste_mult() * me.raid.move_rate();
             let (vel, flags, pace) = if wow {
                 walk_wow(
                     &keys, &rig, playing, speed, dt, &mut tf, &mut hm, &mut frame,

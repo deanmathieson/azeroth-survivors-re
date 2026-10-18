@@ -840,6 +840,7 @@ pub(super) fn relay_yells(
             message: NetYell {
                 text: y.text.clone(),
                 sound: y.sound,
+                kit: y.kit,
             },
         });
     }

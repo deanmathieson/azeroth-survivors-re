@@ -1,6 +1,7 @@
 //! Telegraphs on the ground, drawn on every machine from the replicated [`Telegraph`]: the shape's
 //! edge, and a fill that grows from the centre over the wind-up (RAIDS.md section 3), in the
-//! colour of what it does. A pool left burning keeps its edge and a slow pulse until it cools.
+//! colour of what it does. A pool left burning keeps its edge and a slow pulse until it cools. A
+//! Living Bomb's ring rides on its carrier, its fill the fuse.
 
 use bevy::prelude::*;
 
@@ -103,11 +104,12 @@ fn shape(gizmos: &mut Gizmos, t: &Telegraph, fill: f32, edge: Color, inner: Colo
     }
 }
 
-/// Every telegraph standing on the run's clock.
+/// Every telegraph standing on the run's clock. One laid ahead of its warning (an Inferno's later
+/// pulses) waits for it.
 pub(super) fn draw_telegraphs(run: Res<Run>, telegraphs: Query<&Telegraph>, mut gizmos: Gizmos) {
     let now = run.elapsed;
     for t in &telegraphs {
-        if now > t.until {
+        if now > t.until || now < t.start {
             continue;
         }
         let base = color(t.tone);
