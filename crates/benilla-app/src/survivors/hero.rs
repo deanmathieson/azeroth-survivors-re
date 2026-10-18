@@ -29,6 +29,14 @@ pub(super) struct Hero {
     pub(super) face: f32,
 }
 
+/// A local-only escape watchdog.  It deliberately requires both sustained input and no progress,
+/// so a player who is reading a menu or standing in combat is never teleported.
+#[derive(Default)]
+struct StuckWatch {
+    at: Option<Vec3>,
+    held_for: f32,
+}
+
 /// The body radius enemies stop at.
 pub(super) const HERO_RADIUS: f32 = 0.7;
 
@@ -262,6 +270,7 @@ pub(super) fn drive_hero(
         Res<crate::loading_screen::LoadingScreen>,
     ),
     auto: Option<Res<super::auto::Auto>>,
+    mut stuck: Local<StuckWatch>,
     mut frame: ResMut<WowFrame>,
     mut player: ResMut<crate::player::Player>,
     mut hero: Query<
@@ -318,7 +327,16 @@ pub(super) fn drive_hero(
             // Space hops: WoW's jump keeps its launch; the classic hop steers in the air.
             let jump = playing && keys.just_pressed(KeyCode::Space);
             let vel = leash_velocity(center, map.leash, feet, vel, dt);
-            let vel = hm.body.air_velocity(vel, wow);
+            let mut vel = hm.body.air_velocity(vel, wow);
+            // Do not let input advance across a tile which has a heightfield but whose body
+            // colliders have not arrived yet.  Advancing here is how a hero could enter below a
+            // WMO floor before the next streamed frame catches it.
+            if collide.as_ref().is_some_and(|c| {
+                c.ray_body(feet + Vec3::Y * 4.0, bevy::math::Dir3::NEG_Y, 64.0)
+                    .is_none()
+            }) {
+                vel = Vec3::ZERO;
+            }
             let terrain = points.terrain_height_under(feet);
             let mut out = match collide.as_ref().filter(|_| !loading.covering()) {
                 Some(collide) => {
@@ -355,6 +373,59 @@ pub(super) fn drive_hero(
             if wow {
                 frame.flags = word;
                 frame.speed = pace;
+            }
+            let moving_input = [
+                KeyCode::KeyW,
+                KeyCode::KeyA,
+                KeyCode::KeyS,
+                KeyCode::KeyD,
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+                KeyCode::ArrowLeft,
+                KeyCode::ArrowRight,
+            ]
+            .into_iter()
+            .any(|key| keys.pressed(key));
+            let below_terrain = points
+                .terrain_height_under(out)
+                .is_some_and(|ground| out.y < ground - 2.0);
+            if !moving_input {
+                *stuck = StuckWatch::default();
+            } else {
+                let origin = stuck.at.get_or_insert(out);
+                if flat(out - *origin).length() > 0.5 {
+                    *origin = out;
+                    stuck.held_for = 0.0;
+                } else {
+                    stuck.held_for += dt;
+                }
+                if below_terrain || stuck.held_for >= 3.0 {
+                    // Search a short, deterministic ring for the nearest streamed outdoor floor.
+                    let mut safe = None;
+                    for radius in [0.0, 2.0, 4.0, 8.0, 12.0] {
+                        for n in 0..8 {
+                            let a = n as f32 * std::f32::consts::TAU / 8.0;
+                            let p = out + Vec3::new(a.cos(), 0.0, a.sin()) * radius;
+                            if let Some(p) = super::enemies::valid_outdoor_point(
+                                collide.as_ref(),
+                                points,
+                                p,
+                                map.floor,
+                            ) {
+                                safe = Some(p);
+                                break;
+                            }
+                        }
+                        if safe.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some(p) = safe {
+                        out = p;
+                        hm.body.placed(out);
+                    }
+                    *stuck = StuckWatch::default();
+                }
             }
             if tf.translation != out {
                 tf.translation = out;

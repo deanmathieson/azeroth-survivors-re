@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use avian3d::prelude::Collider;
 use benilla_world::collision::WorldCollision;
 use benilla_world::rig_anim::GlobalSeqDrive;
 use benilla_world::world_point::WorldPoint;
@@ -284,6 +285,9 @@ pub(super) fn ground(world: &WorldPoint, mut p: Vec3, fallback: f32) -> Vec3 {
 /// The clearance above a known stage or hero floor that a spawn probe starts from.  It stays under
 /// a cave roof, unlike the old 64 yd outdoor probe, while still clearing a floor-plane roundoff.
 const GROUND_PROBE_LIFT: f32 = 4.0;
+/// A walking enemy may step this far up in a frame.  A higher collision hit is a roof, shelf, or
+/// streamed-in interior and must not replace the floor it was already walking on.
+const ENEMY_STEP_UP: f32 = 1.5;
 
 fn collision_ground_y(collide: &WorldCollision, p: Vec3, fallback: f32) -> Option<f32> {
     let reference = p.y.max(fallback);
@@ -291,7 +295,82 @@ fn collision_ground_y(collide: &WorldCollision, p: Vec3, fallback: f32) -> Optio
     collide
         .ray_body(from, Dir3::NEG_Y, 128.0)
         .map(|hit| from.y - hit.distance)
-        .filter(|&y| y <= reference + f32::EPSILON)
+        .filter(|&y| y <= reference + ENEMY_STEP_UP)
+}
+
+/// A point which can safely be used by outdoor survivor content.  It stays close to the ADT
+/// heightfield, accepts a streamed outdoor walkable surface, and rejects a ceiling/roof above it.
+/// The collision layer does not expose WMO group ownership, so the vertical roof test is also the
+/// conservative interior/footprint test while a group is streaming.
+pub(super) fn valid_outdoor_point(
+    collide: Option<&WorldCollision>,
+    world: &WorldPoint,
+    p: Vec3,
+    fallback: f32,
+) -> Option<Vec3> {
+    let terrain = world.terrain_height_under(p).unwrap_or(fallback);
+    let grounded = ground_on_collision(collide, world, p.with_y(terrain), terrain);
+    if (grounded.y - terrain).abs() > 2.0 {
+        return None;
+    }
+    if let Some(c) = collide {
+        // A body ray is one-sided, so this finds a roof's downward-facing underside without
+        // treating the outdoor ground as an obstruction.
+        if c.ray_body(grounded + Vec3::Y * 0.05, Dir3::Y, 30.0)
+            .is_some()
+        {
+            return None;
+        }
+    }
+    Some(grounded)
+}
+
+/// Ground a spawn candidate, preferring certified exterior ground.  Callers retain a deterministic
+/// fallback so an arena can still start while its collision tile is streaming.
+pub(super) fn outdoor_ground(
+    collide: Option<&WorldCollision>,
+    world: &WorldPoint,
+    p: Vec3,
+    fallback: f32,
+) -> Vec3 {
+    valid_outdoor_point(collide, world, p, fallback)
+        .unwrap_or_else(|| ground_on_collision(collide, world, p, fallback))
+}
+
+/// Sweep the enemy's small horizontal body and slide the remaining intended displacement along a
+/// wall.  One cast is cheap enough for enemies in fighting range; distant enemies use the same
+/// robust path only every fourth frame (the frame-derived phase avoids a herd-sized burst).
+fn enemy_step(
+    collide: Option<&WorldCollision>,
+    pos: Vec3,
+    movement: Vec3,
+    radius: f32,
+    near_hero: bool,
+    phase: u32,
+) -> Vec3 {
+    let Some(c) = collide else {
+        return pos + movement;
+    };
+    if !near_hero && phase % 4 != 0 {
+        return pos + movement;
+    }
+    if movement.length_squared() <= f32::EPSILON {
+        return pos;
+    }
+    let shape = Collider::sphere(radius.max(0.2));
+    let center = pos + Vec3::Y * radius.max(0.2);
+    let Some(hit) = c.cast_body(&shape, center, movement, 0.02) else {
+        return pos + movement;
+    };
+    let first = movement.normalize_or_zero() * hit.distance.max(0.0);
+    let left = movement - first;
+    let slide = left - hit.normal1 * left.dot(hit.normal1);
+    let slid = c
+        .cast_body(&shape, center + first, slide, 0.02)
+        .map_or(slide, |second| {
+            slide.normalize_or_zero() * second.distance.max(0.0)
+        });
+    pos + first + slid
 }
 
 /// Ground a walking body on collision first, falling back to terrain while the collider streams.
@@ -383,7 +462,7 @@ pub(super) fn spawn_enemies(
                     &everyone,
                     leash,
                 );
-                let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
                 spawn_enemy(
                     &mut commands,
                     &mut run,
@@ -422,7 +501,7 @@ pub(super) fn spawn_enemies(
                         &everyone,
                         leash,
                     );
-                    let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                    let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
                     spawn_enemy(
                         &mut commands,
                         &mut run,
@@ -445,7 +524,7 @@ pub(super) fn spawn_enemies(
                         &everyone,
                         leash,
                     );
-                    let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+                    let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
                     spawn_enemy(
                         &mut commands,
                         &mut run,
@@ -470,7 +549,7 @@ pub(super) fn spawn_enemies(
         };
         let a = rng.range(0.0, std::f32::consts::TAU);
         let at = party::spawn_point(hpos, a, 30.0, &everyone, leash);
-        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+        let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
         spawn_enemy(
             &mut commands,
             &mut run,
@@ -499,7 +578,7 @@ pub(super) fn spawn_enemies(
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
             let at = party::spawn_point(hpos, a, 26.0, &everyone, leash);
-            let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+            let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
             spawn_enemy(
                 &mut commands,
                 &mut run,
@@ -536,7 +615,7 @@ pub(super) fn spawn_enemies(
             break;
         };
         let at = party::spawn_point(hpos, a, r, &everyone, leash);
-        let pos = ground_on_collision(collide.as_ref(), &world, at, map.floor);
+        let pos = outdoor_ground(collide.as_ref(), &world, at, map.floor);
         spawn_enemy(
             &mut commands,
             &mut run,
@@ -747,7 +826,15 @@ pub(super) fn move_enemies(
             }
         }
         let shove = push.get(&ent).copied().unwrap_or_default();
-        let mut next = pos + step * dt + shove * (dt * 8.0).min(0.5);
+        let intended = step * dt + shove * (dt * 8.0).min(0.5);
+        let mut next = enemy_step(
+            collide.as_ref(),
+            pos,
+            intended,
+            e.radius,
+            dist <= 50.0,
+            (run.elapsed * 60.0) as u32 ^ ent.to_bits() as u32,
+        );
         next = ground_on_collision(collide.as_ref(), &world, next, map.floor);
         tf.translation = next;
         if speed > 0.0 {

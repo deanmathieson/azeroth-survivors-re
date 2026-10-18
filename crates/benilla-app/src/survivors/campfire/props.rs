@@ -5,6 +5,7 @@
 //! on each screen from the shared [`Camp::fishing_dip`]. A click on the bobber strikes; a click
 //! on the goblin opens his merchant window ([`super::ui`]).
 
+use benilla_world::collision::WorldCollision;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 
@@ -85,6 +86,7 @@ fn place_props(
     run: Res<Run>,
     camp: Res<Camp>,
     world: WorldPoint,
+    collide: Option<WorldCollision>,
     props: Query<Entity, With<CampProp>>,
     mut spots: ResMut<CampSpots>,
     mut built: Local<Option<Vec3>>,
@@ -99,7 +101,10 @@ fn place_props(
     *built = want;
     *spots = CampSpots::default();
     let Some(fire) = want else { return };
-    let ground = |p: Vec3| super::super::enemies::ground(&world, p, fire.y);
+    let ground = |p: Vec3| {
+        super::super::enemies::valid_outdoor_point(collide.as_ref(), &world, p, fire.y)
+            .unwrap_or_else(|| super::super::enemies::ground(&world, p, fire.y))
+    };
     let (vendor, fishing) = layout(fire);
     let (fire, vendor, fishing) = (ground(fire), ground(vendor), ground(fishing));
     let flame = units::spawn_object(&mut commands, SERIAL + 1, CAMPFIRE_DISPLAY, 1.0, fire);

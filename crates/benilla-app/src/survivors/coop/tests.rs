@@ -995,6 +995,7 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
         talents: Vec::new(),
         mount_display: 0,
         mount_hat: None,
+        pinned_trinket: None,
         hero: Some(theirs),
     });
     let hat = CosmeticHat {

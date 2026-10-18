@@ -467,7 +467,7 @@ pub(super) fn place_guardians(
     let posts = guardian_posts(map.leash);
     for (i, off) in posts.iter().enumerate() {
         let def = &roster.enemies[guardian_tier(i, posts.len(), roster.enemies.len())];
-        let pos = enemies::ground_on_collision(collide.as_ref(), &world, center + *off, map.floor);
+        let pos = enemies::outdoor_ground(collide.as_ref(), &world, center + *off, map.floor);
         enemies::spawn_enemy(
             &mut commands,
             &mut run,
@@ -480,7 +480,7 @@ pub(super) fn place_guardians(
         );
     }
     for off in chest_posts(map.leash) {
-        let pos = enemies::ground_on_collision(collide.as_ref(), &world, center + off, map.floor);
+        let pos = enemies::outdoor_ground(collide.as_ref(), &world, center + off, map.floor);
         spawn_cache(&mut commands, run.guid(), pos, true);
     }
 }
@@ -515,8 +515,7 @@ pub(super) fn spawn_elites(
     let a = rng.range(0.0, std::f32::consts::TAU);
     let leash = party::Leash::of(selection.stage_def());
     let at = party::spawn_point(hpos, a, 30.0, &everyone, leash);
-    let pos =
-        enemies::ground_on_collision(collide.as_ref(), &world, at, selection.stage_def().floor);
+    let pos = enemies::outdoor_ground(collide.as_ref(), &world, at, selection.stage_def().floor);
     enemies::spawn_enemy(
         &mut commands,
         &mut run,
