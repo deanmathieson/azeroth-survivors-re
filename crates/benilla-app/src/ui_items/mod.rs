@@ -943,23 +943,26 @@ impl Plugin for UiItemsPlugin {
                         .in_set(UnitFeed)
                         .before(crate::ui_action::CooldownEvents),
                     // The item-tooltip store answers before the input pass, so a re-hover the
-                    // next frame sees the answer.
-                    feed_item_stats.in_set(UnitFeed),
+                    // next frame sees the answer. Survivors answers from its own templates.
+                    feed_item_stats.in_set(UnitFeed).run_if(stock_drains),
                     feed_item_sets.in_set(UnitFeed),
                     // The roll table, pushed whole once per VM, before the first hover.
                     feed_random_properties.in_set(UnitFeed),
                     feed_player_req.in_set(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
-                    // plain `UseContainerItem` is a script call.
-                    drain_container_repairs.after(UiInput),
+                    // plain `UseContainerItem` is a script call. Under survivors' opt-in these
+                    // queues are the survivors drains' (`survivors::professions::frames`).
+                    drain_container_repairs.after(UiInput).run_if(stock_drains),
                     // Pick, place and split: `CMSG_SWAP_INV_ITEM`, `CMSG_SWAP_ITEM` or
                     // `CMSG_SPLIT_ITEM`.
-                    drain_container_moves.after(UiInput),
+                    drain_container_moves.after(UiInput).run_if(stock_drains),
                     // The delete-confirm popup's accept: `CMSG_DESTROYITEM`.
-                    drain_container_destroys.after(UiInput),
+                    drain_container_destroys.after(UiInput).run_if(stock_drains),
                     // `AutoEquipCursorItem`: `CMSG_AUTOEQUIP_ITEM`.
-                    drain_container_autoequips.after(UiInput),
-                    drain_bag_autostores.after(UiInput),
+                    drain_container_autoequips
+                        .after(UiInput)
+                        .run_if(stock_drains),
+                    drain_bag_autostores.after(UiInput).run_if(stock_drains),
                     // The soulbind confirmations' answers (`EquipPendingItem`,
                     // `CancelPendingEquip`, `ConfirmBindOnUse`). A dialog is answered in a later
                     // frame than it was raised, so no order against the other drains is needed.
@@ -968,6 +971,13 @@ impl Plugin for UiItemsPlugin {
                 ),
             );
     }
+}
+
+/// Run condition: the bag queues are the server's, which is every run but survivors' FrameXML
+/// opt-in ([`crate::run_mode::SurvivorsUi`]), where a local drain owns each and a stock one would
+/// empty it into a connection that does not exist.
+fn stock_drains(survivors: Option<Res<crate::run_mode::SurvivorsUi>>) -> bool {
+    survivors.is_none()
 }
 
 #[cfg(test)]

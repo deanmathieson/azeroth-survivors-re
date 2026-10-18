@@ -121,10 +121,24 @@ fn install_addon_asset_resolvers(world: &mut World, script: &mut UiScript) {
 }
 
 /// Whether this run wants the player UI: always outside a capture, and in one only when opted in
-/// ([`crate::run_mode::capture_ui_opted_in`]), since capture baselines test the world render.
+/// ([`crate::run_mode::capture_ui_opted_in`]), since capture baselines test the world render, or
+/// when survivors asked for its curated one ([`crate::run_mode::SurvivorsUi`]).
 fn ui_wanted(world: &World) -> bool {
-    !world.contains_resource::<crate::run_mode::CaptureMode>()
-        || crate::run_mode::capture_ui_opted_in()
+    ui_wanted_by(
+        world.contains_resource::<crate::run_mode::CaptureMode>(),
+        crate::run_mode::capture_ui_opted_in(),
+        survivors_ui_wanted(world),
+    )
+}
+
+/// [`ui_wanted`] over its three facts.
+fn ui_wanted_by(capture: bool, capture_ui_opted_in: bool, survivors_ui: bool) -> bool {
+    !capture || capture_ui_opted_in || survivors_ui
+}
+
+/// Whether the load is survivors' curated one rather than the whole interface.
+fn survivors_ui_wanted(world: &World) -> bool {
+    world.contains_resource::<crate::run_mode::SurvivorsUi>()
 }
 
 /// The world-entry UI load still owed: armed at `OnEnter(InWorld)`, run by
@@ -154,6 +168,9 @@ pub(crate) struct PendingEntryUiLoad {
     core: Option<Addon>,
     /// The toc's record, filled row by row and closed after the last.
     toc: benilla_ui::status::Status,
+    /// Survivors' curated load ([`super::survivors_ui`]): its rows, its stand-ins, no bindings,
+    /// its one layer file and no third-party addons.
+    survivors: bool,
 }
 
 impl PendingEntryUiLoad {
@@ -311,17 +328,29 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
         match stage {
             EntryStage::Armed => {
                 let inputs = entry_prepare(world, &mut script);
+                let survivors = survivors_ui_wanted(world);
                 // `load_ingame_ui`'s bound, and its silent bracket (`silenced_ui_load`), opened
                 // here and closed at `Finish` since the load spans frames.
                 script.set_instruction_budget(addons::LOAD_INSTRUCTION_BUDGET);
                 script.push_sound_suppression();
-                let core = super::reference_ui::core();
+                let core = super::reference_ui::core().map(|core| {
+                    if survivors {
+                        super::survivors_ui::curate(core)
+                    } else {
+                        core
+                    }
+                });
                 if core.is_none() {
-                    let _ = super::manifest::load_core_missing(&script);
+                    let _ = if survivors {
+                        super::manifest::load_core_missing_unbound(&script)
+                    } else {
+                        super::manifest::load_core_missing(&script)
+                    };
                 }
                 let rows = core.as_ref().map_or(0, |c| c.toc.files.len());
                 let mut pending = world.resource_mut::<PendingEntryUiLoad>();
                 pending.inputs = inputs;
+                pending.survivors = survivors;
                 pending.covering = covering;
                 pending.started = Some(frame_start);
                 pending.total = rows + 5;
@@ -347,6 +376,9 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
                         &core.toc.files[next..next + 1],
                         &mut pending.toc,
                     );
+                    if pending.survivors {
+                        let _ = super::survivors_ui::after_row(&script, &core.toc.files[next]);
+                    }
                     pending.done += 1;
                     pending.stage = EntryStage::Core { next: next + 1 };
                 } else {
@@ -356,13 +388,19 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
             }
             EntryStage::CoreClose => {
                 let toc = std::mem::take(&mut world.resource_mut::<PendingEntryUiLoad>().toc);
-                let _ = super::manifest::close_core(&script, toc);
+                if world.resource::<PendingEntryUiLoad>().survivors {
+                    super::manifest::report_core_status(&script, toc);
+                } else {
+                    let _ = super::manifest::close_core(&script, toc);
+                }
                 let mut pending = world.resource_mut::<PendingEntryUiLoad>();
                 pending.done += 1;
                 pending.stage = EntryStage::Layer;
             }
             EntryStage::Layer => {
-                if super::manifest::layer_enabled() {
+                if world.resource::<PendingEntryUiLoad>().survivors {
+                    let _ = super::survivors_ui::load_layer(&script);
+                } else if super::manifest::layer_enabled() {
                     let _ = super::manifest::load_layer(&script);
                 }
                 let mut pending = world.resource_mut::<PendingEntryUiLoad>();
@@ -382,12 +420,15 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
                     pending.inputs.roster.clone(),
                     pending.inputs.version_check,
                 );
-                let _ = addons::load_third_party(
-                    &mut script,
-                    identity.as_ref(),
-                    &roster,
-                    version_check,
-                );
+                // Survivors loads no third-party addon: they are written for the whole interface.
+                if !pending.survivors {
+                    let _ = addons::load_third_party(
+                        &mut script,
+                        identity.as_ref(),
+                        &roster,
+                        version_check,
+                    );
+                }
                 let mut pending = world.resource_mut::<PendingEntryUiLoad>();
                 pending.done += 1;
                 pending.stage = EntryStage::Finish;
@@ -471,14 +512,19 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         return;
     };
     let inputs = entry_prepare(world, &mut script);
+    let survivors = survivors_ui_wanted(world);
     // No sound during the load edge, as in the reference's `UI_Init` (`0x48fbfa` → `0x49016d`).
     silenced_ui_load(&mut script, |script| {
-        let _ = load_ingame_ui(
-            script,
-            inputs.identity.as_ref(),
-            &inputs.roster,
-            inputs.version_check,
-        );
+        let _ = if survivors {
+            super::survivors_ui::load(script)
+        } else {
+            load_ingame_ui(
+                script,
+                inputs.identity.as_ref(),
+                &inputs.roster,
+                inputs.version_check,
+            )
+        };
         entry_finish(world, script, &inputs);
     });
     entry_close(world, script, inputs.identity);
@@ -1062,6 +1108,67 @@ mod tests {
         run_pending_reload(&mut world);
         assert!(!world.resource::<ReloadUiPending>().0, "the reload ran");
         assert_eq!(*world.resource::<VPlateMode>(), on, "a reload keeps them");
+    }
+
+    /// A plain capture loads no UI; survivors' opt-in loads its curated one under the same
+    /// `CaptureMode`; and outside a capture the UI always loads.
+    #[test]
+    fn ui_wanted_under_survivors_ui_and_not_in_a_plain_capture() {
+        assert!(ui_wanted_by(false, false, false), "a player's run");
+        assert!(!ui_wanted_by(true, false, false), "a plain capture");
+        assert!(
+            ui_wanted_by(true, true, false),
+            "a capture opted into the UI"
+        );
+        assert!(ui_wanted_by(true, false, true), "survivors with its opt-in");
+
+        let mut world = World::new();
+        world.insert_resource(crate::run_mode::CaptureMode);
+        assert!(!survivors_ui_wanted(&world));
+        world.insert_resource(crate::run_mode::SurvivorsUi);
+        assert!(ui_wanted(&world), "the survivors opt-in wants the UI");
+        assert!(survivors_ui_wanted(&world));
+    }
+
+    /// Survivors' opt-in through the production world-entry load, sliced across frames as at
+    /// boot: the curated interface with its stand-ins, no stock key command, no stock bar, and no
+    /// handler raising.
+    #[test]
+    fn survivors_ui_the_sliced_world_entry_loads_the_curated_interface() {
+        use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+        let _data = benilla_formats::wow_data_or_skip!();
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home =
+            std::env::temp_dir().join(format!("benilla-survivors-entry-{}", std::process::id()));
+        let _home = EnvGuard::set("BENILLA_HOME", home.to_str().unwrap());
+        let mut world = World::new();
+        world.insert_resource(State::new(crate::char_select::ClientState::InWorld));
+        world.insert_resource(crate::run_mode::CaptureMode);
+        world.insert_resource(crate::run_mode::SurvivorsUi);
+        world.init_resource::<crate::minimap::MinimapZoom>();
+        world.insert_non_send_resource(UiScript::new().unwrap());
+        arm_entry_ui_load(&mut world);
+        let mut frames = 0;
+        while world.get_resource::<PendingEntryUiLoad>().is_some() && frames < 1000 {
+            run_pending_entry_load(&mut world);
+            frames += 1;
+        }
+        assert!(
+            world.get_resource::<PendingEntryUiLoad>().is_none(),
+            "the load finished in {frames} frames"
+        );
+        let s = world.non_send_resource::<UiScript>();
+        assert!(s
+            .eval::<bool>("return ContainerFrame1 ~= nil and SurvivorsUi_Escape ~= nil")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return MainMenuBar == nil and ChatFrame1 == nil")
+            .unwrap());
+        assert_eq!(s.eval::<i64>("return GetNumBindings()").unwrap(), 0);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The reference re-makes its Lua state inside `UI_Init` (`0x48fe97`).

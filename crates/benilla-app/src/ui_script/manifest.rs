@@ -178,6 +178,13 @@ pub(super) fn load_core(script: &UiScript) -> Vec<String> {
 /// [`close_core`]) so the browser's sliced entry load (`lifecycle::run_pending_entry_load`) can
 /// walk the toc's rows a frame at a time and still end exactly as this does.
 pub(super) fn load_core_missing(script: &UiScript) -> Vec<String> {
+    let mut failures = load_core_missing_unbound(script);
+    failures.extend(load_core_bindings(script));
+    failures
+}
+
+/// [`load_core_missing`] without the bindings, for survivors' curated load, which has none.
+pub(super) fn load_core_missing_unbound(script: &UiScript) -> Vec<String> {
     let e = format!(
         "{}: not found — the stock interface is not built",
         reference_ui::TOC
@@ -191,19 +198,23 @@ pub(super) fn load_core_missing(script: &UiScript) -> Vec<String> {
         benilla_ui::status::missing(reference_ui::TOC, false),
     );
     script.report_load_status(log);
-    let mut failures = vec![e];
-    failures.extend(load_core_bindings(script));
-    failures
+    vec![e]
 }
 
 /// [`load_core`]'s tail once every toc row has run: the toc's record into the load's, then the
 /// bindings.
 pub(super) fn close_core(script: &UiScript, toc: benilla_ui::status::Status) -> Vec<String> {
+    report_core_status(script, toc);
+    load_core_bindings(script)
+}
+
+/// [`close_core`] without the bindings: the toc's record into the load's. Survivors' curated
+/// load ends here, so no stock key has a command.
+pub(super) fn report_core_status(script: &UiScript, toc: benilla_ui::status::Status) {
     let mut log = benilla_ui::status::Status::default();
     let banner = benilla_ui::status::toc_banner(reference_ui::TOC);
     toc.close_into(&mut log, script.framexml_debug(), banner);
     script.report_load_status(log);
-    load_core_bindings(script)
 }
 
 /// The stock key-binding commands, `UI_Init`'s next step after the toc walk: the chain's

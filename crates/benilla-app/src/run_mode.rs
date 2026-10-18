@@ -13,6 +13,13 @@ use bevy::prelude::*;
 #[derive(Resource)]
 pub(crate) struct CaptureMode;
 
+/// Survivors' FrameXML opt-in (docs/PROFESSIONS.md, 2.2): inserted by survivors beside
+/// [`CaptureMode`], which keeps the stock camera and movement off, so the world entry still loads a
+/// UI, the curated one (`ui_script::survivors_ui`), and the stock net drains stand down for the
+/// survivors ones. `WOW_SURVIVORS_FRAMEXML=0` leaves it out.
+#[derive(Resource)]
+pub(crate) struct SurvivorsUi;
+
 /// The rig's derived character name when `$WOW_RIG` names a body, inserted by
 /// `capture::ProbeRigPlugin`. While present the roster ignores `$WOW_CHAR`: the rig may have to
 /// create its body first, and the `WOW_CHAR` one-shot cannot wait for that.

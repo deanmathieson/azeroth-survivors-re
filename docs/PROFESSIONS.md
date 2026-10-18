@@ -1,6 +1,6 @@
 # Professions and the WoW inventory
 
-Status: design only; nothing is built yet. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
+Status: P0 (the bags spike) is built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
 
 Ground rules, as for the rest of the fork:
 
@@ -576,6 +576,30 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
 - **screenshot:** all five bags open bottom-right over a running horde, with an item tooltip on hover. The HUD's bars, ability icons, toy bar and minimap must be uncovered and nothing clipped at 1280x720; by hand, dragging an item must start no mouselook.
 
 **Go / no-go.** If the curated `UIParent` can't load cleanly within the time-box, fall back to the full FrameXML with the stock frames hidden, and write down why.
+
+**Result (2026-10-18): go, curated.** No fallback was needed.
+
+- **Built:** `run_mode::SurvivorsUi` and the `ui_wanted` arm; the curated load in `ui_script/survivors_ui.rs`, which the sliced world-entry load and `ReloadUI()` both take; `survivors/professions/` with `Bags` (`inventory.rs`), the authored templates (`items.rs`) and the feed, drains and keys (`frames.rs`); the stock bag drains and `feed_item_stats` gated off under `SurvivorsUi`; the kill switch `WOW_SURVIVORS_FRAMEXML=0`; the screenshot aid `WOW_SURVIVORS_OPEN=bags` (with `WOW_SURVIVORS_SHOTS=<dir>`, it saves `bags.png`).
+- **Load time:** 17 of the 89 `FrameXML.toc` rows plus `ContainerFrameAdapters.xml`. Measured by `survivors_ui_loads_the_curated_framexml_without_lua_errors` on the Mac (M1 Max, test profile: dependencies at O3, our crates at O1), three runs: curated **103 / 112 / 107 ms**, against **527 / 483 / 506 ms** for the whole interface (`load_default_ui`) in the same runs. That is about a fifth. The in-app figure is the `in-game UI up in N ms` log line, which still needs reading on the PC.
+- **What worked:** the load raises no Lua error and builds no stock bar, unit frame, chat, minimap or buff frame. No `Bindings.xml` loads, so `GetNumBindings()` is 0 and no stock key does anything. B runs the stock `OpenAllBags`, and the backpack sits bottom-right above `CONTAINER_OFFSET_Y` 70. A drag, a split, the delete popup and an autostore all queue the stock intents, and the survivors drains apply them to `Bags`. Item tooltips render from the authored templates. Esc closes popups, the stack split and the bags before the survivors menu sees it. A click on a bag reaches neither the HUD buttons under it nor the wowcam.
+- **What the plan got wrong:**
+  - **The manifest:** the list in 2.1 was not enough. The bags also need the rows `BasicControls`, `MoneyFrame.lua`, `UIPanelTemplates.lua`, `UIMenu`, `UIErrorsFrame`, `StackSplitFrame` and `Cooldown`.
+  - **Stand-ins:** the stock Lua indexes several frames from files we leave out, unguarded, so a stand-in shim runs after `UIParent.xml`. It hides a stand-in for each of these:
+    - the bag-bar buttons;
+    - `ChatFrameEditBox`;
+    - `MerchantFrame`;
+    - the options windows;
+    - a 1-unit `BankFrame` on the left edge, because `updateContainerFrameAnchors` does arithmetic on `BankFrame:GetRight()`.
+
+    The shim also sets `NUM_BAG_SLOTS`, `NUM_BANKBAGSLOTS` and `KEYRING_CONTAINER`, and stubs the missing callees as no-ops. It replaces `UIParent_ManageFramePositions` with a pass that only seats the bags, under `SURVIVORS_CONTAINER_OFFSET_Y`.
+  - **`capture_ui_active`:** it is not extended (2.2). It gates only the capture's synthetic demo player, which must not run in survivors.
+- **Not done or not measured in P0:**
+  - **Per-frame cost:** `UiFrameCost` (`WOW_UI_COST=1`) is not measured.
+  - **The web build:** not loaded.
+  - **The screenshots:** the 1920x1080 and 1280x720 check is still to do on the PC.
+  - **Right-click use:** `UseContainerItem` still goes to the stock applier, which does nothing without a server. It is P1/P2 work.
+  - **The keyboard stand-down:** it covers only key presses. A key held while typing keeps acting, as in the reference.
+  - **Item ids:** the entries are still unverified, since the repo has no `Item.dbc` parser. Several `ItemDisplayInfo` rows share each icon, so the display test proves only that the icon and the row agree.
 
 ### P1. Inventory, gathering and skills
 
