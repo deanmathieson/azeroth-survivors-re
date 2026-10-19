@@ -125,10 +125,6 @@ impl GearRead<'_> {
         gear_of(self.profile.as_deref(), self.shadow.as_deref(), class)
     }
 
-    pub(in crate::survivors) fn vault(&self) -> &RaidVault {
-        vault_of(self.profile.as_deref(), self.shadow.as_deref())
-    }
-
     /// Whether any class's gear may have changed since the system last ran.
     pub(super) fn is_changed(&self) -> bool {
         self.profile.as_ref().is_some_and(|p| p.is_changed())

@@ -355,13 +355,13 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) talents: Vec<(u32, u8)>,
     pub(in crate::survivors) mount_display: u32,
     pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
-    /// Completed-deck trinket pinned by this player's own profile.
-    pub(in crate::survivors) pinned_trinket: Option<String>,
     /// How many pieces of its class's Tier 1 set the picked class wears: the host grants the set's
     /// 8-piece proc on it (the 3 and 5 are in `bonuses`).
     pub(in crate::survivors) tier: u8,
-    /// The Bound raid jewelry this player's account keeps, by jewelry key: worn from the start.
-    pub(in crate::survivors) bound: Vec<String>,
+    /// The jewelry loadout this player's account wears into the run, by jewelry key in the run's
+    /// slot order ([`super::super::jewelry::SLOTS`]): the host wears it on the hero once held to
+    /// legal slots and one of each piece ([`super::host::Peer::of_hello`]).
+    pub(in crate::survivors) loadout: [Option<String>; 5],
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -689,9 +689,14 @@ mod tests {
                 pitch: 0.0,
                 scale: 1.0,
             }),
-            pinned_trinket: None,
             tier: 5,
-            bound: vec!["band_of_accuria".into()],
+            loadout: [
+                Some("band_of_accuria".into()),
+                None,
+                Some("darkmoon_heroism".into()),
+                None,
+                None,
+            ],
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);

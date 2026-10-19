@@ -397,7 +397,7 @@ The code is `gear/raid.rs` (the pieces, the drop tables, the set bonuses and kee
 - **Kept in the profile.** Gear goes in the class's `gear.collected`, as catalog pieces do. The account's keepsakes are a new `[raid]` section (`RaidVault`: Eyes, Ingots, Bound jewelry, whether Sulfuras is forged). It reads as empty when missing, so **the profile version is not bumped** (it stays 4; the prof-p0 branch's v5 is unaffected). An older build drops the `[raid]` section on its next save.
 - **The Armory.** The Collection tab shows Molten Core under the rarities: the class's Tier 1 set in its slots and the named pieces it may wear, with sources, odds and an Equip button. The left column tallies them and the vault. **The hero model** wears T1: the visible-gear path dresses any worn display id.
 - **Set bonuses** (below) show in the item tooltip and the C panel, green once reached.
-- **Bound jewelry** (rings, trinkets, necklaces) is worn from the start of **every** run, raid or not: the simple version. RAIDS.md's plan (worn in raids, first offer elsewhere) is not built.
+- **Bound jewelry** (rings, trinkets, necklaces) joins the account's Jewelry Collection; it is worn from the start of a run only when picked into the Armory's Jewelry loadout (Neck, Finger 1/2, Trinket 1/2). RAIDS.md's plan (worn in raids, first offer elsewhere) is not built.
 - **Sulfuras, simple version:** with one Eye of Sulfuras and one Sulfuron Ingot in the vault, the forge lights at once. Both are used up, and Sulfuras, Hand of Ragnaros joins the Warrior's, Paladin's and Shaman's collections. Forged once per account. The Ingot drops from Golemagg (25%) and Ragnaros (50%), and the Eye from Ragnaros (10%).
 
 ### Tier 1 sets

@@ -517,9 +517,8 @@ fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopb
             pitch: 0.0,
             scale: 1.0,
         }),
-        pinned_trinket: None,
         tier: 0,
-        bound: Vec::new(),
+        loadout: [None; 5],
         hero: None,
     };
     let (host_hero, theirs) = {
@@ -733,6 +732,74 @@ fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopb
     });
 }
 
+/// A client's Hello carries its own profile's jewelry loadout: the host keeps only collectable
+/// pieces in slots of their kind, one of each, and the peer's hero wears them from the start.
+#[test]
+fn a_hello_loadout_is_held_to_legal_slots_and_worn() {
+    let key = |k: &str| Some(k.to_string());
+    let hello = Hello {
+        name: "A name far longer than any the host keeps".into(),
+        class: 2,
+        race: 2,
+        sex: 0,
+        trainer: 4000,
+        looks: NetLooks::default(),
+        bonuses: Bonuses::default(),
+        talents: Vec::new(),
+        mount_display: 0,
+        mount_hat: None,
+        tier: 200,
+        loadout: [
+            key("band_of_accuria"),
+            // The same ring again: Unique-Equipped.
+            key("band_of_accuria"),
+            // A necklace in a trinket slot.
+            key("gem_of_trapped_innocents"),
+            key("darkmoon_twisting_nether"),
+            // A green: never collected, so never worn.
+            key("fire_opal_necklace"),
+        ],
+        build: String::new(),
+    };
+    let peer = Peer::of_hello(1, &hello, None);
+    assert_eq!((peer.name.chars().count(), peer.tier), (24, 8));
+    let kept: Vec<_> = peer.loadout.iter().map(|p| p.map(|p| p.key)).collect();
+    assert_eq!(
+        kept,
+        [
+            Some("band_of_accuria"),
+            None,
+            None,
+            Some("darkmoon_twisting_nether"),
+            None
+        ]
+    );
+    let mut world = World::new();
+    let mut run = Run::default();
+    let client = world.spawn_empty().id();
+    let remote = {
+        let mut commands = world.commands();
+        host::spawn_peer_hero(&mut commands, &mut run, client, &peer, Vec3::ZERO)
+    };
+    world.flush();
+    let hero = world.get::<HeroState>(remote).unwrap();
+    let worn: Vec<_> = (0..5)
+        .map(|i| hero.jewelry.slot(i).map(|p| p.key))
+        .collect();
+    assert_eq!(worn, kept);
+    // A loadout in its legal slots is kept whole.
+    let mut legal = hello.clone();
+    legal.loadout = [
+        key("quick_strike_ring"),
+        key("band_of_accuria"),
+        key("hand_of_justice"),
+        key("darkmoon_heroism"),
+        key("choker_of_the_fire_lord"),
+    ];
+    let peer = Peer::of_hello(1, &legal, None);
+    assert!(peer.loadout.iter().all(Option::is_some));
+}
+
 #[test]
 fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
     let mut world = World::new();
@@ -759,9 +826,8 @@ fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
         talents: Vec::new(),
         mount_display: 0,
         mount_hat: None,
-        pinned_trinket: None,
         tier: 0,
-        bound: Vec::new(),
+        loadout: [None; 5],
         hero: None,
     };
     // Joining at level 6, it banks five hands; and one jewelry choice from a cache.
@@ -860,9 +926,8 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
             pitch: 0.0,
             scale: 1.0,
         }),
-        pinned_trinket: None,
         tier: 0,
-        bound: Vec::new(),
+        loadout: Default::default(),
         build: build.into(),
     };
     let (stale, fresh) = (world.spawn_empty().id(), world.spawn_empty().id());
@@ -1058,9 +1123,8 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
         talents: Vec::new(),
         mount_display: 0,
         mount_hat: None,
-        pinned_trinket: None,
         tier: 0,
-        bound: Vec::new(),
+        loadout: [None; 5],
         hero: Some(theirs),
     });
     let hat = CosmeticHat {

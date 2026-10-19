@@ -587,10 +587,8 @@ pub(super) struct Run {
     pub breather: f32,
     /// Every living player is choosing a co-op hand: the world runs slowed ([`strip::slow_mo`]).
     pub slow: bool,
-    /// The local account's run-start trinket has been applied for this run.
-    pub pinned_trinket: bool,
-    /// The account's Bound raid jewelry has been put on for this run ([`gear`]).
-    pub raid_bound: bool,
+    /// The account's jewelry loadout has been put on for this run ([`jewelry`]).
+    pub loadout_worn: bool,
     /// Micro-events announced so far ([`enemies::spawn_enemies`]): each sounds the raid warning.
     pub events: u32,
 }
@@ -623,8 +621,7 @@ impl Default for Run {
             party: 1,
             breather: 0.0,
             slow: false,
-            pinned_trinket: false,
-            raid_bound: false,
+            loadout_worn: false,
             events: 0,
         }
     }

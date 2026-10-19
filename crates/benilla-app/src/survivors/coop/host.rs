@@ -48,11 +48,36 @@ pub(super) struct Peer {
     pub(super) talents: Vec<(u32, u8)>,
     pub(super) mount_display: u32,
     pub(super) mount_hat: Option<super::super::stable::CosmeticHat>,
-    pub(super) pinned_trinket: Option<String>,
-    /// Its Tier 1 pieces worn, and its Bound raid jewelry ([`Hello::tier`], [`Hello::bound`]).
+    /// Its Tier 1 pieces worn ([`Hello::tier`]).
     pub(super) tier: u8,
-    pub(super) bound: Vec<String>,
+    /// Its jewelry loadout ([`Hello::loadout`]), as the host holds it: each piece collectable, in
+    /// a slot of its kind, and none twice.
+    pub(super) loadout: [Option<&'static jewelry::Piece>; jewelry::SLOTS.len()],
     pub(super) hero: Option<Entity>,
+}
+
+impl Peer {
+    /// Player `player` as its [`Hello`] says, held to what the host allows: a name of at most 24
+    /// characters, at most a full Tier 1 set, and a jewelry loadout of collectable pieces, each in
+    /// a slot of its kind and none twice ([`jewelry::collection::validate_loadout`]).
+    pub(super) fn of_hello(player: u8, h: &Hello, hero: Option<Entity>) -> Self {
+        Self {
+            player,
+            name: h.name.chars().take(24).collect(),
+            class: h.class,
+            race: h.race,
+            sex: h.sex,
+            trainer: h.trainer,
+            looks: h.looks.clone(),
+            bonuses: h.bonuses.clone(),
+            talents: h.talents.clone(),
+            mount_display: h.mount_display,
+            mount_hat: h.mount_hat,
+            tier: h.tier.min(8),
+            loadout: jewelry::collection::validate_loadout(&h.loadout),
+            hero,
+        }
+    }
 }
 
 /// On a remote hero: the connected client whose player drives it.
@@ -232,24 +257,10 @@ pub(super) fn greet(
         if let Some(hero) = old_hero {
             commands.entity(hero).try_insert(h.looks.clone());
         }
-        commands.entity(client).try_insert(Peer {
-            player,
-            name: h.name.chars().take(24).collect(),
-            class: h.class,
-            race: h.race,
-            sex: h.sex,
-            trainer: h.trainer,
-            looks: h.looks.clone(),
-            bonuses: h.bonuses.clone(),
-            talents: h.talents.clone(),
-            mount_display: h.mount_display,
-            mount_hat: h.mount_hat,
-            pinned_trinket: h.pinned_trinket.clone(),
-            tier: h.tier.min(8),
-            bound: h.bound.clone(),
-            // A repeated hello (sent until welcomed) keeps the hero it has.
-            hero: old_hero,
-        });
+        // A repeated hello (sent until welcomed) keeps the hero it has.
+        commands
+            .entity(client)
+            .try_insert(Peer::of_hello(player, h, old_hero));
         let to = SendTargets::Single(hello.client_id);
         welcome.write(ToClients {
             targets: to,
@@ -699,23 +710,15 @@ pub(super) fn spawn_peer_hero(
     state.picks = super::super::strip::catch_up(run.level);
     // Caches already opened paid every existing player a jewelry choice.
     state.jewelry.picks = run.caches;
-    // Its deck is its own profile's to have completed; what the host holds it to is that the key
-    // names a Darkmoon trinket, never any other piece of the catalog.
-    if let Some(piece) = peer
-        .pinned_trinket
-        .as_deref()
-        .and_then(jewelry::darkmoon_piece)
-    {
-        jewelry::put_on(&mut state, piece);
-    }
-    // Its Tier 1 set's 8-piece, and its Bound raid jewelry: only keys the raid binds, never any
-    // other piece of the catalog.
-    gear::raid::apply_tier(&mut state, class, peer.tier);
-    for key in &peer.bound {
-        if let Some(piece) = gear::raid::bound_piece(key) {
-            jewelry::put_on(&mut state, piece);
+    // Its jewelry loadout, each piece in its own slot: what it collected is its own profile's to
+    // say; the host held the Hello to legal slots and one of each piece.
+    for (slot, piece) in peer.loadout.iter().enumerate() {
+        if let Some(piece) = piece {
+            let _ = jewelry::wear(&mut state, piece, Some(slot));
         }
     }
+    // Its Tier 1 set's 8-piece.
+    gear::raid::apply_tier(&mut state, class, peer.tier);
     let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
     let mut remote = commands.entity(e);
     remote.insert((

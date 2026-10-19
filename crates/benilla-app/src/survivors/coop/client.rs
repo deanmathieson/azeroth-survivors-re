@@ -15,6 +15,7 @@ use super::super::enemies::{self, Enemy};
 use super::super::gear::{self, wear, Dresser, GearRead, HeroNames, Slot};
 use super::super::hero::Hero;
 use super::super::hud::{Choice, Offer};
+use super::super::jewelry;
 use super::super::party::{self, HandOutbox};
 use super::super::partyui::{self, FillPartyView, HeroRead, PartyView};
 use super::super::profile::Profile;
@@ -54,6 +55,7 @@ fn linked(session: Res<Session>) -> bool {
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<HostStart>()
         .init_resource::<HandSeq>()
+        .init_resource::<DealtHand>()
         .add_systems(
             PreUpdate,
             (
@@ -216,16 +218,11 @@ fn watch_link(
                     .map_or_else(Vec::new, |saved| saved.ranks.clone()),
                 mount_display: cosmetics.0,
                 mount_hat: cosmetics.1,
-                pinned_trinket: profile
-                    .as_deref()
-                    .and_then(|p| p.faire.wardrobe.pinned_trinket.clone()),
                 tier: gear::raid::tier_set(class).map_or(0, |set| set.worn(&saved.equipped_ids())),
-                bound: gear
-                    .vault()
-                    .bound_keys()
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                // What its own collection lets it wear: its pieces collected, in their slots.
+                loadout: profile.as_deref().map_or_else(Default::default, |p| {
+                    p.collection.worn().map(|p| p.map(|p| p.key.to_string()))
+                }),
                 build: super::build_tag(build.as_deref()),
             });
         }
@@ -742,6 +739,7 @@ fn receive_hands(
     mut local: Query<&mut HeroState, With<LocalHero>>,
     mut run: ResMut<Run>,
     mut seq: ResMut<HandSeq>,
+    mut dealt: ResMut<DealtHand>,
     mut pending: Local<Option<Hand>>,
 ) {
     if let Some(hand) = hands.read().last().cloned() {
@@ -759,7 +757,9 @@ fn receive_hands(
     run.version += 1;
     seq.0 = hand.seq;
     // The hand waits in the strip until this player opens it (Tab); an empty one closes it.
-    offer.deal(playable(&hand, &me));
+    let cards = playable(&hand, &me);
+    dealt.0 = cards.clone();
+    offer.deal(cards);
 }
 
 /// The host's spell visuals, swings and numbers, played here as a server's would be.
@@ -972,13 +972,26 @@ fn send_self_res(
 #[derive(Resource, Default)]
 pub(super) struct HandSeq(pub(super) u32);
 
-/// The cards' and tools' choices, to the host, each naming the hand it was made at.
+/// The cards of the hand the host last dealt this player, as its strip shows them.
+#[derive(Resource, Default)]
+pub(super) struct DealtHand(pub(super) Vec<Choice>);
+
+/// The cards' and tools' choices, to the host, each naming the hand it was made at. A piece of
+/// jewelry picked is this player's to collect ([`jewelry::PickedJewels`]), as the host wears it
+/// on a hero this machine does not mirror the jewelry of.
 fn send_hand(
     mut outbox: ResMut<HandOutbox>,
     seq: Res<HandSeq>,
+    dealt: Res<DealtHand>,
+    mut picked: ResMut<jewelry::PickedJewels>,
     mut out: MessageWriter<HandAction>,
 ) {
     for d in outbox.0.drain(..) {
+        if let party::HandDecision::Pick(i) = d {
+            if let Some(&Choice::Jewel(piece)) = dealt.0.get(i) {
+                picked.0.push(piece);
+            }
+        }
         out.write(HandAction {
             decision: WireDecision::of(d),
             seq: seq.0,

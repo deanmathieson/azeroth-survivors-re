@@ -14,7 +14,7 @@
 //!   reflect ([`apply_tier`]).
 //! - **Named drops**: the bosses' 1.12 weapons and armour, each listing the classes that may
 //!   Need it ([`RaidPiece::classes`]). Rings, trinkets and necklaces are **Bound** jewelry: the
-//!   account keeps them, and they are worn from the start of every run. Their numbers are the
+//!   account keeps them in its Jewelry Collection, to wear in its loadout. Their numbers are the
 //!   jewelry catalog's. Their real ids are from memory, and the display ids were picked from
 //!   `ItemDisplayInfo.dbc` by icon and model; neither can be checked against the client.
 //! - **Sulfuras.** The Eye of Sulfuras and the Sulfuron Ingot are quest items, counted in the
@@ -55,8 +55,8 @@ pub(in crate::survivors) enum Token {
 pub(in crate::survivors) enum RaidKind {
     /// Worn in its slot: kept in a class's gear.
     Gear,
-    /// A ring, trinket or necklace, by its jewelry key: kept for the account, worn from the start
-    /// of every run.
+    /// A ring, trinket or necklace, by its jewelry key: kept for the account, and collected for
+    /// its jewelry loadout.
     Bound(&'static str),
     /// A quest item, counted in the vault.
     Token(Token),
@@ -883,16 +883,14 @@ impl RaidVault {
     }
 }
 
-/// The jewelry piece keyed `key`, when it is raid Bound jewelry: what another player's account may
-/// put on its hero from the start, never any other piece of the catalog.
-pub(in crate::survivors) fn bound_piece(
-    key: &str,
-) -> Option<&'static super::super::jewelry::Piece> {
+/// The bosses that drop the Bound jewelry keyed `key`, in raid order; none for any other piece.
+pub(in crate::survivors) fn bound_sources(key: &str) -> Vec<&'static str> {
     RAID_ITEMS
         .iter()
-        .any(|p| matches!(p.kind, RaidKind::Bound(k) if k == key))
-        .then(|| super::super::jewelry::piece(key))
-        .flatten()
+        .filter(|p| matches!(p.kind, RaidKind::Bound(k) if k == key))
+        .flat_map(|p| sources(p.item.id))
+        .map(|(boss, _)| boss)
+        .collect()
 }
 
 /// With an Eye and an Ingot in `vault` and no Sulfuras yet, both go to the forge: true when it

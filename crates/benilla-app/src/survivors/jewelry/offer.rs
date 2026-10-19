@@ -13,7 +13,8 @@ use super::super::hud::{self, HudFont};
 use super::super::profile::Profile;
 use super::super::{HeroState, LocalHero, Phase, Rng, Run};
 use super::{
-    act, close, gold_instead, proc_text, stat_deltas, Act, Done, JewelOffer, Jewelry, Piece,
+    act, close, gold_instead, proc_text, records, stat_deltas, Act, Done, JewelOffer, Jewelry,
+    Piece,
 };
 
 const CARD_W: f32 = 220.0;
@@ -48,12 +49,6 @@ pub(super) struct JewelCard(Color);
 /// What a click on a card or button does.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct JewelButton(Act);
-
-/// Whether this run's picks are logged in the profile's Codex: not for an auto-runner run the
-/// profile does not record ([`super::super::profile::record_finished`]), as its gear is not.
-fn records(auto: Option<&Auto>) -> bool {
-    auto.is_none() || std::env::var("WOW_SURVIVORS_RECORD").as_deref() == Ok("1")
-}
 
 /// The overlay, built once the HUD's font is in; hidden until the picker opens.
 pub(super) fn spawn_root(

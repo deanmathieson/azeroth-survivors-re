@@ -13,8 +13,8 @@
 //! # Adding content to a tab
 //!
 //! Each tab lives in its own file (`character.rs`, `collection.rs`, `drop_tables.rs`, `codex.rs`,
-//! `talents.rs`, `achievements.rs`, `rewards.rs`, `companion.rs`, `quests.rs`) behind one entry
-//! point:
+//! `jewelry.rs`, `talents.rs`, `achievements.rs`, `rewards.rs`, `companion.rs`, `quests.rs`)
+//! behind one entry point:
 //!
 //! ```ignore
 //! pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx)
@@ -42,6 +42,7 @@ mod codex;
 mod collection;
 mod companion;
 mod drop_tables;
+mod jewelry;
 mod quests;
 mod rewards;
 mod stable;
@@ -109,6 +110,7 @@ pub(super) enum ArmoryTab {
     Collection,
     DropTables,
     Codex,
+    Jewelry,
     Talents,
     Achievements,
     Rewards,
@@ -119,11 +121,12 @@ pub(super) enum ArmoryTab {
 }
 
 impl ArmoryTab {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 12] = [
         Self::Character,
         Self::Collection,
         Self::DropTables,
         Self::Codex,
+        Self::Jewelry,
         Self::Talents,
         Self::Achievements,
         Self::Rewards,
@@ -140,6 +143,7 @@ impl ArmoryTab {
             Self::Collection => "Collection",
             Self::DropTables => "Drop Tables",
             Self::Codex => "Codex",
+            Self::Jewelry => "Jewelry",
             Self::Talents => "Talents",
             Self::Achievements => "Achievements",
             Self::Rewards => "Rewards",
@@ -157,6 +161,7 @@ impl ArmoryTab {
             Self::Collection => "collection",
             Self::DropTables => "drop-tables",
             Self::Codex => "codex",
+            Self::Jewelry => "jewelry",
             Self::Talents => "talents",
             Self::Achievements => "achievements",
             Self::Rewards => "rewards",
@@ -186,6 +191,7 @@ impl ArmoryTab {
             Self::Collection => collection::build(parent, ctx),
             Self::DropTables => drop_tables::build(parent, ctx),
             Self::Codex => codex::build(parent, ctx),
+            Self::Jewelry => jewelry::build(parent, ctx),
             Self::Talents => talents::build(parent, ctx),
             Self::Achievements => achievements::build(parent, ctx),
             Self::Rewards => rewards::build(parent, ctx),
@@ -321,7 +327,11 @@ pub(super) enum Column {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<ArmoryState>()
-        .add_systems(Update, wardrobe::input.after(armory_input))
+        .init_resource::<jewelry::JewelryView>()
+        .add_systems(
+            Update,
+            (wardrobe::input, jewelry::input).after(armory_input),
+        )
         .add_systems(
             Update,
             (
@@ -1151,6 +1161,8 @@ mod tests {
         for name in ["drop_tables", "DropTables", " drop tables "] {
             assert_eq!(ArmoryTab::from_name(name), Some(ArmoryTab::DropTables));
         }
+        // `WOW_SURVIVORS_ARMORY=jewelry` opens the Jewelry tab.
+        assert_eq!(ArmoryTab::from_name("jewelry"), Some(ArmoryTab::Jewelry));
         for name in ["", "gear", "characters"] {
             assert_eq!(ArmoryTab::from_name(name), None, "{name:?}");
         }

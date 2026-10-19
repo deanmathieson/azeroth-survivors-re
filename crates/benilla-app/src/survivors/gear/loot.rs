@@ -6,8 +6,8 @@
 //!
 //! A Molten Core boss beaten ([`Felled`]) drops its raid loot ([`raid::roll_kill`]) the same way,
 //! straight to the player solo or up for the party's roll in co-op; raid jewelry and quest items
-//! go into the account's vault ([`super::RaidVault`]). As a run plays, the hero wears its class's
-//! Tier 1 set bonuses ([`wear_tier`]) and the account's Bound jewelry ([`wear_bound`]).
+//! go into the account's vault ([`super::RaidVault`]), the jewelry joining the account's Jewelry
+//! Collection. As a run plays, the hero wears its class's Tier 1 set bonuses ([`wear_tier`]).
 
 use std::collections::VecDeque;
 
@@ -19,7 +19,7 @@ use super::super::hud::{BannerText, NoteKind, ResultsNotes, GOLD_TONE};
 use super::super::party::{NetRole, Remote};
 use super::super::raid::Felled;
 use super::super::treasure::BossRolls;
-use super::super::{jewelry, treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
+use super::super::{treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
 use super::raid::{self, Kept, RaidKind, RaidPiece};
 use super::save::Collected;
 use super::store::{GearRead, GearStore};
@@ -273,7 +273,7 @@ fn announce_raid(
         Kept::Gear { equipped: true, .. } => Some(format!("Loot: {name} (equipped)")),
         Kept::Gear { .. } => Some(format!("Loot: {name}")),
         Kept::Bound => Some(format!(
-            "Loot: {name} (Bound: worn from the start of every run)"
+            "Loot: {name} (Bound: added to your Jewelry collection)"
         )),
         Kept::Counted(n) => Some(format!("Loot: {name} ({n} held)")),
         Kept::Duplicate => None,
@@ -377,26 +377,6 @@ pub(super) fn wear_tier(
             raid::apply_tier(&mut hero, class, pieces);
         }
     }
-}
-
-/// As play begins, the local hero puts on the account's Bound raid jewelry, once a run.
-pub(super) fn wear_bound(
-    mut run: ResMut<Run>,
-    gear: GearRead,
-    mut heroes: Query<&mut HeroState, With<LocalHero>>,
-) {
-    if run.raid_bound {
-        return;
-    }
-    let Ok(mut hero) = heroes.single_mut() else {
-        return;
-    };
-    for key in gear.vault().bound_keys() {
-        if let Some(piece) = raid::bound_piece(key) {
-            jewelry::put_on(&mut hero, piece);
-        }
-    }
-    run.raid_bound = true;
 }
 
 /// Loot lines take the run's banner in turn, each once it is free, in the piece's rarity colour;

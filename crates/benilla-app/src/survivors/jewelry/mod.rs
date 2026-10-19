@@ -14,15 +14,21 @@
 //!
 //! Every piece ever offered and taken is logged per account in the profile's
 //! [`CodexSave`] ([`codex`]), which the Armory's Codex tab shows.
+//!
+//! Every Rare-or-better piece the account gets is kept in its Jewelry Collection
+//! ([`collection`]), and the loadout picked from it in the Armory's Jewelry tab is worn from the
+//! start of every run ([`equip_loadout`]).
 
 mod catalog;
 mod codex;
+pub(super) mod collection;
 mod offer;
 
 use std::ops::DerefMut;
 
 use bevy::prelude::*;
 
+use super::auto::Auto;
 use super::bonus::{Bonus, Bonuses, School, StatKey};
 pub(super) use super::cards::Rarity;
 use super::faire::catalog::deck_complete;
@@ -30,12 +36,15 @@ use super::mechanics::{self, Effect, MechanicId, MechanicSpec, Of, Trigger};
 use super::profile::Profile;
 use super::{hero, party, treasure, HeroState, LocalHero, Phase, Rng, Run, Stats};
 pub(super) use codex::{CodexAction, CodexSave, CodexView};
+pub(super) use collection::{JewelryCollection, LoadoutSlot, PickedJewels};
 
 /// The jewelry offer's and the Codex's systems, registered by [`super::SurvivorsPlugin`].
 pub(super) fn plugin(app: &mut App) {
     phases(app);
     app.init_resource::<JewelOffer>()
         .init_resource::<CodexView>()
+        .init_resource::<PickedJewels>()
+        .init_resource::<collection::CollectionToasts>()
         .add_systems(
             Update,
             open_jewelry
@@ -56,40 +65,51 @@ pub(super) fn plugin(app: &mut App) {
             )
                 .chain(),
         )
-        .add_systems(OnEnter(Phase::Playing), equip_pinned_darkmoon)
-        .add_systems(Update, codex::codex_clicks);
+        .add_systems(OnEnter(Phase::Playing), equip_loadout)
+        .add_systems(
+            Update,
+            (
+                codex::codex_clicks,
+                collection::collect_new,
+                (collection::spawn_toast, collection::show_toast).chain(),
+            ),
+        );
 }
 
-/// A pinned completed-deck trinket occupies the first free trinket slot as play begins.
-fn equip_pinned_darkmoon(
+/// Whether this run's finds are the account's to keep, in its Codex and its Jewelry Collection:
+/// not for an auto-runner run the profile does not record
+/// ([`super::profile::record_finished`]), as its gear is not.
+pub(super) fn records(auto: Option<&Auto>) -> bool {
+    auto.is_none() || std::env::var("WOW_SURVIVORS_RECORD").as_deref() == Ok("1")
+}
+
+/// As play begins, the local hero puts on the account's jewelry loadout, once a run.
+fn equip_loadout(
     profile: Option<Res<Profile>>,
     mut run: ResMut<Run>,
     mut heroes: Query<&mut HeroState, With<LocalHero>>,
 ) {
-    if run.pinned_trinket {
+    if run.loadout_worn {
         return;
     }
-    let Some(profile) = profile else { return };
-    if let Ok(mut hero) = heroes.single_mut() {
-        equip_pinned(&profile, &mut hero);
+    let Ok(mut hero) = heroes.single_mut() else {
+        return;
+    };
+    if let Some(profile) = profile {
+        wear_loadout(&mut hero, &profile.collection);
     }
-    run.pinned_trinket = true;
+    run.loadout_worn = true;
 }
 
-fn equip_pinned(profile: &Profile, hero: &mut HeroState) -> bool {
-    let Some(key) = profile.faire.wardrobe.pinned_trinket.as_deref() else {
-        return false;
-    };
-    let Some(piece) = piece(key) else {
-        return false;
-    };
-    if !darkmoon_pool(profile)
-        .iter()
-        .any(|owned| owned.key == piece.key)
-    {
-        return false;
-    }
-    wear(hero, piece, None).is_ok()
+/// The loadout's pieces on `hero`, each in its own slot: how many went on.
+pub(super) fn wear_loadout(hero: &mut HeroState, collection: &JewelryCollection) -> usize {
+    collection
+        .worn()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(slot, p)| Some((slot, p?)))
+        .filter(|&(slot, p)| wear(hero, p, Some(slot)).is_ok())
+        .count()
 }
 
 /// The jewelry choice pauses the run as the level-up hand does, and deals as it opens.
@@ -171,33 +191,36 @@ pub(super) fn piece(key: &str) -> Option<&'static Piece> {
         .find(|p| p.key == key)
 }
 
-/// The Darkmoon trinket keyed `key`, and only a Darkmoon trinket: what another player's pinned
-/// trinket may be (its deck is its own profile's to check), never an arbitrary catalog piece.
-#[cfg_attr(not(feature = "coop"), allow(dead_code))]
-pub(super) fn darkmoon_piece(key: &str) -> Option<&'static Piece> {
-    catalog::DARKMOON.iter().find(|p| p.key == key)
+/// Each Darkmoon deck's suit and the trinket completing it gives.
+const DARKMOON_DECKS: [(&str, &str); 4] = [
+    ("beasts", "darkmoon_blue_dragon"),
+    ("elementals", "darkmoon_maelstrom"),
+    ("portals", "darkmoon_twisting_nether"),
+    ("warlords", "darkmoon_heroism"),
+];
+
+/// The deck whose completion gives Darkmoon trinket `key`.
+pub(super) fn darkmoon_suit(key: &str) -> Option<&'static str> {
+    DARKMOON_DECKS
+        .iter()
+        .find(|(_, k)| *k == key)
+        .map(|(suit, _)| *suit)
+}
+
+/// The trinkets of this account's completed decks, once each.
+pub(super) fn darkmoon_owned(profile: &Profile) -> Vec<&'static Piece> {
+    DARKMOON_DECKS
+        .into_iter()
+        .filter(|(suit, _)| deck_complete(profile, suit))
+        .filter_map(|(_, key)| catalog::DARKMOON.iter().find(|p| p.key == key))
+        .collect()
 }
 
 /// Deck trinkets unlocked by this account.  Each appears four times in the selection pool, making
 /// a completed deck feel like an earned run-starting reward without displacing normal jewelry.
 pub(super) fn darkmoon_pool(profile: &Profile) -> Vec<&'static Piece> {
-    ["beasts", "elementals", "portals", "warlords"]
+    darkmoon_owned(profile)
         .into_iter()
-        .filter(|suit| deck_complete(profile, suit))
-        .filter_map(|suit| {
-            catalog::DARKMOON.iter().find(|p| {
-                p.key
-                    == format!(
-                        "darkmoon_{}",
-                        match suit {
-                            "beasts" => "blue_dragon",
-                            "elementals" => "maelstrom",
-                            "portals" => "twisting_nether",
-                            _ => "heroism",
-                        }
-                    )
-            })
-        })
         .flat_map(|piece| std::iter::repeat_n(piece, 4))
         .collect()
 }
@@ -1084,24 +1107,77 @@ mod tests {
     }
 
     #[test]
-    fn only_a_darkmoon_trinket_may_be_pinned_by_another_player() {
-        assert!(darkmoon_piece("darkmoon_heroism").is_some());
-        assert!(darkmoon_piece("band_of_accuria").is_none());
-        assert!(darkmoon_piece("no_such_piece").is_none());
+    fn every_darkmoon_trinket_is_a_decks() {
+        for piece in catalog::DARKMOON {
+            assert!(darkmoon_suit(piece.key).is_some(), "{}", piece.key);
+        }
+        assert_eq!(darkmoon_suit("darkmoon_heroism"), Some("warlords"));
+        assert_eq!(darkmoon_suit("band_of_accuria"), None);
     }
 
+    /// The account's loadout goes on the local hero as play begins, once a run however often play
+    /// resumes; and a run without a profile wears nothing.
     #[test]
-    fn pinned_darkmoon_trinket_equips_at_run_start() {
+    fn the_loadout_is_worn_from_the_start_of_a_run() {
+        use bevy::ecs::system::RunSystemOnce;
         let mut profile = Profile::default();
-        for rank in [
-            "ace", "two", "three", "four", "five", "six", "seven", "eight",
+        let c = &mut profile.collection;
+        for key in [
+            "band_of_accuria",
+            "darkmoon_heroism",
+            "onyxia_tooth_pendant",
         ] {
-            profile.faire.cards.insert(format!("{rank}_of_beasts"));
+            c.unlock(by_key(key));
         }
-        profile.faire.wardrobe.pinned_trinket = Some("darkmoon_blue_dragon".into());
-        let mut hero = HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default());
-        assert!(equip_pinned(&profile, &mut hero));
-        assert!(hero.jewelry.wears(piece("darkmoon_blue_dragon").unwrap()));
+        c.equip(LoadoutSlot::Finger1, "band_of_accuria").unwrap();
+        c.equip(LoadoutSlot::Trinket2, "darkmoon_heroism").unwrap();
+        c.equip(LoadoutSlot::Neck, "onyxia_tooth_pendant").unwrap();
+        // Bound jewelry kept but not in the loadout is not worn.
+        profile.raid.bound.insert(2131);
+        let mut world = World::new();
+        world.insert_resource(profile);
+        world.init_resource::<Run>();
+        let me = world
+            .spawn((
+                HeroState::new(0, &data::CLASSES[0], 1, Bonuses::default()),
+                LocalHero,
+            ))
+            .id();
+        world.run_system_once(equip_loadout).unwrap();
+        let worn = |w: &World| -> Vec<Option<&'static str>> {
+            let hero = w.get::<HeroState>(me).unwrap();
+            (0..SLOTS.len())
+                .map(|i| hero.jewelry.slot(i).map(|p| p.key))
+                .collect()
+        };
+        let want = [
+            Some("band_of_accuria"),
+            None,
+            None,
+            Some("darkmoon_heroism"),
+            Some("onyxia_tooth_pendant"),
+        ];
+        assert_eq!(worn(&world), want);
+        assert!(world.resource::<Run>().loadout_worn);
+        let hero = world.get::<HeroState>(me).unwrap();
+        assert!(mechanics::has(
+            hero,
+            MechanicId::Jewelry(by_key("darkmoon_heroism").display_id)
+        ));
+        // Back from a level-up hand: nothing goes on twice.
+        world.run_system_once(equip_loadout).unwrap();
+        assert_eq!(worn(&world), want);
+        // A new run starts the loadout again on its fresh hero.
+        world.insert_resource(Run::default());
+        world.entity_mut(me).insert(HeroState::default());
+        world.run_system_once(equip_loadout).unwrap();
+        assert_eq!(worn(&world), want);
+        // No profile: nothing.
+        world.remove_resource::<Profile>();
+        world.insert_resource(Run::default());
+        world.entity_mut(me).insert(HeroState::default());
+        world.run_system_once(equip_loadout).unwrap();
+        assert_eq!(worn(&world), [None; 5]);
     }
 
     /// A rough measure of a piece's power: each bonus over what one "unit" of its stat is worth.

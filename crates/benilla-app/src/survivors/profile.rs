@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::achievements::AchievementSave;
 use super::faire::FaireSave;
 use super::gear::{GearSave, RaidVault};
-use super::jewelry::CodexSave;
+use super::jewelry::{collection, CodexSave, JewelryCollection};
 use super::professions::econ::PurseSave;
 use super::professions::inventory::InventorySave;
 use super::professions::save::ProfessionsSave;
@@ -116,6 +116,11 @@ pub(super) struct Profile {
     /// version bump.
     #[serde(default)]
     pub raid: RaidVault,
+    /// The account's Jewelry Collection and the loadout worn into each run, defined and edited in
+    /// [`super::jewelry::collection`]. A save without it reads as empty and is migrated once on
+    /// load ([`collection::migrate`]), so it needs no version bump.
+    #[serde(default)]
+    pub collection: JewelryCollection,
     /// The bags, defined and edited in [`super::professions`].
     #[serde(default)]
     pub inventory: InventorySave,
@@ -155,6 +160,7 @@ impl Default for Profile {
             faire: FaireSave::default(),
             stable: StableSave::default(),
             raid: RaidVault::default(),
+            collection: JewelryCollection::new_account(),
             inventory: InventorySave::default(),
             professions: ProfessionsSave::default(),
             purse: PurseSave::default(),
@@ -320,6 +326,9 @@ fn load_text(text: &str) -> LoadedProfile {
     match toml::from_str::<Profile>(text) {
         Ok(mut profile) => {
             profile.writable = profile.version <= PROFILE_VERSION;
+            // A save from before the Jewelry Collection folds its Bound jewelry and pinned trinket
+            // in, once; the next write keeps it.
+            collection::migrate(&mut profile);
             if profile.writable {
                 // An older save is this shape less some fields; its next write is this version.
                 profile.version = PROFILE_VERSION;

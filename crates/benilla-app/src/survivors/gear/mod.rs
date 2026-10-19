@@ -111,7 +111,6 @@ pub(super) fn plugin(app: &mut App) {
             ),
         )
         .add_systems(OnEnter(Phase::Menu), loot::clear_toasts)
-        .add_systems(OnEnter(Phase::Playing), loot::wear_bound)
         // The chests the run's end opened roll ahead of its record, so their gold is in it.
         .add_systems(
             OnEnter(Phase::GameOver),

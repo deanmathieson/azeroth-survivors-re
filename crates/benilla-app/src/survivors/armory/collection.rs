@@ -126,8 +126,8 @@ fn tally(
     para(
         p,
         ctx,
-        "Bosses drop gear for the class you play. Molten Core's Bound jewelry is worn from the \
-         start of every run. Click a piece to see where it drops.",
+        "Bosses drop gear for the class you play. Molten Core's Bound jewelry joins your Jewelry \
+         collection, worn through its loadout. Click a piece to see where it drops.",
         11.0,
         DIM,
     );
