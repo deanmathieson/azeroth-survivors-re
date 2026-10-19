@@ -3085,18 +3085,26 @@ const MC_SULFURON_BOSSES: &[Foe] = &mc_raid_bosses(foe("Sulfuron Harbinger", 121
 /// Golemagg the Incinerator (11986, the great molten giant).
 const MC_GOLEMAGG_BOSSES: &[Foe] =
     &mc_raid_bosses(giant("Golemagg the Incinerator", 11986, 63, 3.8, 1.9));
+/// Majordomo Executus (12029, the great black Flamewaker salamander).
+const MC_MAJORDOMO_BOSSES: &[Foe] = &mc_raid_bosses(foe("Majordomo Executus", 12029, 63, 4.4, 2.2));
+/// Ragnaros (11121, the Firelord), who never leaves his lava ([`super::raid`] roots him).
+const MC_RAGNAROS_BOSSES: &[Foe] = &mc_raid_bosses(giant("Ragnaros", 11121, 63, 0.0, 1.6));
 
 /// The adds raid scripts call in, by name ([`super::raid::Does::Adds`]), each numbered at the boss
 /// ladder's first rung: Lucifron's Flamewaker Protectors (`CreatureDisplayInfo` 12029, the larger
 /// black salamander), Gehennas' Flamewakers (12030, red), Garr's Firesworn (12164, a small black
-/// rock elemental), Sulfuron's Flamewaker Priests (13029, dark red) and Golemagg's Core Ragers
-/// (11997, a core hound).
+/// rock elemental), Sulfuron's Flamewaker Priests (13029, dark red), Golemagg's Core Ragers
+/// (11997, a core hound), Majordomo's Flamewaker Elites (12002) and Healers (12391), both red, and
+/// Ragnaros's Sons of Flame (14508, a fire elemental).
 const MC_ADDS: &[Foe] = &[
     foe("Flamewaker Protector", 12029, 62, 4.4, 2.0),
     foe("Flamewaker", 12030, 62, 4.2, 2.0),
     foe("Firesworn", 12164, 62, 4.6, 1.2),
     foe("Flamewaker Priest", 13029, 62, 4.0, 1.8),
     giant("Core Rager", 11997, 62, 4.8, 1.4),
+    foe("Flamewaker Elite", 12002, 62, 4.4, 1.8),
+    foe("Flamewaker Healer", 12391, 62, 4.2, 1.6),
+    foe("Son of Flame", 14508, 62, 5.0, 1.2),
 ];
 
 pub(crate) static MAPS: &[MapDef] = &[
@@ -3766,10 +3774,10 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [736.0, -1168.0, -120.4],
         floor: -120.4,
         leash: 30.0,
-        victory: "Majordomo's camp is broken.",
+        victory: "Majordomo Executus submits, and the way to Ragnaros opens.",
         foes: MC_FOES,
-        bosses: MC_BOSSES,
-        raid: false,
+        bosses: MC_MAJORDOMO_BOSSES,
+        raid: true,
     },
     MapDef {
         name: "Molten Core: Ragnaros's Dry Ledge",
@@ -3790,9 +3798,9 @@ pub(crate) static MAPS: &[MapDef] = &[
         center: [828.0, -852.0, -229.0],
         floor: -229.0,
         leash: 30.0,
-        victory: "Ragnaros is driven back into the lava.",
+        victory: "Ragnaros is driven back into the lava. Molten Core is cleared!",
         foes: MC_FOES,
-        bosses: MC_BOSSES,
+        bosses: MC_RAGNAROS_BOSSES,
         raid: true,
     },
     // The later raid bosses' rooms are the spike's caverns (docs/MC-SPIKE.md), by its guesses:
@@ -4101,6 +4109,8 @@ mod arena_probe {
             .chain(super::MC_GEDDON_BOSSES)
             .chain(super::MC_SULFURON_BOSSES)
             .chain(super::MC_GOLEMAGG_BOSSES)
+            .chain(super::MC_MAJORDOMO_BOSSES)
+            .chain(super::MC_RAGNAROS_BOSSES)
             .chain(super::MC_ADDS)
         {
             assert!(

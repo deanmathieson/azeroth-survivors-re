@@ -89,6 +89,30 @@ const TIERS: &[(&str, Tier)] = &[
     ("Molten Core: Golemagg's Ridge", Tier::Raid),
 ];
 
+/// Zones that open only once another is won, whatever the tiers say: Ragnaros's lair waits for
+/// Majordomo to yield. `(the zone, the zone to win, its boss)`.
+const GATES: &[(&str, &str, &str)] = &[(
+    "Molten Core: Ragnaros' Lair",
+    "Molten Core: Majordomo's Camp",
+    "Majordomo Executus",
+)];
+
+/// The zone that must be won before `name` opens, and its boss, if any.
+fn gate_of(name: &str) -> Option<(&'static str, &'static str)> {
+    GATES
+        .iter()
+        .find(|(zone, ..)| *zone == name)
+        .map(|&(_, need, boss)| (need, boss))
+}
+
+/// What opens a locked zone: its gate's boss, else the tier before it.
+pub(super) fn lock_line(map: usize) -> String {
+    match data::MAPS.get(map).and_then(|m| gate_of(m.name)) {
+        Some((_, boss)) => format!("Locked · defeat {boss}"),
+        None => map_tier(map).lock_line(),
+    }
+}
+
 fn tier_of(name: &str) -> Option<Tier> {
     TIERS.iter().find(|(n, _)| *n == name).map(|&(_, t)| t)
 }
@@ -171,13 +195,21 @@ impl Unlocks {
             .filter(|&i| records[i].wins > 0)
             .map(map_tier)
             .max();
+        let won = |name: &str| {
+            data::MAPS
+                .iter()
+                .position(|m| m.name == name)
+                .is_some_and(|i| records[i].wins > 0)
+        };
         let zones = records
             .iter()
             .enumerate()
             .map(|(i, r)| {
                 let opener = map_tier(i).before();
+                let gated = gate_of(data::MAPS[i].name).is_some_and(|(need, _)| !won(need));
                 Standing {
-                    open: all || opener.is_none_or(|t| furthest.is_some_and(|f| f >= t)),
+                    open: all
+                        || (!gated && opener.is_none_or(|t| furthest.is_some_and(|f| f >= t))),
                     wins: r.wins,
                     best_win_mult: r.best_win_mult,
                 }
@@ -338,13 +370,14 @@ mod tests {
         profile
     }
 
-    /// The tiers open under `profile`; a tier is open or locked as a whole.
+    /// The tiers open under `profile`; a tier is open or locked as a whole, but for its gated
+    /// zones ([`GATES`], tested on their own).
     fn open_tiers(profile: &Profile) -> Vec<Tier> {
         let unlocks = Unlocks::from_profile(profile, false);
         let mut open: Vec<Tier> = Vec::new();
         for t in [Tier::Starting, Tier::Frontier, Tier::Elite, Tier::Raid] {
             let zones: Vec<usize> = (0..data::MAPS.len())
-                .filter(|&i| map_tier(i) == t)
+                .filter(|&i| map_tier(i) == t && gate_of(data::MAPS[i].name).is_none())
                 .collect();
             let n = zones.iter().filter(|&&i| unlocks.is_open(i)).count();
             assert!(n == 0 || n == zones.len(), "{t:?} is half open");
@@ -424,6 +457,29 @@ mod tests {
         let all = Unlocks::from_profile(&Profile::default(), true);
         assert!((0..data::MAPS.len()).all(|i| all.is_open(i)));
         assert!(!all.is_open(data::MAPS.len()));
+    }
+
+    #[test]
+    fn ragnaros_opens_only_once_majordomo_yields() {
+        let lair = data::MAPS
+            .iter()
+            .position(|m| m.name == "Molten Core: Ragnaros' Lair")
+            .unwrap();
+        let elite = Unlocks::from_profile(&won(&["The Dark Portal"]), false);
+        assert!(!elite.is_open(lair), "a raid zone opens, but not his lair");
+        assert_eq!(lock_line(lair), "Locked · defeat Majordomo Executus");
+        let camp = data::MAPS
+            .iter()
+            .position(|m| m.name == "Molten Core: Majordomo's Camp")
+            .unwrap();
+        assert!(elite.is_open(camp));
+        let yielded = Unlocks::from_profile(
+            &won(&["The Dark Portal", "Molten Core: Majordomo's Camp"]),
+            false,
+        );
+        assert!(yielded.is_open(lair));
+        assert!(Unlocks::from_profile(&Profile::default(), true).is_open(lair));
+        assert_eq!(lock_line(0), map_tier(0).lock_line());
     }
 
     #[test]

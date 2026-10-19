@@ -693,7 +693,7 @@ fn row_line(map: usize, unlocks: &Unlocks) -> String {
     if unlocks.is_open(map) {
         format!("{}  {}", levels(map), data::MAPS[map].zone)
     } else {
-        zones::map_tier(map).lock_line()
+        zones::lock_line(map)
     }
 }
 
@@ -1326,7 +1326,7 @@ pub(super) fn refresh_zone_card(
             ZoneCardText::Name => (data::MAPS[map].name.to_string(), GOLD),
             ZoneCardText::Kind => (format!("{} · {}", tier.label(), levels(map)), Color::WHITE),
             ZoneCardText::Best => match standing.best_win() {
-                _ if !standing.open => (tier.lock_line(), LOCKED),
+                _ if !standing.open => (zones::lock_line(map), LOCKED),
                 Some(best) => (best, GREEN),
                 None => ("Not yet won".to_string(), DIM),
             },

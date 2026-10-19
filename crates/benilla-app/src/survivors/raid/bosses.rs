@@ -1,13 +1,14 @@
-//! The Molten Core scripts so far: Lucifron with his Flamewaker Protectors, Magmadar, Gehennas,
-//! Garr and his Firesworn, Shazzrah, Baron Geddon, Sulfuron Harbinger and his Flamewaker Priests,
-//! and Golemagg the Incinerator with his Core Ragers (`docs/RAIDS.md` section 2). Names and spells are the real 1.12 ones (checked against
+//! The Molten Core scripts: Lucifron with his Flamewaker Protectors, Magmadar, Gehennas, Garr and
+//! his Firesworn, Shazzrah, Baron Geddon, Sulfuron Harbinger and his Flamewaker Priests, Golemagg
+//! the Incinerator with his Core Ragers, Majordomo Executus with his Flamewaker Elites and
+//! Healers, and Ragnaros with his Sons of Flame (`docs/RAIDS.md` section 2). Names and spells are the real 1.12 ones (checked against
 //! `Spell.dbc` in the tests); the numbers are ours. Damage is a fraction of the struck hero's own
 //! maximum health, so a blow lands the same at any level and party size.
 
 use super::super::bonus::School;
 use super::{
-    After, Blow, BossAbility as A, Dispel, Does, Erupt, Master, Payload, Pick, Script, Shape, Tone,
-    When, Yell,
+    After, Blow, Bond, BossAbility as A, Dispel, Does, Erupt, Master, Payload, Pick, Script, Shape,
+    Submit, Tone, WardKind, When, Yell,
 };
 
 // The 1.12 spells (`Spell.dbc` names in the tests).
@@ -293,6 +294,36 @@ pub(crate) const FLAME_SPEAR: u32 = 19781;
 pub(crate) const MAGMA_SPLASH: u32 = 13880;
 pub(crate) const EARTHQUAKE: u32 = 19798;
 pub(crate) const MANGLE: u32 = 19820;
+pub(crate) const SEPARATION_ANXIETY: u32 = 23492;
+pub(crate) const ARMAGEDDON: u32 = 20478;
+pub(crate) const SHADOW_WORD_PAIN: u32 = 19776;
+pub(crate) const PYROBLAST: u32 = 20228;
+pub(crate) const GOLEMAGGS_TRUST: u32 = 20553;
+pub(crate) const MAGIC_REFLECTION: u32 = 20619;
+pub(crate) const DAMAGE_SHIELD: u32 = 21075;
+pub(crate) const TELEPORT: u32 = 20618;
+pub(crate) const BLAST_WAVE: u32 = 20229;
+pub(crate) const WRATH_OF_RAGNAROS: u32 = 20566;
+pub(crate) const ELEMENTAL_FIRE: u32 = 20564;
+pub(crate) const MAGMA_BLAST: u32 = 20565;
+/// Lava Burst (21158 is the only row of the name, with no visual of its own: its eruption plays
+/// as the ring lands).
+pub(crate) const LAVA_BURST: u32 = 21158;
+
+// Majordomo's and Ragnaros's spoken lines: `SoundEntries` kits from `Sound\Creature\Executus` and
+// `Sound\Creature\Ragnaros` (checked by name in the tests).
+/// `A_ExecutusAggro01`: "Reckless mortals...".
+pub(crate) const EXECUTUS_AGGRO: u32 = 8035;
+/// `A_ExecutusDefeat01`: "Impossible! Stay your attack, mortals... I submit! I submit!".
+pub(crate) const EXECUTUS_DEFEAT: u32 = 8038;
+/// `A_RagnarosArrival01`: "TOO SOON! YOU HAVE AWAKENED ME TOO SOON, EXECUTUS!".
+pub(crate) const RAGNAROS_ARRIVAL: u32 = 8043;
+/// `A_RagnarosSpecialAttack01`: "BY FIRE BE PURGED!".
+pub(crate) const RAGNAROS_PURGED: u32 = 8046;
+/// `A_RagnarosReinforcements01`: "COME FORTH, MY SERVANTS! DEFEND YOUR MASTER!".
+pub(crate) const RAGNAROS_SERVANTS: u32 = 8049;
+/// `RagnarosDeath`, the death kit of his display.
+pub(crate) const RAGNAROS_DEATH: u32 = 7555;
 
 // The creatures' own voices, `CreatureSoundData` through each display (checked in the tests): the
 // aggro roar a boss gives as it walks out, and its death cry.
@@ -318,6 +349,9 @@ pub(crate) const FLAMEWAKER_NAME: &str = "Flamewaker";
 pub(crate) const FIRESWORN_NAME: &str = "Firesworn";
 pub(crate) const PRIEST_NAME: &str = "Flamewaker Priest";
 pub(crate) const CORE_RAGER_NAME: &str = "Core Rager";
+pub(crate) const ELITE_NAME: &str = "Flamewaker Elite";
+pub(crate) const HEALER_NAME: &str = "Flamewaker Healer";
+pub(crate) const SON_NAME: &str = "Son of Flame";
 
 /// The boss's roar as it walks out.
 const fn aggro(kit: u32) -> A {
@@ -488,11 +522,18 @@ pub(crate) static FIRESWORN: Script = Script {
         blow: Blow::hit(0.25, School::Fire).foes(0.6),
         tone: Tone::Damage,
     }),
+    // Dragged more than 40 yd from Garr, a Firesworn's blows double (Separation Anxiety).
     master: Some(Master {
         name: "Garr",
         enrage: Some((GARR_ENRAGE, 0.15)),
         undying: false,
         refuses: None,
+        bond: Some(Bond {
+            spell: SEPARATION_ANXIETY,
+            radius: 40.0,
+            mult: 2.0,
+            near: false,
+        }),
     }),
     ..Script::of(FIRESWORN_NAME, &[])
 };
@@ -642,8 +683,27 @@ pub(crate) static BARON_GEDDON: Script = Script {
                 Does::Phase(2),
             )
             .yell("%s's bombs come faster!", WARNING),
-            A::new("Armageddon", 0, When::Health(0.02), Pick::Boss, Does::Yell)
-                .yell("%s performs one last service for Ragnaros.", WARNING),
+            // At 2% he can't be hurt for 8 s while a 35 yd ring winds up, then it blasts.
+            A::new(
+                "Armageddon",
+                ARMAGEDDON,
+                When::Health(0.02),
+                Pick::Boss,
+                Does::Immune { secs: 8.0 },
+            )
+            .yell("%s performs one last service for Ragnaros.", WARNING),
+            A::new(
+                "Armageddon",
+                ARMAGEDDON,
+                When::Health(0.02),
+                Pick::Boss,
+                Does::Ground {
+                    shape: Shape::Circle { radius: 35.0 },
+                    windup: 8.0,
+                    blow: Blow::hit(0.35, School::Fire),
+                    tone: Tone::Damage,
+                },
+            ),
             berserk(210.0),
         ],
     )
@@ -718,17 +778,31 @@ pub(crate) static SULFURON: Script = Script {
 /// Priests 15%. A stun or fear on the Priest breaks it.
 pub(crate) static FLAMEWAKER_PRIEST: Script = Script::of(
     PRIEST_NAME,
-    &[A::new(
-        "Dark Mending",
-        DARK_MENDING,
-        every(5.0, 9.0),
-        Pick::Boss,
-        Does::Mend {
-            share: 0.15,
-            cast: 2.5,
-            range: 40.0,
-        },
-    )],
+    &[
+        A::new(
+            "Dark Mending",
+            DARK_MENDING,
+            every(5.0, 9.0),
+            Pick::Boss,
+            Does::Mend {
+                share: 0.15,
+                cast: 2.5,
+                range: 40.0,
+            },
+        ),
+        // A hero burns 2% a second for 12 s. Magic.
+        A::new(
+            "Shadow Word: Pain",
+            SHADOW_WORD_PAIN,
+            every(7.0, 12.0),
+            Pick::Random(1),
+            Does::Debuff {
+                dispel: Dispel::Magic,
+                secs: 12.0,
+                payload: Payload::Burn(0.02),
+            },
+        ),
+    ],
 );
 
 /// Golemagg the Incinerator: Magma Splash stacking on his tank, two Core Ragers that can't die
@@ -773,6 +847,19 @@ pub(crate) static GOLEMAGG: Script = Script {
                 Does::Phase(2),
             )
             .yell("The ground trembles beneath %s!", WARNING),
+            // An orange 8 yd circle on a hero off the tank: 80% shared among those inside.
+            A::new(
+                "Pyroblast",
+                PYROBLAST,
+                every(12.0, 12.0),
+                Pick::RandomNonTank(1),
+                Does::Ground {
+                    shape: Shape::Circle { radius: 8.0 },
+                    windup: 3.0,
+                    blow: Blow::hit(0.8, School::Fire).split(),
+                    tone: Tone::Split,
+                },
+            ),
             A::new(
                 "Earthquake",
                 EARTHQUAKE,
@@ -802,6 +889,13 @@ pub(crate) static CORE_RAGER: Script = Script {
             sound: WARNING,
             kit: 0,
         }),
+        // Within 20 yd of Golemagg its blows double: keep them apart.
+        bond: Some(Bond {
+            spell: GOLEMAGGS_TRUST,
+            radius: 20.0,
+            mult: 2.0,
+            near: true,
+        }),
     }),
     ..Script::of(
         CORE_RAGER_NAME,
@@ -823,6 +917,272 @@ pub(crate) static CORE_RAGER: Script = Script {
     )
 };
 
+const fn ward(name: &'static str, spell: u32, kind: WardKind, first: f32, text: &'static str) -> A {
+    A::new(
+        name,
+        spell,
+        every(first, 60.0),
+        Pick::Boss,
+        Does::Ward {
+            kind,
+            secs: 10.0,
+            range: 60.0,
+        },
+    )
+    .yell(text, WARNING)
+}
+
+/// Majordomo Executus: he can't be brought below a fifth of his health (Aegis of Ragnaros); his
+/// four Flamewaker Elites and four Healers must fall, and then he yields. Every 30 s for 10 s his
+/// adds take a ward in turn, Magic Reflection (casters out) then Damage Shield (melee out); every
+/// 20 s he sends his target onto hot coals. Hard enrage at 4:00.
+pub(crate) static MAJORDOMO: Script = Script {
+    aegis: 0.2,
+    submits: Some(Submit {
+        adds: &[ELITE_NAME, HEALER_NAME],
+        line: Yell::voice(
+            "Impossible! Stay your attack, mortals... I submit! I submit!",
+            EXECUTUS_DEFEAT,
+        ),
+    }),
+    ..Script::of(
+        "Majordomo Executus",
+        &[
+            A::new("Aggro", 0, When::At(0.0), Pick::Boss, Does::Yell).voice(
+                "Reckless mortals! None may challenge the Sons of the Living Flame!",
+                EXECUTUS_AGGRO,
+            ),
+            A::new(
+                "Flamewaker Elites",
+                0,
+                When::At(0.5),
+                Pick::Boss,
+                Does::Adds {
+                    name: ELITE_NAME,
+                    count: 4,
+                    radius: 6.0,
+                },
+            ),
+            A::new(
+                "Flamewaker Healers",
+                0,
+                When::At(0.5),
+                Pick::Boss,
+                Does::Adds {
+                    name: HEALER_NAME,
+                    count: 4,
+                    radius: 9.0,
+                },
+            ),
+            ward(
+                "Magic Reflection",
+                MAGIC_REFLECTION,
+                WardKind::Reflect,
+                15.0,
+                "Magic Reflection shields %s's adds! Casters out!",
+            ),
+            ward(
+                "Damage Shield",
+                DAMAGE_SHIELD,
+                WardKind::Thorns,
+                45.0,
+                "Damage Shield burns on %s's adds! Melee out!",
+            ),
+            A::new(
+                "Teleport",
+                TELEPORT,
+                every(20.0, 20.0),
+                Pick::Tank,
+                Does::Teleport {
+                    yards: 25.0,
+                    dps: 0.05,
+                    secs: 10.0,
+                },
+            ),
+            berserk(240.0),
+        ],
+    )
+};
+
+/// A Flamewaker Elite: Blast Wave throws whoever stands close.
+pub(crate) static FLAMEWAKER_ELITE: Script = Script {
+    master: Some(MAJORDOMOS),
+    ..Script::of(
+        ELITE_NAME,
+        &[A::new(
+            "Blast Wave",
+            BLAST_WAVE,
+            every(8.0, 12.0),
+            Pick::Boss,
+            Does::Ground {
+                shape: Shape::Circle { radius: 10.0 },
+                windup: 1.5,
+                blow: Blow::hit(0.1, School::Fire).knocks(10.0),
+                tone: Tone::Control,
+            },
+        )],
+    )
+};
+
+/// A Flamewaker Healer: Shadow Shock under a hero off the tank, and an interruptible heal on the
+/// most hurt of Majordomo's adds.
+pub(crate) static FLAMEWAKER_HEALER: Script = Script {
+    master: Some(MAJORDOMOS),
+    ..Script::of(
+        HEALER_NAME,
+        &[
+            A::new(
+                "Shadow Shock",
+                SHADOW_SHOCK,
+                every(7.0, 10.0),
+                Pick::RandomNonTank(1),
+                Does::Ground {
+                    shape: Shape::Circle { radius: 3.0 },
+                    windup: 1.5,
+                    blow: Blow::hit(0.15, School::Shadow),
+                    tone: Tone::Damage,
+                },
+            ),
+            A::new(
+                "Dark Mending",
+                DARK_MENDING,
+                every(6.0, 10.0),
+                Pick::Boss,
+                Does::Mend {
+                    share: 0.1,
+                    cast: 2.5,
+                    range: 40.0,
+                },
+            ),
+        ],
+    )
+};
+
+/// Majordomo's adds' tie to him: none of its own.
+const MAJORDOMOS: Master = Master {
+    name: "Majordomo Executus",
+    enrage: None,
+    undying: false,
+    refuses: None,
+    bond: None,
+};
+
+/// Ragnaros: he never leaves his lava at the room's centre. Wrath of Ragnaros throws everyone in
+/// his melee ring; Elemental Fire burns his tank; Lava Burst erupts under the party; with nobody in
+/// his melee ring for 3 s he hurls Magma Blast. At 3:00 (and every 4:30 after) he submerges for up
+/// to 90 s while his Sons of Flame (by party size) rise, and comes back with a Wrath. Hard enrage
+/// at 10:00.
+pub(crate) static RAGNAROS: Script = Script {
+    rooted: true,
+    death: Some(Yell::voice(
+        "Ragnaros is banished to the Elemental Plane! The Molten Core is cleared!",
+        RAGNAROS_DEATH,
+    )),
+    ..Script::of(
+        "Ragnaros",
+        &[
+            A::new("Aggro", 0, When::At(0.0), Pick::Boss, Does::Yell).voice(
+                "TOO SOON! YOU HAVE AWAKENED ME TOO SOON, EXECUTUS!",
+                RAGNAROS_ARRIVAL,
+            ),
+            A::new(
+                "Wrath of Ragnaros",
+                WRATH_OF_RAGNAROS,
+                every(25.0, 25.0),
+                Pick::Boss,
+                Does::Ground {
+                    shape: Shape::Circle {
+                        radius: super::MELEE_RING,
+                    },
+                    windup: 2.0,
+                    blow: Blow::hit(0.1, School::Fire).knocks(25.0),
+                    tone: Tone::Control,
+                },
+            )
+            .voice("BY FIRE BE PURGED!", RAGNAROS_PURGED)
+            .in_phases(0b01),
+            // His tank burns 3% a second for 8 s.
+            A::new(
+                "Elemental Fire",
+                ELEMENTAL_FIRE,
+                every(8.0, 12.0),
+                Pick::Tank,
+                Does::Debuff {
+                    dispel: Dispel::None,
+                    secs: 8.0,
+                    payload: Payload::Burn(0.03),
+                },
+            )
+            .in_phases(0b01),
+            A::new(
+                "Lava Burst",
+                LAVA_BURST,
+                every(6.0, 9.0),
+                Pick::Random(0),
+                Does::Ground {
+                    shape: Shape::Circle { radius: 6.0 },
+                    windup: 1.5,
+                    blow: Blow::hit(0.15, School::Fire).knocks(8.0),
+                    tone: Tone::Damage,
+                },
+            )
+            .in_phases(0b01),
+            A::new(
+                "Magma Blast",
+                MAGMA_BLAST,
+                every(0.25, 0.25),
+                Pick::Random(1),
+                Does::MeleeCheck {
+                    range: super::MELEE_RING,
+                    grace: 3.0,
+                    radius: 4.0,
+                    windup: 1.5,
+                    blow: Blow::hit(0.5, School::Fire),
+                },
+            )
+            .in_phases(0b01),
+            A::new(
+                "Submerge",
+                0,
+                every(180.0, 270.0),
+                Pick::Boss,
+                Does::Submerge {
+                    secs: 90.0,
+                    add: SON_NAME,
+                    count: 0,
+                    opener: "Wrath of Ragnaros",
+                },
+            )
+            .voice(
+                "COME FORTH, MY SERVANTS! DEFEND YOUR MASTER!",
+                RAGNAROS_SERVANTS,
+            ),
+            berserk(600.0),
+        ],
+    )
+};
+
+/// A Son of Flame: one of Ragnaros's servants while he is submerged.
+pub(crate) static SON_OF_FLAME: Script = Script {
+    master: Some(Master {
+        name: "Ragnaros",
+        enrage: None,
+        undying: false,
+        refuses: None,
+        bond: None,
+    }),
+    ..Script::of(SON_NAME, &[])
+};
+
+/// What the Firelord drops, each rolled on its own as he falls: its 1.12 item id, its name and its
+/// chance. Kept on the results screen; the class gear catalog has no place for them yet.
+pub(crate) static RAGNAROS_LOOT: &[(u32, &str, f32)] = &[
+    (17203, "Sulfuron Ingot", 0.5),
+    (17204, "Eye of Sulfuras", 0.08),
+    (17076, "Bonereaver's Edge", 0.15),
+    (17063, "Band of Accuria", 0.15),
+];
+
 /// Every script, bosses and adds.
 pub(crate) static SCRIPTS: &[&Script] = &[
     &LUCIFRON,
@@ -837,6 +1197,11 @@ pub(crate) static SCRIPTS: &[&Script] = &[
     &FLAMEWAKER_PRIEST,
     &GOLEMAGG,
     &CORE_RAGER,
+    &MAJORDOMO,
+    &FLAMEWAKER_ELITE,
+    &FLAMEWAKER_HEALER,
+    &RAGNAROS,
+    &SON_OF_FLAME,
 ];
 
 /// The script a boss or add of this name fights by. Gehennas' Flamewakers have none: the horde's

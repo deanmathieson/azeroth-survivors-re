@@ -893,8 +893,8 @@ fn credit(dealt: &mut Vec<(Entity, f32)>, hero: Entity, amount: f32) {
     }
 }
 
-/// An enemy as a blow lands on it: its unit, its body, its marks, and whether it can't die yet
-/// ([`super::raid::Undying`]).
+/// An enemy as a blow lands on it: its unit, its body, its marks, whether it can't die yet
+/// ([`super::raid::Undying`]), and the ward its raid master put on it ([`super::raid::Ward`]).
 type Struck = (
     Entity,
     &'static Guid,
@@ -903,6 +903,7 @@ type Struck = (
     &'static mut ObjectStore,
     &'static mut Marks,
     Has<super::raid::Undying>,
+    Option<&'static super::raid::Ward>,
 );
 
 /// Land every hit due: damage and its number, the over-time part, crowd control, the marks, and
@@ -981,7 +982,8 @@ pub(super) fn apply_hits(
         };
 
     for h in all {
-        let Ok((e, guid, tf, mut en, mut store, mut marks, undying)) = enemies.get_mut(h.target)
+        let Ok((e, guid, tf, mut en, mut store, mut marks, undying, ward)) =
+            enemies.get_mut(h.target)
         else {
             continue;
         };
@@ -1013,6 +1015,17 @@ pub(super) fn apply_hits(
             fx.number(e, dmg, crit, h.color);
             if let Ok(mut hero) = heroes.get_mut(h.source) {
                 hero.damage_done += f64::from(dmg);
+                // A raid add's ward answers the blow on its hero (Magic Reflection, Damage Shield).
+                if let Some(ward) = ward {
+                    let back = ward.answer(now, h.school, dmg, hero.stats().max_hp);
+                    if back > 0.0 {
+                        let taken = hero::hurt_hero(&mut hero, back);
+                        if taken > 0.0 {
+                            fx.impact(h.source, ward.spell);
+                            fx.number(h.source, taken, false, units::COLOR_HURT);
+                        }
+                    }
+                }
                 // Vampiric Embrace's share of its school, pooled for the party heal.
                 if let Some(school) = h.school {
                     hero.mechanics.pool(school, dmg);
@@ -1101,7 +1114,7 @@ pub(super) fn apply_hits(
     // The over-time ticks, once a second each, credited by whose they are.
     let mut by: Vec<(Entity, f32)> = Vec::new();
     let mut by_school: Vec<(Entity, School, f32)> = Vec::new();
-    for (e, guid, tf, mut en, mut store, mut marks, undying) in &mut enemies {
+    for (e, guid, tf, mut en, mut store, mut marks, undying, _) in &mut enemies {
         if en.dead || en.dots.is_empty() {
             continue;
         }

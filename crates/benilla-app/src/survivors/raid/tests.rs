@@ -111,7 +111,25 @@ fn every_scripted_telegraph_warns_long_enough_to_read() {
                     script.name,
                     a.name
                 );
-                assert!(blow.damage <= 0.35, "{}: {}", script.name, a.name);
+                if blow.split {
+                    // A stack to share: 2.5 s to gather, and two soakers make it fair.
+                    assert!(windup >= 2.5, "{}: {}", script.name, a.name);
+                    assert!(blow.damage / 2.0 <= 0.4, "{}: {}", script.name, a.name);
+                } else {
+                    assert!(blow.damage <= 0.35, "{}: {}", script.name, a.name);
+                }
+            }
+            // The melee check's punishment warns as a circle and is half a life at most.
+            if let Does::MeleeCheck {
+                radius,
+                windup,
+                blow,
+                grace,
+                ..
+            } = a.does
+            {
+                assert!(windup >= Shape::Circle { radius }.min_windup());
+                assert!(blow.damage <= 0.5 && grace >= 2.0, "{}", script.name);
             }
             // A blink's blow warns as it arrives; an Inferno glows before its first pulse.
             let circle = Shape::Circle { radius: 1.0 }.min_windup();
@@ -136,6 +154,9 @@ static TEST_SCRIPT: Script = Script {
     death: None,
     erupt: None,
     master: None,
+    aegis: 0.0,
+    submits: None,
+    rooted: false,
     abilities: &[
         BossAbility::new(
             "Tick",
@@ -955,12 +976,28 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         (MAGMA_SPLASH, "Magma Splash"),
         (EARTHQUAKE, "Earthquake"),
         (MANGLE, "Mangle"),
+        (SEPARATION_ANXIETY, "Separation Anxiety"),
+        (ARMAGEDDON, "Armageddon"),
+        (SHADOW_WORD_PAIN, "Shadow Word: Pain"),
+        (PYROBLAST, "Pyroblast"),
+        (GOLEMAGGS_TRUST, "Golemagg's Trust"),
+        (MAGIC_REFLECTION, "Magic Reflection"),
+        (DAMAGE_SHIELD, "Damage Shield"),
+        (TELEPORT, "Teleport"),
+        (BLAST_WAVE, "Blast Wave"),
+        (WRATH_OF_RAGNAROS, "Wrath of Ragnaros"),
+        (ELEMENTAL_FIRE, "Elemental Fire"),
+        (MAGMA_BLAST, "Magma Blast"),
+        (LAVA_BURST, "Lava Burst"),
+        (RAGNAROS_EMERGE, "Ragnaros Emerge"),
     ];
     let mut bad = Vec::new();
     for (id, name) in named {
         match spells.get(id) {
             Some(d) if d.name == name => {
-                if d.visual == 0 || visuals.stages(d.visual).is_none() {
+                // Lava Burst's only row has no visual of its own.
+                let bare = d.visual == 0 || visuals.stages(d.visual).is_none();
+                if bare && id != LAVA_BURST {
                     bad.push(format!("{id} {name} has no visual"));
                 }
             }
@@ -989,7 +1026,8 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         }
         let erupt = script.erupt.map(|e| e.spell);
         let enrage = script.master.and_then(|m| m.enrage).map(|(spell, _)| spell);
-        for spell in erupt.into_iter().chain(enrage) {
+        let bond = script.master.and_then(|m| m.bond).map(|b| b.spell);
+        for spell in erupt.into_iter().chain(enrage).chain(bond) {
             if !named.iter().any(|&(id, _)| id == spell) {
                 bad.push(format!("{}: {spell} is unchecked", script.name));
             }
@@ -1004,6 +1042,7 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         (SHAZZRAHS_CURSE, 2),
         (MAGMA_SHACKLES, 1),
         (IGNITE_MANA, 1),
+        (SHADOW_WORD_PAIN, 1),
     ] {
         if spells.get(id).map(|d| d.dispel) != Some(kind) {
             bad.push(format!("{id}: dispel type is not {kind}"));
@@ -1016,6 +1055,19 @@ fn every_raid_spell_and_sound_is_the_real_one() {
         bad.push(format!("{POOL_VISUAL} has no ground area kit"));
     }
     let kits = benilla_formats::load_sound_kit_catalog(&mut chain).expect("SoundEntries.dbc");
+    // Majordomo's and Ragnaros's spoken lines are their own kits.
+    for (kit, name) in [
+        (EXECUTUS_AGGRO, "A_ExecutusAggro01"),
+        (EXECUTUS_DEFEAT, "A_ExecutusDefeat01"),
+        (RAGNAROS_ARRIVAL, "A_RagnarosArrival01"),
+        (RAGNAROS_PURGED, "A_RagnarosSpecialAttack01"),
+        (RAGNAROS_SERVANTS, "A_RagnarosReinforcements01"),
+        (RAGNAROS_DEATH, "RagnarosDeath"),
+    ] {
+        if kits.get(kit).map(|k| k.name.as_str()) != Some(name) {
+            bad.push(format!("kit {kit} is not {name}"));
+        }
+    }
     for sound in SOUNDS {
         if kits.by_name(sound).is_none() {
             bad.push(format!("sound {sound} is not a SoundEntries kit"));
@@ -1093,6 +1145,19 @@ fn the_bosses_wear_their_creature_displays() {
             "moltengiant",
         ),
         (add_named(CORE_RAGER_NAME), "felbeast", "redblack"),
+        (
+            final_boss("Molten Core: Majordomo's Camp"),
+            "salamander",
+            "black",
+        ),
+        (add_named(ELITE_NAME), "salamander", "skinred"),
+        (add_named(HEALER_NAME), "salamander", "skinred"),
+        (
+            final_boss("Molten Core: Ragnaros' Lair"),
+            "ragnaros",
+            "ragnarosskin",
+        ),
+        (add_named(SON_NAME), "fireelemental", "fireelementalskin"),
     ];
     for (def, model, skin) in cases {
         let m = creatures
@@ -1128,6 +1193,8 @@ fn the_raid_systems_initialise_without_conflicting_access() {
     heroes.initialize(&mut world);
     let mut attach = IntoSystem::into_system(attach_scripts);
     attach.initialize(&mut world);
+    let mut rooted = IntoSystem::into_system(place_rooted);
+    rooted.initialize(&mut world);
     let mut blinks = IntoSystem::into_system(land_blinks);
     blinks.initialize(&mut world);
     let mut bombs = IntoSystem::into_system(follow_bombs);
@@ -1175,6 +1242,7 @@ fn only_the_molten_core_boss_stages_are_raids() {
         [
             "Molten Core: Lucifron's Cavern",
             "Molten Core: Magmadar's Lair",
+            "Molten Core: Majordomo's Camp",
             "Molten Core: Ragnaros' Lair",
             "Molten Core: Gehennas' Cavern",
             "Molten Core: Garr's Cavern",
@@ -1192,6 +1260,8 @@ fn only_the_molten_core_boss_stages_are_raids() {
         ("Molten Core: Baron Geddon's Cavern", "Baron Geddon"),
         ("Molten Core: Sulfuron's Cavern", "Sulfuron Harbinger"),
         ("Molten Core: Golemagg's Ridge", "Golemagg the Incinerator"),
+        ("Molten Core: Majordomo's Camp", "Majordomo Executus"),
+        ("Molten Core: Ragnaros' Lair", "Ragnaros"),
     ] {
         assert_eq!(final_boss(stage).name, boss);
         assert!(script_for(boss).is_some(), "{boss} has a script");
@@ -1653,7 +1723,8 @@ fn baron_geddon_bombs_infernos_ignites_and_bombs_faster_after_two_and_a_half_min
         1,
         |t| if t < 12.0 { 0.5 } else { 0.01 },
     );
-    assert_eq!(times(&low, "Armageddon"), [12.0]);
+    // The channel and its ring, together.
+    assert_eq!(times(&low, "Armageddon"), [12.0, 12.0]);
     let bomb = BARON_GEDDON
         .abilities
         .iter()
@@ -1899,4 +1970,377 @@ fn the_new_bosses_voices_are_their_creatures_own() {
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Majordomo Executus, Ragnaros, and the side mechanics
+// ---------------------------------------------------------------------------------------------
+
+fn ally(world: &mut World, name: &'static str, pos: Vec3) -> Ally {
+    Ally {
+        e: world.spawn_empty().id(),
+        pos,
+        hp: 1000.0,
+        max_hp: 1000.0,
+        name,
+    }
+}
+
+#[test]
+fn majordomo_wards_his_adds_in_turn_and_teleports_his_tank() {
+    let fired = schedule(&MAJORDOMO, 245.0, 5, |_| 1.0);
+    assert_eq!(times(&fired, "Flamewaker Elites"), [0.5]);
+    assert_eq!(times(&fired, "Flamewaker Healers"), [0.5]);
+    assert_eq!(
+        times(&fired, "Magic Reflection"),
+        [15.0, 75.0, 135.0, 195.0]
+    );
+    assert_eq!(times(&fired, "Damage Shield"), [45.0, 105.0, 165.0, 225.0]);
+    assert_eq!(times(&fired, "Teleport")[..3], [20.0, 40.0, 60.0]);
+    assert_eq!(times(&fired, "Berserk"), [240.0]);
+    let adds: Vec<&str> = MAJORDOMO
+        .abilities
+        .iter()
+        .filter_map(|a| match a.does {
+            Does::Adds { name, count, .. } => Some((name, count)),
+            _ => None,
+        })
+        .map(|(name, count)| {
+            assert_eq!(count, 4);
+            name
+        })
+        .collect();
+    assert_eq!(adds, [ELITE_NAME, HEALER_NAME]);
+}
+
+#[test]
+fn a_ward_answers_only_the_blows_it_is_for_and_never_more_than_its_cap() {
+    let reflect = Ward {
+        kind: WardKind::Reflect,
+        spell: MAGIC_REFLECTION,
+        until: 10.0,
+    };
+    let thorns = Ward {
+        kind: WardKind::Thorns,
+        spell: DAMAGE_SHIELD,
+        ..reflect
+    };
+    assert!(close(
+        reflect.answer(5.0, Some(School::Fire), 100.0, 10_000.0),
+        50.0
+    ));
+    assert_eq!(
+        reflect.answer(5.0, Some(School::Physical), 100.0, 10_000.0),
+        0.0
+    );
+    assert_eq!(reflect.answer(5.0, None, 100.0, 10_000.0), 0.0);
+    assert!(close(thorns.answer(5.0, None, 100.0, 10_000.0), 50.0));
+    assert!(close(
+        thorns.answer(5.0, Some(School::Physical), 100.0, 10_000.0),
+        50.0
+    ));
+    assert_eq!(
+        thorns.answer(5.0, Some(School::Arcane), 100.0, 10_000.0),
+        0.0
+    );
+    // At most 4% of the striker's health a blow, and nothing once it has lapsed.
+    assert!(close(
+        reflect.answer(5.0, Some(School::Fire), 10_000.0, 1000.0),
+        40.0
+    ));
+    assert_eq!(
+        reflect.answer(10.0, Some(School::Fire), 100.0, 10_000.0),
+        0.0
+    );
+}
+
+#[test]
+fn majordomo_holds_a_fifth_of_his_health_and_yields_once_his_adds_fall() {
+    let mut world = World::new();
+    let camp = final_boss("Molten Core: Majordomo's Camp");
+    let mut brain = RaidBoss::new(&MAJORDOMO);
+    let mut enemy = enemy_of(camp, true);
+    enemy.hp = 50.0;
+    let elite = ally(&mut world, ELITE_NAME, Vec3::X * 5.0);
+    let me = ally(&mut world, camp.name, Vec3::ZERO);
+    brain.clock = 1.0;
+    let ties = tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]);
+    assert!(close(enemy.hp, 200.0), "the Aegis of Ragnaros");
+    assert_eq!(ties.shield, Some(true), "he can't die");
+    assert_eq!(ties.submitted, None, "too soon to count his adds gone");
+    brain.clock = 30.0;
+    let ties = tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me, elite]);
+    assert_eq!(ties.submitted, None, "an Elite still stands");
+    let ties = tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]);
+    let line = ties.submitted.expect("he yields");
+    assert_eq!(line.kit, EXECUTUS_DEFEAT);
+    assert!(line.text.contains("I submit!"));
+    assert_eq!(
+        tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]).submitted,
+        None,
+        "once"
+    );
+    assert!(enemy.stun_t > 1000.0, "he fights no more");
+}
+
+#[test]
+fn ragnaros_wraths_burns_bursts_and_submerges_at_three_minutes() {
+    assert!(RAGNAROS.rooted);
+    let fired = schedule(&RAGNAROS, 185.0, 5, |_| 1.0);
+    assert_eq!(
+        times(&fired, "Wrath of Ragnaros"),
+        [25.0, 50.0, 75.0, 100.0, 125.0, 150.0, 175.0]
+    );
+    assert_eq!(times(&fired, "Elemental Fire")[..2], [8.0, 20.0]);
+    assert_eq!(times(&fired, "Lava Burst")[..2], [6.0, 15.0]);
+    assert_eq!(times(&fired, "Submerge"), [180.0]);
+    let wrath = RAGNAROS
+        .abilities
+        .iter()
+        .find(|a| a.name == "Wrath of Ragnaros")
+        .unwrap();
+    let y = Yelled::of(wrath.yell.as_ref().unwrap(), "Ragnaros");
+    assert_eq!(
+        (y.text.as_str(), y.kit),
+        ("BY FIRE BE PURGED!", RAGNAROS_PURGED)
+    );
+    assert!(matches!(
+        wrath.does,
+        Does::Ground {
+            shape: Shape::Circle { radius: MELEE_RING },
+            ..
+        }
+    ));
+    let aggro = Yelled::of(RAGNAROS.abilities[0].yell.as_ref().unwrap(), "Ragnaros");
+    assert!(aggro.text.starts_with("TOO SOON!") && aggro.kit == RAGNAROS_ARRIVAL);
+}
+
+#[test]
+fn submerged_ragnaros_is_untouchable_until_his_sons_fall_then_opens_with_wrath() {
+    let mut world = World::new();
+    let lair = final_boss("Molten Core: Ragnaros' Lair");
+    let me = ally(&mut world, lair.name, Vec3::ZERO);
+    let son = ally(&mut world, SON_NAME, Vec3::X * 10.0);
+    let mut brain = RaidBoss::new(&RAGNAROS);
+    let mut enemy = enemy_of(lair, true);
+    for _ in 0..(180.0 / 0.0625) as usize {
+        brain.due(0.0625, 1.0, 5);
+    }
+    brain.submerge(800.0, 90.0, SON_NAME, "Wrath of Ragnaros");
+    assert_eq!(brain.phase, 2);
+    let mut fired = Vec::new();
+    for _ in 0..(10.0 / 0.0625) as usize {
+        fired.extend(brain.due(0.0625, 1.0, 5).iter().map(|a| a.name));
+    }
+    assert!(!fired.contains(&"Wrath of Ragnaros"), "idle below");
+    enemy.hp = 100.0;
+    let ties = tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me, son]);
+    assert!(close(enemy.hp, 800.0), "untouchable");
+    assert_eq!(ties.shield, Some(true));
+    assert!(!ties.emerged && enemy.stun_t > 0.0, "his Sons still stand");
+    let ties = tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]);
+    assert!(ties.emerged && brain.phase == 1);
+    assert_eq!(ties.shield, Some(false), "touchable again");
+    let next: Vec<&str> = brain.due(0.0625, 1.0, 5).iter().map(|a| a.name).collect();
+    assert!(
+        next.contains(&"Wrath of Ragnaros"),
+        "opens with Wrath: {next:?}"
+    );
+
+    // His time up, he rises even with Sons standing.
+    let mut brain = RaidBoss::new(&RAGNAROS);
+    brain.submerge(800.0, 90.0, SON_NAME, "Wrath of Ragnaros");
+    brain.clock = 91.0;
+    assert!(tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me, son]).emerged);
+}
+
+#[test]
+fn magma_blast_comes_only_after_three_seconds_with_nobody_in_melee() {
+    let mut alone = 0.0;
+    for _ in 0..11 {
+        assert!(!melee_check(&mut alone, false, 0.25, 3.0));
+    }
+    assert!(melee_check(&mut alone, false, 0.25, 3.0), "3 s alone");
+    assert_eq!(alone, 0.0, "and the count starts over");
+    for _ in 0..8 {
+        melee_check(&mut alone, false, 0.25, 3.0);
+    }
+    assert!(!melee_check(&mut alone, true, 0.25, 3.0));
+    assert_eq!(alone, 0.0, "someone stepped in");
+    let ring = melee_ring(Vec3::X, 5.0);
+    assert_eq!(ring.shape, Shape::Circle { radius: MELEE_RING });
+    // Standing from the start, never gone.
+    assert!(ring.until.is_infinite() && ring.land <= 5.0);
+}
+
+#[test]
+fn ragnaros_drops_his_hoard_and_his_fall_clears_the_core() {
+    let mut world = raid_world(0.1, 400.0, 1);
+    world.init_resource::<Messages<enemies::Loot>>();
+    world.init_resource::<Messages<Yelled>>();
+    world.init_resource::<crate::survivors::hud::ResultsNotes>();
+    for _ in 0..20 {
+        world.write_message(enemies::Loot {
+            pos: Vec3::ZERO,
+            xp: 1,
+            boss: true,
+            elite: false,
+            def: final_boss("Molten Core: Ragnaros' Lair"),
+        });
+    }
+    world.run_system_once(on_deaths).unwrap();
+    let yells = drain_yells(&mut world);
+    assert!(yells
+        .iter()
+        .all(|y| y.kit == RAGNAROS_DEATH && y.text.contains("Molten Core is cleared")));
+    let notes = &world.resource::<crate::survivors::hud::ResultsNotes>().0;
+    assert!(!notes.is_empty(), "twenty falls drop something");
+    for (text, _) in notes {
+        assert!(
+            RAGNAROS_LOOT
+                .iter()
+                .any(|(id, name, _)| text.contains(name) && text.contains(&id.to_string())),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        RAGNAROS_LOOT.iter().map(|l| l.1).collect::<Vec<_>>(),
+        [
+            "Sulfuron Ingot",
+            "Eye of Sulfuras",
+            "Bonereaver's Edge",
+            "Band of Accuria"
+        ]
+    );
+}
+
+#[test]
+fn golemaggs_pyroblast_is_shared_by_those_who_stack_under_it() {
+    assert!(close(split_share(0.8, true, 2, false), 0.4));
+    assert!(
+        close(split_share(0.8, true, 1, true), 0.4),
+        "the Companion soaks"
+    );
+    assert!(close(split_share(0.8, true, 0, false), 0.8));
+    assert!(close(split_share(0.8, false, 4, false), 0.8));
+    let mut world = raid_world(0.1, 3.0, 2);
+    let source = world.spawn_empty().id();
+    let a = hero_in(&mut world, hero_of(8), Vec3::X);
+    let b = hero_in(&mut world, hero_of(8), Vec3::NEG_X);
+    let full = hp(&world, a);
+    world.spawn((
+        telegraph(Shape::Circle { radius: 8.0 }, Vec3::ZERO, 3.0),
+        Pending {
+            source,
+            spell: PYROBLAST,
+            blow: Blow::hit(0.8, School::Fire).split(),
+        },
+    ));
+    world.run_system_once(land_telegraphs).unwrap();
+    let want = hurt_share(&mut hero_of(8), 0.4);
+    assert!((full - hp(&world, a) - want).abs() < 1.0);
+    assert!((full - hp(&world, b) - want).abs() < 1.0);
+}
+
+#[test]
+fn shadow_word_pain_burns_until_it_runs_out_or_is_dispelled() {
+    let pain = || Debuff::new(SHADOW_WORD_PAIN, Dispel::Magic, 12.0, Payload::Burn(0.02));
+    let mut raid = HeroRaid::default();
+    raid.add(pain());
+    let total: f32 = run_ticks(&mut raid, 12.0, false)
+        .iter()
+        .map(|e| match e {
+            RaidEvent::Hit { damage, .. } => *damage,
+            _ => 0.0,
+        })
+        .sum();
+    assert!(close(total, 0.24), "{total}");
+    assert!(raid.debuffs.is_empty());
+    raid.add(pain());
+    assert!(raid.dispel(Dispel::Magic).is_some());
+    assert!(run_ticks(&mut raid, 2.0, false).is_empty());
+    let priest = FLAMEWAKER_PRIEST
+        .abilities
+        .iter()
+        .find(|a| a.name == "Shadow Word: Pain")
+        .unwrap();
+    assert!(matches!(
+        priest.does,
+        Does::Debuff {
+            dispel: Dispel::Magic,
+            payload: Payload::Burn(_),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn golemaggs_trust_and_separation_anxiety_double_an_adds_blows() {
+    let mut world = World::new();
+    // A Core Rager near Golemagg hits twice as hard; apart, as before.
+    let golemagg = ally(&mut world, "Golemagg the Incinerator", Vec3::ZERO);
+    let mut brain = RaidBoss::new(&CORE_RAGER);
+    let mut rager = enemy_of(add_named(CORE_RAGER_NAME), false);
+    let base = rager.damage;
+    let ties = tie_up(&mut brain, &mut rager, Vec3::X * 10.0, &[golemagg]);
+    assert_eq!(ties.bond, Some((GOLEMAGGS_TRUST, true)));
+    assert!(close(rager.damage, base * 2.0));
+    let ties = tie_up(&mut brain, &mut rager, Vec3::X * 30.0, &[golemagg]);
+    assert_eq!(ties.bond, Some((GOLEMAGGS_TRUST, false)));
+    assert!(close(rager.damage, base));
+    // A Firesworn dragged 40 yd from Garr does.
+    let garr = ally(&mut world, "Garr", Vec3::ZERO);
+    let mut brain = RaidBoss::new(&FIRESWORN);
+    let mut firesworn = enemy_of(add_named(FIRESWORN_NAME), false);
+    let near = tie_up(&mut brain, &mut firesworn, Vec3::X * 10.0, &[garr]);
+    assert_eq!(near.bond, None);
+    let far = tie_up(&mut brain, &mut firesworn, Vec3::X * 45.0, &[garr]);
+    assert_eq!(far.bond, Some((SEPARATION_ANXIETY, true)));
+    assert!(close(firesworn.damage, base * 2.0));
+}
+
+#[test]
+fn armageddon_makes_geddon_untouchable_while_its_ring_winds_up() {
+    let low = schedule(
+        &BARON_GEDDON,
+        20.0,
+        1,
+        |t| if t < 12.0 { 0.5 } else { 0.01 },
+    );
+    assert_eq!(
+        times(&low, "Armageddon"),
+        [12.0, 12.0],
+        "the channel and its ring"
+    );
+    let ring = BARON_GEDDON
+        .abilities
+        .iter()
+        .find(|a| matches!(a.does, Does::Ground { .. }) && a.name == "Armageddon")
+        .unwrap();
+    assert!(matches!(
+        ring.does,
+        Does::Ground {
+            shape: Shape::Circle { radius: 35.0 },
+            windup: 8.0,
+            ..
+        }
+    ));
+    let mut world = World::new();
+    let geddon = final_boss("Molten Core: Baron Geddon's Cavern");
+    let me = ally(&mut world, geddon.name, Vec3::ZERO);
+    let mut brain = RaidBoss::new(&BARON_GEDDON);
+    let mut enemy = enemy_of(geddon, true);
+    brain.clock = 100.0;
+    brain.frozen = Some((20.0, 108.0));
+    enemy.hp = 1.0;
+    assert_eq!(
+        tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]).shield,
+        Some(true)
+    );
+    assert!(close(enemy.hp, 20.0));
+    brain.clock = 108.0;
+    assert_eq!(
+        tie_up(&mut brain, &mut enemy, Vec3::ZERO, &[me]).shield,
+        Some(false)
+    );
 }

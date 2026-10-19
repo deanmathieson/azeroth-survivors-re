@@ -1,6 +1,7 @@
 //! The boss frame: top centre under the clock, a roster boss's name, a wide health bar with its
 //! health and percentage, the skull a far higher level shows, and "Final boss" on the roster's
-//! last. Up to [`MAX_FRAMES`] stack, the most recent bosses; each fades out over [`FADE_SECS`]
+//! last; a raid's finale (Ragnaros) gets a huge one. Up to [`MAX_FRAMES`] stack, the most recent
+//! bosses; each fades out over [`FADE_SECS`]
 //! once its boss falls. Elites and guardians keep their marks and get no frame. It stands clear
 //! of the minimap and quest column (top right) and hides under the level-up cards.
 
@@ -20,6 +21,13 @@ pub(super) const FADE_SECS: f32 = 1.5;
 /// The bar's size, in UI units.
 const BAR_WIDTH: f32 = 400.0;
 const BAR_HEIGHT: f32 = 20.0;
+/// A finale's bar and name ([`HUGE_BOSSES`]).
+const HUGE_WIDTH: f32 = 680.0;
+const HUGE_HEIGHT: f32 = 34.0;
+const NAME_SIZE: f32 = 17.0;
+const HUGE_NAME_SIZE: f32 = 28.0;
+/// The bosses whose frame is huge: a raid's finale.
+const HUGE_BOSSES: &[&str] = &["Ragnaros"];
 /// Below the clock and its line of counts.
 const TOP: f32 = 78.0;
 const BAR_RED: Color = Color::srgb(0.85, 0.08, 0.05);
@@ -43,6 +51,8 @@ pub(super) struct BossInfo {
 pub(super) struct BossFrame {
     pub name: &'static str,
     pub final_boss: bool,
+    /// A raid finale's huge frame ([`HUGE_BOSSES`]).
+    pub huge: bool,
     /// The bar's fill, 0 to 1.
     pub fill: f32,
     /// "current / max (percent%)".
@@ -86,6 +96,7 @@ pub(super) fn frames(bosses: &[BossInfo], roster_len: usize) -> Vec<BossFrame> {
             BossFrame {
                 name: b.name,
                 final_boss: b.order + 1 == roster_len,
+                huge: HUGE_BOSSES.contains(&b.name),
                 fill: (hp / max).clamp(0.0, 1.0),
                 label: format!("{} / {} ({percent}%)", hp.ceil() as u64, max.round() as u64),
                 alpha: b
@@ -180,7 +191,7 @@ fn setup(mut commands: Commands, font: Res<HudFont>) {
                         ));
                         head.spawn((
                             BossText(i, Line::Name),
-                            hud::text_bundle(f, "", 17.0, hud::GOLD_TONE),
+                            hud::text_bundle(f, "", NAME_SIZE, hud::GOLD_TONE),
                         ));
                         head.spawn((
                             BossText(i, Line::Tag),
@@ -241,8 +252,11 @@ fn refresh(
     mut fallen: Local<Fallen>,
     mut root: Query<&mut Visibility, (With<BossBarRoot>, Without<BossSlot>)>,
     mut slots: Query<(&BossSlot, &mut Node, &mut Visibility), Without<BossBarRoot>>,
-    mut texts: Query<(&BossText, &mut Text, &mut TextColor)>,
-    mut backs: Query<(&BossBack, &mut BackgroundColor, &mut BorderColor)>,
+    mut texts: Query<(&BossText, &mut Text, &mut TextColor, &mut TextFont)>,
+    mut backs: Query<
+        (&BossBack, &mut BackgroundColor, &mut BorderColor, &mut Node),
+        (Without<BossFill>, Without<BossSlot>),
+    >,
     mut fills: Query<(&BossFill, &mut Node, &mut ImageNode, Has<ArtDone>), Without<BossSlot>>,
     mut skulls: Query<(&BossSkull, &mut ImageNode, Has<ArtDone>), Without<BossFill>>,
 ) {
@@ -309,10 +323,20 @@ fn refresh(
         }
     }
     let alpha = |i: usize| shown.get(i).map_or(0.0, |f| f.alpha);
-    for (part, mut text, mut color) in &mut texts {
+    for (part, mut text, mut color, mut font) in &mut texts {
         let Some(frame) = shown.get(part.0) else {
             continue;
         };
+        if part.1 == Line::Name {
+            let size = if frame.huge {
+                HUGE_NAME_SIZE
+            } else {
+                NAME_SIZE
+            };
+            if font.font_size != size {
+                font.font_size = size;
+            }
+        }
         let (want, tone) = match part.1 {
             Line::Name => (frame.name.to_string(), hud::GOLD_TONE),
             Line::Tag => (
@@ -333,8 +357,18 @@ fn refresh(
             color.0 = tone;
         }
     }
-    for (back, mut bg, mut border) in &mut backs {
+    for (back, mut bg, mut border, mut node) in &mut backs {
         let a = alpha(back.0);
+        let huge = shown.get(back.0).is_some_and(|f| f.huge);
+        let (w, h) = if huge {
+            (HUGE_WIDTH, HUGE_HEIGHT)
+        } else {
+            (BAR_WIDTH, BAR_HEIGHT)
+        };
+        if node.width != Val::Px(w) || node.height != Val::Px(h) {
+            node.width = Val::Px(w);
+            node.height = Val::Px(h);
+        }
         let want = BACKDROP.with_alpha(BACKDROP.alpha() * a);
         if bg.0 != want {
             bg.0 = want;
@@ -389,6 +423,22 @@ mod tests {
             max_hp: 1000.0,
             dead_for,
         }
+    }
+
+    #[test]
+    fn ragnaros_gets_the_huge_frame() {
+        let rag = BossInfo {
+            order: 5,
+            name: "Ragnaros",
+            hp: 10.0,
+            max_hp: 20.0,
+            dead_for: None,
+        };
+        let shown = frames(&[rag, boss(0, 900.0, None)], 6);
+        assert!(shown
+            .iter()
+            .any(|f| f.name == "Ragnaros" && f.huge && f.final_boss));
+        assert!(shown.iter().any(|f| f.name == NAMES[0] && !f.huge));
     }
 
     #[test]

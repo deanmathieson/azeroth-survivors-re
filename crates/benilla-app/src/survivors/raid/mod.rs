@@ -23,7 +23,11 @@
 //!   pulsing nova while the boss stands rooted ([`Does::Inferno`]), an interruptible heal
 //!   ([`Does::Mend`]), a haste for its allies ([`Does::Inspire`]), and the detonation of an add.
 //! - **Deaths**: an add that erupts where it fell or enrages its master, and an add that can't
-//!   die while its master stands ([`Master`], [`Undying`]).
+//!   die while its master stands ([`Master`], [`Undying`]); a boss that can't be brought below a
+//!   share of its health and yields once its adds fall ([`Script::aegis`], [`Submit`]).
+//! - **Stack to split** ([`Blow::split`]), a burn over time ([`Payload::Burn`]), wards on the
+//!   adds that answer the heroes' blows ([`Ward`]), a teleport onto hot coals, a melee check, a
+//!   submerge with its servants, and a bond that buffs an add near or far from its master.
 //!
 //! The host simulates every script and rolls every die; a co-op client draws the replicated
 //! telegraphs and plays the forced moves of its own hero ([`super::coop`]).
@@ -43,6 +47,7 @@ use super::abilities::Hit;
 use super::bonus::School;
 use super::enemies::{self, Enemy, Rank};
 use super::hero::{self, Hero, HERO_RADIUS};
+use super::hud::{NoteKind, ResultsNotes};
 use super::party;
 use super::run_options::RunOptions;
 use super::units::{self, flat, yaw_toward, Fx, Marks, COLOR_HURT};
@@ -88,6 +93,8 @@ pub(crate) const TREMOR_TOTEM: u32 = 8143;
 /// The burning ground a pool shows: Flamestrike's flames on the ground (Lava Bomb's own visual is
 /// only its missile, which the landing plays).
 pub(crate) const POOL_VISUAL: u32 = 2120;
+/// Ragnaros Emerge: the aura a submerged boss wears, and the visual as it rises.
+pub(crate) const RAGNAROS_EMERGE: u32 = 20568;
 
 /// The purple a countdown over a doomed head is drawn in, 0xAARRGGBB.
 const COLOR_DOOM: u32 = 0xFFC0_60FF;
@@ -103,6 +110,16 @@ const BLINK_BLOW_WINDUP: f32 = 1.5;
 const UNDYING_FLOOR: f32 = 0.5;
 /// How far past the bomb's ring a bot carrying it runs from its leader, in yards.
 const BOMB_MARGIN: f32 = 6.0;
+/// A ward answers a blow with this share of it.
+const WARD_SHARE: f32 = 0.5;
+/// ... but never more than this share of the striking hero's maximum health a blow.
+const WARD_CAP: f32 = 0.04;
+/// A submerged boss rises early once its servants are gone, but not before this many seconds.
+const SUBMERGE_MIN: f32 = 3.0;
+/// A boss that yields waits this long into the fight before its adds' absence counts.
+const SUBMIT_AFTER: f32 = 3.0;
+/// The melee ring a rooted boss shows round itself, in yards.
+pub(crate) const MELEE_RING: f32 = 14.0;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<Yelled>()
@@ -111,6 +128,7 @@ pub(super) fn plugin(app: &mut App) {
             (
                 note_final_boss,
                 attach_scripts,
+                place_rooted,
                 run_bosses,
                 land_blinks,
                 land_telegraphs,
@@ -283,6 +301,9 @@ pub(crate) struct Blow {
     /// A fraction of each enemy's own maximum health, to every foe of the heroes inside that is
     /// not a boss (an Eruption hurting the other Firesworn).
     pub foes: f32,
+    /// Stack to split: `damage` is shared evenly among the heroes inside (solo, the Companion
+    /// takes a share), so a lone hero takes it all.
+    pub split: bool,
 }
 
 impl Blow {
@@ -295,6 +316,7 @@ impl Blow {
             pool: None,
             after: After::None,
             foes: 0.0,
+            split: false,
         }
     }
 
@@ -305,6 +327,21 @@ impl Blow {
     pub(crate) const fn foes(self, share: f32) -> Self {
         Self {
             foes: share,
+            ..self
+        }
+    }
+
+    pub(crate) const fn split(self) -> Self {
+        Self {
+            split: true,
+            ..self
+        }
+    }
+
+    /// The blow, and a throw of `yards` away from the shape's origin.
+    pub(crate) const fn knocks(self, yards: f32) -> Self {
+        Self {
+            knock: yards,
             ..self
         }
     }
@@ -373,6 +410,9 @@ pub(crate) enum Payload {
     Silence,
     /// It walks at this rate of its pace (Magma Shackles: half).
     Slow(f32),
+    /// It burns for this share of its maximum health a second (Shadow Word: Pain, Elemental
+    /// Fire).
+    Burn(f32),
     /// Mind control: the hero is held and casts nothing, and every second its allies within
     /// `radius` take `damage` of their maximum health (Dominate Mind).
     Dominate { radius: f32, damage: f32 },
@@ -433,6 +473,36 @@ pub(crate) enum Does {
     /// The living add of this name nearest the boss dies (Massive Eruption), setting off what its
     /// death does.
     Detonate { add: &'static str },
+    /// Every scripted ally within `range` but the boss wears a ward for `secs` ([`Ward`]).
+    Ward {
+        kind: WardKind,
+        secs: f32,
+        range: f32,
+    },
+    /// Each pick is thrown `yards` away from the boss onto hot coals: a ring there that burns
+    /// `dps` of maximum health a second for `secs` (Majordomo's Teleport).
+    Teleport { yards: f32, dps: f32, secs: f32 },
+    /// Run as often as its timer: with no hero standing within `range` of the boss for `grace`
+    /// seconds, a `radius` circle winds up for `windup` under each pick and lands `blow` (Magma
+    /// Blast).
+    MeleeCheck {
+        range: f32,
+        grace: f32,
+        radius: f32,
+        windup: f32,
+        blow: Blow,
+    },
+    /// The boss sinks for `secs`, untouchable and idle, and `count` of the add `add` rise round it
+    /// (0 is the party's count); it comes back once they are gone (after a moment) or the time is
+    /// up, with its row named `opener` due at once (Ragnaros's Submerge and his Sons of Flame).
+    Submerge {
+        secs: f32,
+        add: &'static str,
+        count: u8,
+        opener: &'static str,
+    },
+    /// The boss can't lose health for `secs` (Armageddon's channel).
+    Immune { secs: f32 },
     /// A buff on the boss: `haste` more swings for `secs`; a Hunter's Tranquilizing Shot takes it
     /// off, and without a Hunter in the party it lasts half as long.
     Frenzy { secs: f32, haste: f32 },
@@ -552,6 +622,13 @@ pub(crate) struct Script {
     pub erupt: Option<Erupt>,
     /// The boss it serves, and how its fall or its life is tied to it.
     pub master: Option<Master>,
+    /// It can't be brought below this share of its health (Majordomo's Aegis of Ragnaros); 0 for
+    /// none.
+    pub aegis: f32,
+    /// It yields once these adds are gone, which wins its stage ([`Submit`]).
+    pub submits: Option<Submit>,
+    /// It never moves: it stands at its stage's centre (Ragnaros in his lava).
+    pub rooted: bool,
 }
 
 impl Script {
@@ -563,7 +640,70 @@ impl Script {
             death: None,
             erupt: None,
             master: None,
+            aegis: 0.0,
+            submits: None,
+            rooted: false,
         }
+    }
+}
+
+/// A boss that yields rather than dying: once every add named in `adds` is gone it says `line`,
+/// and the stage is won.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Submit {
+    pub adds: &'static [&'static str],
+    pub line: Yell,
+}
+
+/// What a ward on an add answers ([`Ward`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WardKind {
+    /// Spells: a blow of any school but physical is reflected at its hero (Magic Reflection).
+    Reflect,
+    /// Melee: a physical blow, or one of no school, burns its hero (Damage Shield).
+    Thorns,
+}
+
+/// On an add warded by its master ([`Does::Ward`]): until the run second `until`, a hero's blow it
+/// answers hurts that hero for [`WARD_SHARE`] of it, at most [`WARD_CAP`] of its maximum health.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ward {
+    pub kind: WardKind,
+    pub spell: u32,
+    pub until: f32,
+}
+
+impl Ward {
+    /// What a blow of `damage` and `school` at run second `now` costs the hero that struck it,
+    /// whose maximum health is `max_hp`.
+    pub(crate) fn answer(&self, now: f32, school: Option<School>, damage: f32, max_hp: f32) -> f32 {
+        let spell = school.is_some_and(|s| s != School::Physical);
+        let hits = match self.kind {
+            WardKind::Reflect => spell,
+            WardKind::Thorns => !spell,
+        };
+        if now >= self.until || !hits || damage <= 0.0 {
+            return 0.0;
+        }
+        (damage * WARD_SHARE).min(max_hp * WARD_CAP)
+    }
+}
+
+/// A bond between an add and its master: while the add stands within `radius` of its master
+/// (`near`) or beyond it (not `near`) it deals `mult` times its damage and wears `spell`
+/// (Golemagg's Trust; Separation Anxiety).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Bond {
+    pub spell: u32,
+    pub radius: f32,
+    pub mult: f32,
+    pub near: bool,
+}
+
+impl Bond {
+    /// Whether the bond holds for an add `dist` yards from its master.
+    pub(crate) fn holds(&self, dist: f32) -> bool {
+        (dist <= self.radius) == self.near
     }
 }
 
@@ -588,6 +728,8 @@ pub(crate) struct Master {
     pub undying: bool,
     /// The emote as it refuses to die, `%s` its name.
     pub refuses: Option<Yell>,
+    /// Its bond to its master, if any.
+    pub bond: Option<Bond>,
 }
 
 /// How many heroes a curse picks for a party this size (RAIDS.md section 7).
@@ -628,6 +770,21 @@ pub(crate) struct RaidBoss {
     /// Seconds of an ally's Inspire left, and its haste.
     pub inspired_t: f32,
     pub inspire_haste: f32,
+    /// Its health can't fall below the first until its clock reaches the second (Immune,
+    /// Submerge).
+    pub frozen: Option<(f32, f32)>,
+    /// Submerged: since when, and the add whose absence brings it back.
+    pub submerged: Option<(f32, &'static str, &'static str)>,
+    /// Seconds no hero has stood in its melee range ([`Does::MeleeCheck`]).
+    pub alone_t: f32,
+    /// It has yielded ([`Submit`]).
+    pub submitted: bool,
+    /// Its bond to its master holds now ([`Bond`]).
+    pub bonded: bool,
+    /// It has been put at its stage's centre ([`Script::rooted`]).
+    pub placed: bool,
+    /// The run system put [`Undying`] on it (an aegis or a freeze), so it takes it off again.
+    pub shielded: bool,
 }
 
 /// A heal on its cast bar ([`Does::Mend`]).
@@ -685,6 +842,30 @@ impl RaidBoss {
             cast: None,
             inspired_t: 0.0,
             inspire_haste: 0.0,
+            frozen: None,
+            submerged: None,
+            alone_t: 0.0,
+            submitted: false,
+            bonded: false,
+            placed: false,
+            shielded: false,
+        }
+    }
+
+    /// It sinks with `hp` held for `secs`, until the adds named `add` are gone, then opens with
+    /// its row `opener` ([`Does::Submerge`]).
+    pub(crate) fn submerge(&mut self, hp: f32, secs: f32, add: &'static str, opener: &'static str) {
+        self.phase = 2;
+        self.submerged = Some((self.clock, add, opener));
+        self.frozen = Some((hp, self.clock + secs));
+    }
+
+    /// The timed row named `name` comes due on the next beat (a re-emerging boss's opener).
+    pub(crate) fn due_now(&mut self, name: &str) {
+        for (i, a) in self.script.abilities.iter().enumerate() {
+            if a.name == name {
+                self.next[i] = self.clock;
+            }
         }
     }
 
@@ -1239,6 +1420,15 @@ impl HeroRaid {
                     }
                     gone |= d.stacks == 0;
                 }
+                Payload::Burn(per) => {
+                    while d.tick >= TICK {
+                        d.tick -= TICK;
+                        out.push(RaidEvent::Hit {
+                            spell: d.spell,
+                            damage: per * TICK,
+                        });
+                    }
+                }
                 Payload::CooldownRate(_)
                 | Payload::HealingTaken(_)
                 | Payload::DamageTaken(_)
@@ -1330,6 +1520,31 @@ pub(crate) fn dispel_target(at: Vec3, afflicted: &[(Vec3, Option<f32>)]) -> Opti
         .filter(|(_, (p, left))| left.is_some() && hero::reach(at, *p) <= DISPEL_RANGE)
         .min_by(|a, b| a.1 .1.unwrap().total_cmp(&b.1 .1.unwrap()))
         .map(|(i, _)| i)
+}
+
+/// A melee check's beat of `every` seconds: the time alone in `alone` grows while no hero `held`
+/// the range and resets when one does; past `grace` it fires, and starts over.
+pub(crate) fn melee_check(alone: &mut f32, held: bool, every: f32, grace: f32) -> bool {
+    if held {
+        *alone = 0.0;
+        return false;
+    }
+    *alone += every;
+    if *alone >= grace {
+        *alone = 0.0;
+        return true;
+    }
+    false
+}
+
+/// What each hero inside a blow of `damage` takes: all of it, or split among the `soakers` inside
+/// (solo, the Companion stands in as one more).
+pub(crate) fn split_share(damage: f32, split: bool, soakers: usize, solo: bool) -> f32 {
+    if !split {
+        return damage;
+    }
+    let n = soakers + usize::from(solo);
+    damage / n.max(1) as f32
 }
 
 /// Where a bot carrying a bomb of `radius` heads: straight away from its party's `leader`, past the
@@ -1461,14 +1676,87 @@ fn seen_of(heroes: &Query<(Entity, &Transform, &mut HeroState), With<Hero>>) -> 
         .collect()
 }
 
+/// What [`tie_up`] changed this beat, for the system to show.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Ties {
+    /// [`Undying`] goes on (`true`) or comes off.
+    pub shield: Option<bool>,
+    /// A submerged boss came back up.
+    pub emerged: bool,
+    /// A bond's spell took hold (`true`) or let go.
+    pub bond: Option<(u32, bool)>,
+    /// It yielded, with this line.
+    pub submitted: Option<Yell>,
+}
+
+/// A scripted foe's life and ties this beat, given the scripted foes standing (`allies`): a freeze
+/// that runs out or holds its health, an aegis floor, a submerge that ends once its servants are
+/// gone or its time is up (its opener due at once), a bond to its master taking hold or letting
+/// go, and a surrender once the adds it waits on are gone.
+pub(crate) fn tie_up(brain: &mut RaidBoss, enemy: &mut Enemy, pos: Vec3, allies: &[Ally]) -> Ties {
+    let mut ties = Ties::default();
+    let script = brain.script;
+    if let Some((hp, until)) = brain.frozen {
+        if brain.clock >= until {
+            brain.frozen = None;
+        } else {
+            enemy.hp = enemy.hp.max(hp);
+        }
+    }
+    if let Some((since, add, opener)) = brain.submerged {
+        enemy.stun_t = enemy.stun_t.max(0.25);
+        let servants = allies.iter().any(|a| a.name == add);
+        if brain.frozen.is_none() || (brain.clock - since >= SUBMERGE_MIN && !servants) {
+            brain.submerged = None;
+            brain.frozen = None;
+            brain.phase = 1;
+            enemy.stun_t = 0.0;
+            brain.due_now(opener);
+            ties.emerged = true;
+        }
+    }
+    if script.aegis > 0.0 {
+        enemy.hp = enemy.hp.max(script.aegis * enemy.max_hp);
+    }
+    let shield = script.aegis > 0.0 || brain.frozen.is_some();
+    if shield != brain.shielded {
+        brain.shielded = shield;
+        ties.shield = Some(shield);
+    }
+    if let Some((master, bond)) = script.master.and_then(|m| m.bond.map(|b| (m.name, b))) {
+        let holds = allies
+            .iter()
+            .find(|a| a.name == master)
+            .is_some_and(|m| bond.holds(hero::reach(pos, m.pos)));
+        if holds != brain.bonded {
+            brain.bonded = holds;
+            if holds {
+                enemy.damage *= bond.mult;
+            } else {
+                enemy.damage /= bond.mult;
+            }
+            ties.bond = Some((bond.spell, holds));
+        }
+    }
+    if let Some(submit) = script.submits {
+        let gone = !allies.iter().any(|a| submit.adds.contains(&a.name));
+        if !brain.submitted && brain.clock >= SUBMIT_AFTER && gone {
+            brain.submitted = true;
+            enemy.stun_t = f32::INFINITY;
+            ties.submitted = Some(submit.line);
+        }
+    }
+    ties
+}
+
 /// One scripted foe as the others see it this frame: for heals, Inspire and detonations.
 #[derive(Clone, Copy, Debug)]
-struct Ally {
-    e: Entity,
-    pos: Vec3,
-    hp: f32,
-    max_hp: f32,
-    name: &'static str,
+pub(crate) struct Ally {
+    pub e: Entity,
+    pub pos: Vec3,
+    pub hp: f32,
+    pub max_hp: f32,
+    pub name: &'static str,
 }
 
 /// Every scripted boss's clock: what is due fires, Frenzy runs and Hunters shoot it off, heals
@@ -1520,6 +1808,7 @@ fn run_bosses(
     let mut heals: Vec<(Entity, f32)> = Vec::new();
     let mut inspires: Vec<(Vec3, u32, f32, f32, f32)> = Vec::new();
     let mut detonations: Vec<(Entity, Vec3, &'static str)> = Vec::new();
+    let mut wards: Vec<(Entity, Vec3, u32, WardKind, f32, f32)> = Vec::new();
     for (boss, tf, mut enemy, mut brain, mut marks) in &mut bosses {
         if enemy.dead {
             if let Some(c) = brain.cast.take() {
@@ -1548,6 +1837,31 @@ fn run_bosses(
                 brain.frenzy_t = 0.0;
                 marks.remove(frenzy_spell(brain.script));
             }
+        }
+
+        // Its life and its ties: an aegis or a freeze, a submerge ending, a bond, a surrender.
+        let ties = tie_up(&mut brain, &mut enemy, pos, &allies);
+        match ties.shield {
+            Some(true) => {
+                commands.entity(boss).try_insert(Undying);
+            }
+            Some(false) => {
+                commands.entity(boss).try_remove::<Undying>();
+            }
+            None => {}
+        }
+        if ties.emerged {
+            marks.remove(RAGNAROS_EMERGE);
+            fx.cast(boss, RAGNAROS_EMERGE, &[boss], None);
+        }
+        match ties.bond {
+            Some((spell, true)) => marks.add(spell, f32::INFINITY),
+            Some((spell, false)) => marks.remove(spell),
+            None => {}
+        }
+        if let Some(line) = ties.submitted {
+            yells.write(Yelled::of(&line, name));
+            run.final_boss = true;
         }
 
         // An ally's Inspire runs its script and its swing faster.
@@ -1778,6 +2092,93 @@ fn run_bosses(
                     inspires.push((pos, a.spell, secs, haste, range));
                 }
                 Does::Detonate { add } => detonations.push((boss, pos, add)),
+                Does::Ward { kind, secs, range } => {
+                    wards.push((boss, pos, a.spell, kind, secs, range));
+                }
+                Does::Teleport { yards, dps, secs } => {
+                    let mut sent = Vec::new();
+                    for &i in &picked {
+                        let away = flat(seen[i].pos - pos).normalize_or(Vec3::X);
+                        let at = seen[i].pos + away * yards;
+                        if let Ok((_, _, mut h)) = heroes.get_mut(seen[i].e) {
+                            h.raid.knock(away, yards);
+                            sent.push(seen[i].e);
+                        }
+                        commands.spawn((
+                            Telegraph {
+                                shape: Shape::Circle { radius: 5.0 },
+                                at: at.to_array(),
+                                yaw: 0.0,
+                                tone: Tone::Damage,
+                                start: now,
+                                land: now + KNOCK_SECS,
+                                until: now + KNOCK_SECS,
+                            },
+                            Pending {
+                                source: boss,
+                                spell: a.spell,
+                                blow: Blow::hit(0.0, School::Fire).pool(dps, secs),
+                            },
+                            RunEntity,
+                        ));
+                    }
+                    if !sent.is_empty() {
+                        fx.cast(boss, a.spell, &sent, None);
+                    }
+                }
+                Does::MeleeCheck {
+                    range,
+                    grace,
+                    radius,
+                    windup,
+                    blow,
+                } => {
+                    let every = match a.when {
+                        When::Every { every, .. } => every,
+                        _ => beat,
+                    };
+                    let held = seen
+                        .iter()
+                        .any(|h| h.up && hero::reach(pos, h.pos) <= range);
+                    if melee_check(&mut brain.alone_t, held, every, grace) {
+                        fx.start(boss, a.spell);
+                        for &i in &picked {
+                            commands.spawn((
+                                Telegraph {
+                                    shape: Shape::Circle { radius },
+                                    at: seen[i].pos.to_array(),
+                                    yaw: 0.0,
+                                    tone: Tone::Damage,
+                                    start: now,
+                                    land: now + windup,
+                                    until: now + windup,
+                                },
+                                Pending {
+                                    source: boss,
+                                    spell: a.spell,
+                                    blow,
+                                },
+                                RunEntity,
+                            ));
+                        }
+                    }
+                }
+                Does::Submerge {
+                    secs,
+                    add,
+                    count,
+                    opener,
+                } => {
+                    brain.submerge(enemy.hp, secs, add, opener);
+                    marks.add(RAGNAROS_EMERGE, secs);
+                    fx.text(boss, "Submerged".into(), COLOR_WARN);
+                    let count = if count == 0 { add_count(party) } else { count };
+                    adds.push((pos, add, count, 10.0));
+                }
+                Does::Immune { secs } => {
+                    brain.frozen = Some((enemy.hp, brain.clock + secs));
+                    marks.add(a.spell, secs);
+                }
                 Does::Phase(_) | Does::Yell => {}
             }
         }
@@ -1796,6 +2197,18 @@ fn run_bosses(
             if !en.dead && hero::reach(at, tf.translation) <= range {
                 brain.inspired_t = secs;
                 brain.inspire_haste = haste;
+                marks.add(spell, secs);
+            }
+        }
+    }
+    for (from, at, spell, kind, secs, range) in wards {
+        for (e, tf, en, _, mut marks) in &mut bosses {
+            if e != from && !en.dead && hero::reach(at, tf.translation) <= range {
+                commands.entity(e).try_insert(Ward {
+                    kind,
+                    spell,
+                    until: now + secs,
+                });
                 marks.add(spell, secs);
             }
         }
@@ -1880,6 +2293,48 @@ pub(crate) fn anchors(
     }
 }
 
+/// A rooted boss ([`Script::rooted`]) never moves: on its first beat it stands at its stage's
+/// centre, its melee ring drawn round it for good.
+#[allow(clippy::type_complexity)]
+fn place_rooted(
+    mut commands: Commands,
+    run: Res<Run>,
+    selection: Res<Selection>,
+    collide: Option<WorldCollision>,
+    world: WorldPoint,
+    mut bosses: Query<(&mut Transform, &mut Enemy, &mut RaidBoss), Without<Hero>>,
+) {
+    let now = run.elapsed;
+    for (mut tf, mut enemy, mut brain) in &mut bosses {
+        if !brain.script.rooted || enemy.dead {
+            continue;
+        }
+        enemy.speed = 0.0;
+        if brain.placed {
+            continue;
+        }
+        brain.placed = true;
+        let map = selection.stage_def();
+        let at =
+            enemies::ground_on_collision(collide.as_ref(), &world, hero::arena(map), map.floor);
+        tf.translation = at;
+        commands.spawn((melee_ring(at, now), RunEntity));
+    }
+}
+
+/// The melee ring a rooted boss at `at` shows from `now` on: full at once, and never gone.
+pub(crate) fn melee_ring(at: Vec3, now: f32) -> Telegraph {
+    Telegraph {
+        shape: Shape::Circle { radius: MELEE_RING },
+        at: at.to_array(),
+        yaw: 0.0,
+        tone: Tone::Safe,
+        start: now,
+        land: now,
+        until: f32::INFINITY,
+    }
+}
+
 /// A blink's sigil whose wind-up is over: its boss stands there, its taunt dropped, and lands its
 /// blow round itself after a short warning.
 fn land_blinks(
@@ -1950,7 +2405,12 @@ fn land_telegraphs(
             continue;
         }
         let origin = t.origin();
-        let blow = pending.blow;
+        let mut blow = pending.blow;
+        let soakers = heroes
+            .iter()
+            .filter(|(_, tf, h)| h.alive() && t.contains(tf.translation))
+            .count();
+        blow.damage = split_share(blow.damage, blow.split, soakers, run.party <= 1);
         let mut struck = Vec::new();
         for (he, tf, mut hero) in &mut heroes {
             if !hero.alive() || !t.contains(tf.translation) {
@@ -2296,6 +2756,8 @@ fn on_deaths(
     mut kills: MessageReader<enemies::Loot>,
     mut masters: Query<(Entity, &mut Enemy, &mut Marks), (With<RaidBoss>, Without<Hero>)>,
     mut yells: MessageWriter<Yelled>,
+    mut rng: ResMut<Rng>,
+    mut notes: Option<ResMut<ResultsNotes>>,
     mut fx: Fx,
 ) {
     let now = run.elapsed;
@@ -2305,6 +2767,19 @@ fn on_deaths(
         };
         if let Some(y) = &script.death {
             yells.write(Yelled::of(y, script.name));
+        }
+        // The Firelord's hoard, rolled as he falls and kept on the results screen.
+        if script.name == bosses::RAGNAROS.name {
+            for (item, name, chance) in bosses::RAGNAROS_LOOT {
+                if rng.f32() < *chance {
+                    if let Some(notes) = notes.as_mut() {
+                        notes.push(
+                            format!("Ragnaros dropped [{name}] ({item})"),
+                            NoteKind::Loot,
+                        );
+                    }
+                }
+            }
         }
         let master = script.master.and_then(|m| {
             masters
