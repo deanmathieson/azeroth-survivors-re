@@ -133,7 +133,10 @@ impl Plugin for UiTrainerPlugin {
                         .in_set(UiFeed)
                         .in_set(TrainerFeed)
                         .after(crate::ui_unit::UnitFeed),
-                    drain_trainer.after(UiInput),
+                    // Survivors' trainer is local, with its own drain.
+                    drain_trainer
+                        .after(UiInput)
+                        .run_if(crate::run_mode::stock_ui_owns),
                 ),
             );
     }

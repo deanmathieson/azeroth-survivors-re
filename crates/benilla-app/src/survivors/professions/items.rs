@@ -5,7 +5,10 @@
 //! **What is verified.** Each icon ships in the client (`Interface\Icons\<icon>.blp`), and each
 //! item's display id (held by the test until something draws the item in the world) is an
 //! `ItemDisplayInfo.dbc` row with that icon: `tests::displays_and_icons_exist_in_the_client`,
-//! data-gated. **Not verified:** the entries and names, and which of the rows sharing an icon the
+//! data-gated. The ores, bars and Coal are also the entries the real Smelting spells consume and
+//! create (`recipes::tests::smelting_recipes_resolve_in_the_client`), and Empty Vial, Peacebloom,
+//! Silverleaf and the Minor Healing Potion those of the real Minor Healing Potion recipe.
+//! **Not verified:** the other entries, the names, and which of the rows sharing an icon the
 //! cores' `item_template` names. The 1.12 client ships no item names and the repo has no
 //! `Item.dbc` parser, so those are from memory and want a check against a core's `item_template`
 //! (docs/PROFESSIONS.md, ground rules).
@@ -105,6 +108,27 @@ pub(crate) const DEVIATE_FISH: u32 = 6522;
 pub(crate) const OILY_BLACKMOUTH: u32 = 6358;
 /// Stonescale Eel. Entry unverified.
 pub(crate) const STONESCALE_EEL: u32 = 13422;
+
+// The bars Smelting makes (section 3.3), and what the camp goblin sells for it; every entry is
+// a reagent or product of a real 1.12 spell (`recipes`).
+/// Tin Bar.
+pub(crate) const TIN_BAR: u32 = 3576;
+/// Bronze Bar.
+pub(crate) const BRONZE_BAR: u32 = 2841;
+/// Iron Bar.
+pub(crate) const IRON_BAR: u32 = 3575;
+/// Steel Bar.
+pub(crate) const STEEL_BAR: u32 = 3859;
+/// Mithril Bar.
+pub(crate) const MITHRIL_BAR: u32 = 3860;
+/// Truesilver Bar.
+pub(crate) const TRUESILVER_BAR: u32 = 6037;
+/// Thorium Bar.
+pub(crate) const THORIUM_BAR: u32 = 12359;
+/// Coal, Smelt Steel's second reagent: vendor-bought.
+pub(crate) const COAL: u32 = 3857;
+/// Empty Vial, the potion recipes' vial: vendor-bought.
+pub(crate) const EMPTY_VIAL: u32 = 3371;
 
 /// One authored template.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -332,6 +356,22 @@ pub(crate) static ITEMS: &[ItemDef] = &[
         20,
         10,
     ),
+    goods(TIN_BAR, "Tin Bar", 1, "INV_Ingot_05", 20, 25),
+    goods(BRONZE_BAR, "Bronze Bar", 1, "INV_Ingot_Bronze", 20, 50),
+    goods(IRON_BAR, "Iron Bar", 1, "INV_Ingot_Iron", 20, 200),
+    goods(STEEL_BAR, "Steel Bar", 1, "INV_Ingot_Steel", 20, 250),
+    goods(MITHRIL_BAR, "Mithril Bar", 1, "INV_Ingot_06", 20, 400),
+    goods(
+        TRUESILVER_BAR,
+        "Truesilver Bar",
+        2,
+        "INV_Ingot_08",
+        20,
+        1_000,
+    ),
+    goods(THORIUM_BAR, "Thorium Bar", 1, "INV_Ingot_07", 20, 600),
+    goods(COAL, "Coal", 1, "INV_Stone_15", 20, 125),
+    goods(EMPTY_VIAL, "Empty Vial", 1, "INV_Drink_06", 20, 1),
     ItemDef {
         entry: MINOR_HEALING_POTION,
         name: "Minor Healing Potion",
@@ -566,6 +606,15 @@ mod tests {
         (DEVIATE_FISH, 18096),
         (OILY_BLACKMOUTH, 18536),
         (STONESCALE_EEL, 32520),
+        (TIN_BAR, 18086),
+        (BRONZE_BAR, 7390),
+        (IRON_BAR, 7376),
+        (STEEL_BAR, 7392),
+        (MITHRIL_BAR, 20659),
+        (TRUESILVER_BAR, 20656),
+        (THORIUM_BAR, 22444),
+        (COAL, 15805),
+        (EMPTY_VIAL, 18076),
     ];
 
     /// The looks are real: each display id is an `ItemDisplayInfo.dbc` row whose inventory icon is

@@ -9,6 +9,10 @@
 //! treasure cache. A quest giver is the gold quest dot, and a Defend quest's spot a green ring
 //! ([`super::quests::MapPin`]). Sizes are the engine minimap's ([`crate::minimap`]), measured
 //! against its 140.8-px blip basis.
+//!
+//! Find Minerals and Find Herbs ([`super::professions::tracking`]) put `ObjectIcons.blp`'s gold
+//! resource dot on every standing vein or herb in view, and `MiniMapTrackingFrame`'s button at the
+//! map's top left shows the tracking in force; a click cycles it (off, minerals, herbs).
 
 use std::collections::HashMap;
 
@@ -24,6 +28,8 @@ use benilla_world::world_point::WorldPoint;
 use super::enemies::Enemy;
 use super::hero::Hero;
 use super::hud::UiArt;
+use super::professions::gather::NetNode;
+use super::professions::tracking::Tracking;
 use super::quests::MapPin;
 use super::treasure::Cache;
 use super::{HeroState, LocalHero};
@@ -44,6 +50,11 @@ const BLIP_BASIS_PX: f32 = 140.8;
 const DOT_PX: f32 = 8.0;
 /// `ObjectIcons.blp` cell 1 (left, right, top, bottom): a unit passing creature tracking.
 const TRACKED_UNIT_CELL: [f32; 4] = [0.25, 0.5, 0.0, 0.25];
+/// `ObjectIcons.blp` cell 0: the gold dot of a game object passing resource tracking.
+const TRACKED_GO_CELL: [f32; 4] = [0.0, 0.25, 0.0, 0.25];
+/// `MiniMapTrackingFrame`'s border; with nothing tracked the button shows Find Minerals greyed.
+const TRACKING_BORDER: &str = "Interface\\Minimap\\MiniMap-TrackingBorder";
+const TRACKING_OFF: Color = Color::srgba(0.45, 0.45, 0.45, 0.85);
 const ARROW_PX: f32 = 33.6;
 const ARROW_OFFSET_PX: Vec2 = Vec2::new(0.51, -1.73);
 /// An elite's dot is this much bigger, inside a ring this much wider still: gold for an elite,
@@ -92,6 +103,14 @@ pub(super) enum MapButton {
     ZoomOut,
     Toggle,
 }
+
+/// `MiniMapTrackingFrame`: a click cycles the tracking.
+#[derive(Component)]
+pub(super) struct TrackingButton;
+
+/// The tracking spell's icon in it.
+#[derive(Component)]
+pub(super) struct TrackingIcon;
 
 /// Decoded RGBA8 art the composite samples.
 struct Rgba {
@@ -314,7 +333,73 @@ pub(super) fn spawn_cluster(root: &mut ChildSpawnerCommands, font: &Handle<Font>
             at(161.0, -3.0, 32.0, 32.0),
             ImageNode::default(),
         ));
+        // `MiniMapTrackingFrame`, 32² on the ring's upper left: the 20² icon at (6, 6) under the
+        // 52² border. Hidden until the professions' tracking exists.
+        cluster
+            .spawn((
+                TrackingButton,
+                Button,
+                Node {
+                    display: Display::None,
+                    ..at(9.0, 40.0, 32.0, 32.0)
+                },
+            ))
+            .with_children(|frame| {
+                frame.spawn((
+                    TrackingIcon,
+                    at(6.0, 6.0, 20.0, 20.0),
+                    ImageNode {
+                        color: Color::NONE,
+                        ..default()
+                    },
+                ));
+                frame.spawn((
+                    at(0.0, 0.0, 52.0, 52.0),
+                    art(TRACKING_BORDER, [0.0, 1.0, 0.0, 1.0]),
+                ));
+            });
     });
+}
+
+/// The tracking button: shown with the professions, its icon the tracking spell's (Find Minerals
+/// greyed when nothing is tracked), and a click cycles the tracking.
+pub(super) fn tracking_button(
+    tracking: Option<ResMut<Tracking>>,
+    mut buttons: Query<(Ref<Interaction>, &mut Node), With<TrackingButton>>,
+    mut icons: Query<&mut ImageNode, With<TrackingIcon>>,
+    assets: Option<ResMut<WorldAssets>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(mut tracking) = tracking else { return };
+    for (interaction, mut node) in &mut buttons {
+        if node.display != Display::Flex {
+            node.display = Display::Flex;
+        }
+        if *interaction == Interaction::Pressed && interaction.is_changed() {
+            *tracking = tracking.next();
+        }
+    }
+    let Some(mut assets) = assets else { return };
+    let (icon, color) = match tracking.spell() {
+        Some((_, _, icon, _)) => (icon, Color::WHITE),
+        None => (
+            Tracking::Minerals
+                .spell()
+                .map_or("", |(_, _, icon, _)| icon),
+            TRACKING_OFF,
+        ),
+    };
+    let Some(h) = assets.sprite_texture(icon, &mut images) else {
+        return;
+    };
+    for mut img in &mut icons {
+        if img.image != h {
+            img.image = h.clone();
+        }
+        if img.color != color {
+            img.color = color;
+        }
+    }
 }
 
 /// The zoom and minimize buttons: their `Up`/`Down`/`Disabled` art, and a press acts.
@@ -422,6 +507,7 @@ pub(super) fn compose(
     caches: Query<(&Transform, &Cache)>,
     pins: Query<(&Transform, &MapPin)>,
     marks: Option<Res<MapMarks>>,
+    resources: (Option<Res<Tracking>>, Query<(&Transform, &NetNode)>),
     mut images: ResMut<Assets<Image>>,
 ) {
     if *phase.get() == super::Phase::Menu || !map.shown {
@@ -586,6 +672,24 @@ pub(super) fn compose(
                 Some(icons.sample(x, y))
             });
         };
+        // The tracked veins or herbs under everything that moves: the gold resource dot.
+        let (tracking, nodes) = &resources;
+        if let Some(tracking) = tracking.as_deref().filter(|t| **t != Tracking::Off) {
+            let [gl, gr, gt, gb] = TRACKED_GO_CELL;
+            for (tf, node) in nodes {
+                let shows = !node.depleted && node.def().is_some_and(|d| tracking.shows(d.kind));
+                let off = Vec2::new(tf.translation.x - p.x, tf.translation.z - p.z);
+                if !shows || off.length() > radius {
+                    continue;
+                }
+                blit(buf, center + off / yd_per_px, size, |q| {
+                    let f = q / size + 0.5;
+                    let x = (gl + (gr - gl) * f.x) * icons.w as f32;
+                    let y = (gt + (gb - gt) * f.y) * icons.h as f32;
+                    Some(icons.sample(x, y))
+                });
+            }
+        }
         // The horde first, so the elites' markers sit on top.
         let mut elites = Vec::new();
         for (tf, enemy) in &enemies {

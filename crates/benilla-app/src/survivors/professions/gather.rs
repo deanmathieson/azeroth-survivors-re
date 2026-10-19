@@ -442,14 +442,22 @@ pub(crate) struct UiLines(pub(crate) Vec<CastLine>);
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum CastLine {
     Start(Line, f32),
+    /// A craft's cast, by its spell's name.
+    Cast(&'static str, f32),
     Delayed,
     Interrupted,
     Stop,
     Requires(Line, u16),
     Loot(u32, u16),
+    /// A craft's product: "You create: [Copper Bar]."
+    Created(u32, u32),
     SkillUp(Line, u16),
+    /// A trainer rank bought: the line and the step.
+    Learned(Line, usize),
     Full,
     NotReady,
+    /// A refusal: the `GlobalStrings.lua` key and the words if the key is missing.
+    Refused(&'static str, &'static str),
 }
 
 /// Every machine: this player's yields into the bags, each announced, and the skill-up roll.
@@ -581,6 +589,13 @@ pub(crate) fn announce(script: &mut UiScript, line: &CastLine) {
                 ScriptValue::Int((secs * 1000.0) as i64),
             ],
         ),
+        CastLine::Cast(name, secs) => script.fire_event(
+            "SPELLCAST_START",
+            vec![
+                ScriptValue::Str((*name).into()),
+                ScriptValue::Int((secs * 1000.0) as i64),
+            ],
+        ),
         CastLine::Delayed => script.fire_event(
             "SPELLCAST_DELAYED",
             vec![ScriptValue::Int((PUSHBACK * 1000.0) as i64)],
@@ -591,9 +606,10 @@ pub(crate) fn announce(script: &mut UiScript, line: &CastLine) {
             let text = format!("Requires {} ({req})", l.name());
             script.fire_event("UI_ERROR_MESSAGE", vec![ScriptValue::Str(text)]);
         }
-        CastLine::Full | CastLine::NotReady => {
+        CastLine::Full | CastLine::NotReady | CastLine::Refused(..) => {
             let (key, fallback) = match line {
                 CastLine::Full => ("ERR_INV_FULL", "Inventory is full."),
+                CastLine::Refused(key, fallback) => (*key, *fallback),
                 _ => ("ERR_ITEM_COOLDOWN", "Item is not ready yet."),
             };
             let text = script
@@ -623,6 +639,41 @@ pub(crate) fn announce(script: &mut UiScript, line: &CastLine) {
                     format!("You receive loot: {link}."),
                 )
             };
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        CastLine::Created(item, n) => {
+            let Some(def) = items::template(*item) else {
+                return;
+            };
+            let link = items::link(def);
+            let text = if *n > 1 {
+                format(
+                    script,
+                    "LOOT_ITEM_CREATED_SELF_MULTIPLE",
+                    &format!("{}, {n}", lua_str(&link)),
+                    format!("You create: {link}x{n}."),
+                )
+            } else {
+                format(
+                    script,
+                    "LOOT_ITEM_CREATED_SELF",
+                    &lua_str(&link),
+                    format!("You create: {link}."),
+                )
+            };
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        CastLine::Learned(l, step) => {
+            let rank = super::skills::TRAINER_RANKS
+                .get(*step)
+                .map_or("", |r| r.name);
+            let spell = format!("{} ({rank})", l.spell_name());
+            let text = format(
+                script,
+                "ERR_LEARN_SPELL_S",
+                &lua_str(&spell),
+                format!("You have learned a new spell: {spell}."),
+            );
             script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
         }
         CastLine::SkillUp(l, rank) => {
@@ -757,6 +808,9 @@ mod tests {
         announce(&mut s, &CastLine::Loot(items::COPPER_ORE, 2));
         announce(&mut s, &CastLine::SkillUp(Line::Mining, 76));
         announce(&mut s, &CastLine::Start(Line::Mining, 1.5));
+        announce(&mut s, &CastLine::Cast("Smelt Copper", 3.0));
+        announce(&mut s, &CastLine::Created(items::COPPER_BAR, 1));
+        announce(&mut s, &CastLine::Learned(Line::Mining, 1));
         let seen: Vec<String> = s.eval("return SEEN").unwrap();
         assert_eq!(
             seen,
@@ -765,6 +819,10 @@ mod tests {
                     .to_string(),
                 "UI_INFO_MESSAGE:Your skill in Mining has increased to 76.".to_string(),
                 "SPELLCAST_START:Mining".to_string(),
+                "SPELLCAST_START:Smelt Copper".to_string(),
+                "UI_INFO_MESSAGE:You create: |cffffffff|Hitem:2840:0:0:0|h[Copper Bar]|h|r."
+                    .to_string(),
+                "UI_INFO_MESSAGE:You have learned a new spell: Mining (Journeyman).".to_string(),
             ]
         );
     }

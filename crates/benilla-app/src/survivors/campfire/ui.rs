@@ -1,6 +1,10 @@
 //! The camp's windows: the goblin's merchant window on the left, and on the right the ready check
 //! ("Ready to move on?"), in the lobby's `UI-ReadyCheckFrame` with each player's mark, the
 //! "Roll for the cache" button with the rolls, and the camp's personal note.
+//!
+//! Under the FrameXML opt-in ([`crate::run_mode::SurvivorsUi`]) the goblin's goods are the stock
+//! `MerchantFrame`'s (`professions::stations`), so this window becomes his Services beside it, and
+//! the ready check gains the Train and Smelt buttons that open the stock trainer and Smelting.
 
 use bevy::prelude::*;
 
@@ -41,8 +45,8 @@ const ROW_HOVER: Color = Color::srgba(1.0, 0.82, 0.0, 0.18);
 
 /// Whether the goblin's window is open.
 #[derive(Resource, Default)]
-pub(super) struct MerchantWindow {
-    pub(super) open: bool,
+pub(in crate::survivors) struct MerchantWindow {
+    pub(in crate::survivors) open: bool,
 }
 
 #[derive(Component)]
@@ -56,6 +60,9 @@ enum CampButton {
     Ready,
     Roll,
     CloseMerchant,
+    /// The stock trainer and Smelting windows, under the FrameXML opt-in.
+    Train,
+    Smelt,
 }
 #[derive(Component)]
 struct CampRoot;
@@ -152,6 +159,7 @@ fn build(
     mut commands: Commands,
     font: Option<Res<HudFont>>,
     glue: Option<Res<GlueArt>>,
+    stock: Option<Res<crate::run_mode::SurvivorsUi>>,
     built: Query<(), With<CampRoot>>,
 ) {
     let (Some(font), Some(glue)) = (font, glue) else {
@@ -162,12 +170,15 @@ fn build(
     }
     let f = &font.0;
     let px = Val::Px;
+    let stock = stock.is_some();
     commands
         .spawn((
             MerchantRoot,
             Node {
                 position_type: PositionType::Absolute,
-                left: px(16.0),
+                // Beside the stock `MerchantFrame` in UIParent's left panel slot, which spans
+                // about 350 of the screen's 768 units, when that is up.
+                left: px(if stock { 360.0 } else { 16.0 }),
                 top: Val::Percent(36.0),
                 width: px(290.0),
                 flex_direction: FlexDirection::Column,
@@ -188,7 +199,8 @@ fn build(
                 ..default()
             })
             .with_children(|t| {
-                t.spawn(label(f, "Goblin Merchant", 16.0, GOLD));
+                let title = if stock { "Services" } else { "Goblin Merchant" };
+                t.spawn(label(f, title, 16.0, GOLD));
                 glue_button(
                     t,
                     &glue,
@@ -349,6 +361,29 @@ fn build(
                 GlueBtnKind::Dialog,
                 1.0,
             );
+            if stock {
+                root.spawn(Node {
+                    column_gap: px(8.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for (button, text) in
+                        [(CampButton::Train, "Train"), (CampButton::Smelt, "Smelt")]
+                    {
+                        glue_button(
+                            row,
+                            &glue,
+                            f,
+                            button,
+                            text,
+                            92.0,
+                            26.0,
+                            GlueBtnKind::Dialog,
+                            1.0,
+                        );
+                    }
+                });
+            }
             root.spawn((RollText, label(f, "", 12.0, SYSTEM)));
             root.spawn(Node {
                 align_items: AlignItems::Center,
@@ -363,11 +398,12 @@ fn build(
         });
 }
 
-/// Ready and the roll go out as the local player's asks.
+/// Ready and the roll go out as the local player's asks; Train and Smelt toggle their windows.
 fn camp_clicks(
     clicks: Res<GlueClicks>,
     buttons: Query<(Entity, &CampButton, Option<&GlueDisabled>)>,
     mut window: ResMut<MerchantWindow>,
+    mut desk: Option<ResMut<crate::survivors::professions::stations::CampDesk>>,
     mut out: MessageWriter<CampRequest>,
 ) {
     for (e, button, disabled) in &buttons {
@@ -382,6 +418,16 @@ fn camp_clicks(
                 out.write(CampRequest(CampAsk::Roll));
             }
             CampButton::CloseMerchant => window.open = false,
+            CampButton::Train => {
+                if let Some(desk) = desk.as_mut() {
+                    desk.trainer = !desk.trainer;
+                }
+            }
+            CampButton::Smelt => {
+                if let Some(desk) = desk.as_mut() {
+                    desk.smelting = !desk.smelting;
+                }
+            }
         }
     }
 }
@@ -540,7 +586,7 @@ fn refresh_camp(
         let want = match button {
             CampButton::Ready => camp.ready.contains(&me),
             CampButton::Roll => camp.has_rolled(me),
-            CampButton::CloseMerchant => false,
+            CampButton::CloseMerchant | CampButton::Train | CampButton::Smelt => false,
         };
         if disabled.0 != want {
             disabled.0 = want;

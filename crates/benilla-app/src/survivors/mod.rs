@@ -274,6 +274,7 @@ impl Plugin for SurvivorsPlugin {
                     hud::icon_tooltip,
                     hud::hero_plate,
                     minimap::map_buttons,
+                    minimap::tracking_button,
                     minimap::zone_text,
                     minimap::compose,
                 )

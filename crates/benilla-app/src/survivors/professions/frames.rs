@@ -22,11 +22,13 @@ use crate::ui_script::{PlayerUiHover, UiKeyboardCapture, VmMemo};
 
 /// What the feed last did, per VM: a fresh VM gets every template and bag again.
 #[derive(Default)]
-pub(super) struct BagFeed {
+pub(crate) struct BagFeed {
     memory: FeedMemory,
     /// The [`Bags::generation`] last pushed; `None` before the first push.
     pushed: Option<u64>,
     templates: bool,
+    /// The purse last pushed.
+    money: Option<u64>,
 }
 
 /// `Update`, after the input pass: apply this frame's bag gestures, then push what changed, so the
@@ -34,24 +36,39 @@ pub(super) struct BagFeed {
 pub(super) fn sync_bags(
     script: Option<NonSendMut<UiScript>>,
     mut bags: ResMut<Bags>,
+    purse: Res<super::econ::Purse>,
     mut feed: Local<VmMemo<BagFeed>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let feed = feed.get(&script);
-    sync(&mut script, bags.bypass_change_detection(), feed);
+    sync(
+        &mut script,
+        bags.bypass_change_detection(),
+        purse.copper(),
+        feed,
+    );
 }
 
-/// [`sync_bags`]' body.
-pub(super) fn sync(script: &mut UiScript, bags: &mut Bags, feed: &mut BagFeed) {
+/// [`sync_bags`]' body: `money` is the purse, in copper.
+pub(crate) fn sync(script: &mut UiScript, bags: &mut Bags, money: u64, feed: &mut BagFeed) {
     if !feed.templates {
         for def in items::ITEMS {
             script.set_item_template(def.entry, items::template_view(def));
         }
-        // The Backpack's money frame; the purse arrives in P1.
-        script.set_money(0);
+        // The camp windows' addons, loaded with the curated interface, hear their load here: the
+        // trainer's sets its filters on it.
+        for (name, _) in crate::ui_script::SURVIVORS_UI_ADDONS {
+            script.fire_event("ADDON_LOADED", vec![ScriptValue::Str((*name).to_string())]);
+        }
         feed.templates = true;
+    }
+    // The purse, on the Backpack's money line and every window's: `PLAYER_MONEY` repaints them.
+    if feed.money != Some(money) {
+        script.set_money(money);
+        script.fire_event("PLAYER_MONEY", vec![]);
+        feed.money = Some(money);
     }
     apply_intents(script, bags);
     // Every authored template is in the store, so an ask is for an id survivors does not have.
@@ -431,7 +448,12 @@ mod tests {
         let mut s = vm();
         let mut bags = Bags::test_inventory();
         let mut feed = BagFeed::default();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 12_345, &mut feed);
+        assert_eq!(
+            s.eval::<i64>("return GetMoney()").unwrap(),
+            12_345,
+            "the purse"
+        );
         assert_eq!(s.eval::<i64>("return GetContainerNumSlots(0)").unwrap(), 16);
         assert_eq!(s.eval::<i64>("return GetContainerNumSlots(1)").unwrap(), 6);
         assert_eq!(
@@ -459,7 +481,7 @@ mod tests {
         let mut s = vm();
         let mut bags = Bags::test_inventory();
         let mut feed = BagFeed::default();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         let first = bags
             .get(0, 1)
             .expect("the backpack's first slot holds something");
@@ -470,7 +492,7 @@ mod tests {
 
         s.run("PickupContainerItem(0, 1) PickupContainerItem(1, 6)")
             .unwrap();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         assert_eq!(bags.get(0, 1), None, "the source is empty");
         assert_eq!(bags.get(1, 6), Some(first), "the stack is in the bag");
         let id: i64 = s
@@ -490,10 +512,10 @@ mod tests {
         let mut bags = Bags::with_worn([LINEN_BAG, 0, 0, 0]);
         bags.add(LINEN_CLOTH, 20);
         let mut feed = BagFeed::default();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         s.run("SplitContainerItem(0, 1, 7) PickupContainerItem(0, 4)")
             .unwrap();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         assert_eq!(bags.get(0, 1).map(|st| st.count), Some(13));
         assert_eq!(bags.get(0, 4).map(|st| st.count), Some(7));
     }
@@ -505,10 +527,10 @@ mod tests {
         let mut bags = Bags::with_worn([0, 0, 0, 0]);
         bags.add(COPPER_ORE, 3);
         let mut feed = BagFeed::default();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         s.run("PickupContainerItem(0, 1) DeleteCursorItem()")
             .unwrap();
-        sync(&mut s, &mut bags, &mut feed);
+        sync(&mut s, &mut bags, 0, &mut feed);
         assert_eq!(bags.get(0, 1), None);
     }
 

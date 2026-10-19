@@ -7,6 +7,11 @@
 //!   [`save`]); veins, herbs and fishing pools spawn in runs and are gathered while fighting, each
 //!   hero's yield its own ([`gather`]); beasts are skinned; the camp's bobber lands fish; the
 //!   potion is drunk from the bags ([`effects`]); K shows the skills.
+//! - **P1, the economy:** each run banks a share of the party's gold into the profile's purse
+//!   ([`econ`]); at camp the goblin's stock `MerchantFrame` buys and sells, the trainer's
+//!   `ClassTrainerFrame` sells the gathering ranks, and Smelting's `TradeSkillFrame` turns ore into
+//!   bars ([`stations`], [`recipes`]); Find Minerals and Find Herbs mark the minimap
+//!   ([`tracking`]).
 //!
 //! - **Opt-in:** this plugin inserts [`crate::run_mode::SurvivorsUi`] beside `CaptureMode`, so the
 //!   world entry loads the curated interface; the stock net drains stand down under it.
@@ -17,14 +22,18 @@
 //!   bag and hovers the first item once a run is playing; with `WOW_SURVIVORS_SHOTS=<dir>` it also
 //!   saves `<dir>/bags.png`.
 
+pub(crate) mod econ;
 pub(crate) mod effects;
 pub(crate) mod frames;
 pub(crate) mod gather;
 pub(crate) mod inventory;
 pub(crate) mod items;
 pub(crate) mod nodes;
+pub(crate) mod recipes;
 pub(crate) mod save;
 pub(crate) mod skills;
+pub(crate) mod stations;
+pub(crate) mod tracking;
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
@@ -77,6 +86,12 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<gather::Gathering>()
         .init_resource::<gather::UiLines>()
         .init_resource::<effects::UseOutbox>()
+        .init_resource::<econ::Purse>()
+        .init_resource::<econ::GoldTally>()
+        .init_resource::<econ::Shop>()
+        .init_resource::<stations::CampDesk>()
+        .init_resource::<stations::Smelter>()
+        .init_resource::<tracking::Tracking>()
         .insert_resource(frames::OpenBagsAid {
             done: !open_bags,
             shot_dir: crate::webenv::var("WOW_SURVIVORS_SHOTS")
@@ -86,7 +101,11 @@ pub(super) fn plugin(app: &mut App) {
         })
         // The profile is in by then (`profile::load_profile`, `Startup`).
         .add_systems(PostStartup, save::load_saved)
-        .add_systems(Update, save::save_changes)
+        // The run purse watched, a recorded run banked, then whatever changed saved.
+        .add_systems(
+            Update,
+            (econ::tally_gold, econ::bank_run_gold, save::save_changes).chain(),
+        )
         // The keys, after the UI key feed (the keyboard capture) and the binding dispatch, and
         // before every survivors key system in `WorldStage::Input` and after it.
         .add_systems(
@@ -96,11 +115,18 @@ pub(super) fn plugin(app: &mut App) {
                 .after(crate::bindings::BindingSet)
                 .run_if(ingame_ui_up),
         )
-        // The gestures' intents, drained after the input pass that queued them (a right-click's
-        // use ahead of the stock script-call applier), and the push, before this frame's paint.
+        // The gestures' intents, drained after the input pass that queued them (the camp windows'
+        // first, so a right-click on a bag sells while the goblin's window is open, and a
+        // right-click's use ahead of the stock script-call applier), and the push, before this
+        // frame's paint.
         .add_systems(
             Update,
-            (effects::use_items, frames::sync_bags, frames::open_bags_aid)
+            (
+                stations::run_stations,
+                effects::use_items,
+                frames::sync_bags,
+                frames::open_bags_aid,
+            )
                 .chain()
                 .after(UiInput)
                 .before(UiPaint)
@@ -161,9 +187,9 @@ pub(crate) mod test_support {
             }
         }
 
-        /// One frame's drain and push.
+        /// One frame's drain and push, with an empty purse.
         pub(crate) fn sync(&mut self, script: &mut UiScript) {
-            sync(script, &mut self.bags, &mut self.feed);
+            sync(script, &mut self.bags, 0, &mut self.feed);
         }
 
         /// Press `key` through the survivors key handler, a run playing; whether it was spent.
@@ -188,6 +214,12 @@ pub(crate) mod test_support {
         pub(crate) fn escape(&mut self, script: &mut UiScript) -> bool {
             self.press(script, KeyCode::Escape)
         }
+    }
+
+    /// Esc through the survivors key handler with no bags of its own: whether a stock window took
+    /// it.
+    pub(crate) fn escape_closes(script: &mut UiScript) -> bool {
+        Fixture::new().escape(script)
     }
 }
 

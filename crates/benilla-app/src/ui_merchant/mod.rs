@@ -120,7 +120,10 @@ impl Plugin for UiMerchantPlugin {
                     feed_repair_costs
                         .in_set(UiFeed)
                         .before(crate::ui_char::feed_char),
-                    drain_merchant.after(UiInput),
+                    // Survivors' camp goblin is a local merchant with its own drain.
+                    drain_merchant
+                        .after(UiInput)
+                        .run_if(crate::run_mode::stock_ui_owns),
                 ),
             );
     }

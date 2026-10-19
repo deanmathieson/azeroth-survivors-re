@@ -409,6 +409,63 @@ impl Bags {
         left
     }
 
+    /// How many of `item` the bags hold.
+    pub(crate) fn count(&self, item: u32) -> u32 {
+        self.slots
+            .values()
+            .filter(|s| s.item == item)
+            .map(|s| s.count)
+            .sum()
+    }
+
+    /// All or nothing: take every `(item, count)` of `take` out of the bags (the last stacks
+    /// first), then add every one of `give`. Refused with [`BagError::NotFound`] when the bags
+    /// lack a reagent and [`BagError::BagFull`] when the products do not fit, changing nothing.
+    pub(crate) fn exchange(
+        &mut self,
+        take: &[(u32, u32)],
+        give: &[(u32, u32)],
+    ) -> Result<(), BagError> {
+        let mut trial = self.clone();
+        for &(item, count) in take {
+            if trial.count(item) < count {
+                return Err(BagError::NotFound);
+            }
+            let mut left = count;
+            let held: Vec<(i64, u32)> = trial
+                .slots
+                .iter()
+                .rev()
+                .filter(|(_, s)| s.item == item)
+                .map(|(&at, _)| at)
+                .collect();
+            for (bag, slot) in held {
+                if left == 0 {
+                    break;
+                }
+                let s = trial.slots[&(bag, slot)];
+                let n = left.min(s.count);
+                trial.put(
+                    bag,
+                    slot,
+                    Some(Stack {
+                        count: s.count - n,
+                        ..s
+                    }),
+                );
+                left -= n;
+            }
+        }
+        for &(item, count) in give {
+            if trial.add(item, count) > 0 {
+                return Err(BagError::BagFull);
+            }
+        }
+        *self = trial;
+        self.touch();
+        Ok(())
+    }
+
     /// [`Self::add`] limited to one container, without the generation bump.
     fn add_into(&mut self, bag: i64, item: u32, count: u32) -> u32 {
         let left = self.top_up(bag, item, count);
@@ -622,6 +679,37 @@ mod tests {
         b.destroy(0, slot, 4).unwrap();
         assert_eq!(at(&b, 0, slot), Some((LINEN_CLOTH, 6)));
         assert_eq!(b.destroy(0, 16, 0), Err(BagError::NotFound));
+    }
+
+    /// An exchange takes the reagents and adds the products, or changes nothing.
+    #[test]
+    fn survivors_bags_exchange_is_all_or_nothing() {
+        let mut b = Bags::default();
+        b.add(COPPER_ORE, 12);
+        b.add(LINEN_CLOTH, 1);
+        b.exchange(&[(COPPER_ORE, 3)], &[(PEACEBLOOM, 2)]).unwrap();
+        assert_eq!(b.count(COPPER_ORE), 9);
+        assert_eq!(b.count(PEACEBLOOM), 2);
+        // The last stack goes first: 10 + 2 became 9 in the first.
+        assert_eq!(at(&b, 0, 1), Some((COPPER_ORE, 9)));
+        let before = b.clone();
+        assert_eq!(
+            b.exchange(&[(COPPER_ORE, 10)], &[]),
+            Err(BagError::NotFound)
+        );
+        assert_eq!(b, before);
+        // Fill every slot, then a product that needs a new one does not fit.
+        for _ in 0..13 {
+            b.add(MINOR_HEALING_POTION, 5);
+        }
+        assert_eq!(
+            b.exchange(&[(LINEN_CLOTH, 1)], &[(COPPER_ORE, 30)]),
+            Err(BagError::BagFull)
+        );
+        assert_eq!(b.count(LINEN_CLOTH), 1, "nothing was taken");
+        // The reagent's slot frees room for the product.
+        assert_eq!(b.exchange(&[(LINEN_CLOTH, 1)], &[(COPPER_ORE, 2)]), Ok(()));
+        assert_eq!(b.count(COPPER_ORE), 11);
     }
 
     #[test]

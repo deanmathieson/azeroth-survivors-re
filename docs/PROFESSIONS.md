@@ -1,6 +1,6 @@
 # Professions and the WoW inventory
 
-Status: P0 (the bags spike) is built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
+Status: P0 (the bags spike) and most of P1 (gathering, skills, the purse, the camp's merchant, trainer and Smelting, tracking) are built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
 
 Ground rules, as for the rest of the fork:
 
@@ -617,7 +617,7 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
 - **a co-op loopback test** (on the suite's UDP pattern): two players finish the same vein, each gets their own yield, the node depletes, and a third harvest is refused;
 - **screenshot, at both sizes:** Copper mined mid-fight with the casting bar above the XP bar; the skills pane; the fishing loot window at camp; the merchant with the bags open.
 
-**Progress (2026-10-19): the gathering half is built; the economy half is not.**
+**Progress (2026-10-19): both halves are built; the profession book and the screenshots are not.**
 
 - **Built:**
   - profile v5, with `[inventory]` and `[professions.skills]`;
@@ -633,23 +633,41 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
   - K's skills readout.
 
   The co-op protocol is now 16.
+- **Built, the economy half** (`econ.rs`, `stations.rs`, `recipes.rs`, `tracking.rs`):
+  - **The purse:** `[purse] copper` in profile v5, shown on the Backpack's stock money line and in every window's. At the end of each recorded run, win or lose, each machine banks 25% of the gold the party collected, as a results note ("You bank 62s 50c of the party's gold.").
+  - **The merchant:** the goblin's click opens the stock `MerchantFrame` (now a curated row) beside his own window. It sells Coal, Empty Vials and a Linen Bag for the purse, and buys any bag item at its `sell_price`: a right-click on a bag slot or a stack dropped on the window. It keeps a 12-row buyback tab.
+  - **The trainer:** the camp's Train button opens the stock `ClassTrainerFrame` (`Blizzard_TrainerUI`). It sells Journeyman, Expert and Artisan on all four lines: their real rank spells, 1.12's skill requirements (50, 125, 200) and caps (150, 225, 300). Every hero now starts as an Apprentice, capped at 75.
+  - **Smelting:** the camp's Smelt button opens the stock `TradeSkillFrame` (`Blizzard_TradeSkillUI`). It lists Copper, Tin, Bronze, Iron, Steel, Mithril, Truesilver and Thorium. A cast takes 3 s under the stock casting bar, consumes the reagents, makes the bar, and rolls Mining on `SkillLineAbility`'s bands. Create All repeats while the ore lasts.
+  - **Tracking:** Find Minerals and Find Herbs put the gold resource dot of `ObjectIcons.blp` on each standing vein or herb on the survivors minimap. Their icon sits in a `MiniMapTrackingFrame`-style button on the map's ring.
+  - **Data tests:** these check against `Spell.dbc`, `SkillLine`/`SkillLineAbility`, `SpellCastTimes`, `SpellFocusObject` and `ItemDisplayInfo`:
+    - each rank spell's name, rank, icon, line and skill step;
+    - the tracking spells;
+    - each Smelt spell's reagents, product and count, trivial bands, Forge focus and cast;
+    - the Minor Healing Potion recipe's reagents, which vouch for Empty Vial;
+    - every new item's display and icon.
+
+    An engine test drives all three windows on the real files with no Lua error.
+  - **The curated load:** it grows to 20 toc rows, two template files no row names (`CharacterFrameTemplates.xml` and `QuestFrameTemplates.xml`), two layer files and the two addons, loaded eagerly. Measured as in P0, on the Mac, three runs: curated **144 / 136 / 135 ms**, against **488 / 489 / 487 ms** for the whole interface, up from about 105 ms.
+
+  The wire is unchanged: the purse, the shop, the trainer, Smelting and tracking are all each player's own, so the co-op protocol stays at 16.
 - **Deviations:**
   - **Skills on the wire:** the client's rank rides on `GatherAction`, rather than in `Hello` plus `SkillsChanged`.
   - **Creature type:** `Foe` gained no `skin` field. Beasts are recognised by name, and a great beast, elite or boss is skinned outright, with no corpse left to work.
-  - **Trainers:** without them, every hero starts each gathering line at 1/300.
   - **The skills pane:** K shows the stock `GameTooltip` as a readout, because `SkillFrame` needs `CharacterFrame`, which is far outside the curated load.
   - **Camp fishing:** the fish goes straight to the bags, not through `LootFrame`.
   - **Silver, Gold and Dark Iron:** no vein, since no verified display.
   - **The Stranglekelp, Briarthorn and Earthroot herbs:** left out.
+  - **The exchange rate:** a run's gold piece banks as a silver, so a 250-gold run banks 62s 50c. Each machine counts the party's collected gold as every rise of the replicated run purse, so camp shopping never shrinks it. A pickup and a purchase in the same snapshot would net out, which a camp's lack of spawns makes rare.
+  - **Which purse the merchant spends:** the goblin's `MerchantFrame` buys, sells and shows the profile purse, not the run purse (5.4 had it spend the run purse). His run-gold tokens and elixirs stay on his Bevy window, retitled Services and moved beside the stock frame, and still spend the shared run purse through the camp's host-checked `CampAsk::Buy`.
+  - **Trainers at camp, not the Armory:** one "Gathering Trainer" lists all four lines, grouped by line, as a tradeskill trainer. Apprentice is known from the start at no cost. The prices are ours, in 1.12's coin: Journeyman 1g, Expert 4g, Artisan 10g. The Smelting recipes are learned at their 1.12 trainer skill (from memory; the client does not carry it) without a visit.
+  - **Smelting at camp:** the campfire stands in for the Forge (the window's "Requires: Forge" is met), not home. The Silver, Gold and Dark Iron smelts are left out until their veins exist.
+  - **The LoadOnDemand addons:** `Blizzard_TrainerUI` and `Blizzard_TradeSkillUI` load with the rest, since the curated load has no addon registry. The stand-ins make `ClassTrainerFrame_LoadUI` and `TradeSkillFrame_LoadUI` no-ops, and their `ADDON_LOADED`s fire with the bags' first push.
+  - **Tracking's switch:** the minimap button cycles off, minerals, herbs, in place of the profession book. One tracking is on at a time, as in 1.12, and it is saved as `[professions] tracking`.
+  - **Not verified:** Coal's icon and display row (`INV_Stone_15`, 15805) and Empty Vial's row (18076) are from memory. Their entries are verified (`Spell.dbc`'s Smelt Steel and Minor Healing Potion), and each row is checked to carry its icon.
 - **Still to do in P1:**
-  - the tracking blips;
-  - Smelting;
   - the P profession book;
-  - trainers;
-  - the merchant;
-  - banked run gold;
-  - the purse;
-  - the screenshot check.
+  - the Armory's (home) trainer and merchant;
+  - the screenshot check, now including the merchant beside his Services, the trainer and Smelting at camp, and the tracking button.
 
 ### P2. Alchemy, Cooking, First Aid, Enchanting, and the satchel
 

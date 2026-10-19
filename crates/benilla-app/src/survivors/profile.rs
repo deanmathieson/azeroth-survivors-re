@@ -10,6 +10,7 @@ use super::achievements::AchievementSave;
 use super::faire::FaireSave;
 use super::gear::GearSave;
 use super::jewelry::CodexSave;
+use super::professions::econ::PurseSave;
 use super::professions::inventory::InventorySave;
 use super::professions::save::ProfessionsSave;
 use super::quests::QuestSave;
@@ -23,10 +24,10 @@ use super::{data, Run, Selection};
 /// read-only instead. 3: the quests section, and the rewards section's unlocked looks and
 /// companion (its XP, skills, name and second look), which a version 2 build would drop, so it
 /// opens a version 3 save read-only. 4: the codex and Faire sections, which a version 3 build
-/// would drop, so it opens a version 4 save read-only. 5: the bags and the gathering skills
-/// ([`super::professions::save`]), which a version 4 build would drop, so it opens a version 5
-/// save read-only. Each version only adds fields, so an older save loads as it is and is written
-/// back as this version.
+/// would drop, so it opens a version 4 save read-only. 5: the bags, the purse, the gathering skills
+/// and the tracking ([`super::professions::save`]), which a version 4 build would drop, so it opens
+/// a version 5 save read-only. Each version only adds fields, so an older save loads as it is and
+/// is written back as this version.
 pub(super) const PROFILE_VERSION: u32 = 5;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
@@ -113,9 +114,13 @@ pub(super) struct Profile {
     /// The bags, defined and edited in [`super::professions`].
     #[serde(default)]
     pub inventory: InventorySave,
-    /// The gathering skills, defined and edited in [`super::professions`].
+    /// The gathering skills and the tracking, defined and edited in [`super::professions`].
     #[serde(default)]
     pub professions: ProfessionsSave,
+    /// The profile's gold in copper, banked from runs and spent at the camp: defined and edited in
+    /// [`super::professions::econ`].
+    #[serde(default)]
+    pub purse: PurseSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -146,6 +151,7 @@ impl Default for Profile {
             stable: StableSave::default(),
             inventory: InventorySave::default(),
             professions: ProfessionsSave::default(),
+            purse: PurseSave::default(),
             writable: true,
             dirty: false,
         }
@@ -567,8 +573,11 @@ mod tests {
         assert_eq!(p.account.runs, 3);
         assert_eq!(p.inventory, InventorySave::default());
         assert!(p.professions.skills.is_empty());
+        assert_eq!(p.purse.copper, 0, "an empty purse");
 
         let mut p5 = Profile::default();
+        p5.purse.copper = 152_340;
+        p5.professions.tracking = "herbs".into();
         let mut bags = super::super::professions::inventory::Bags::test_inventory();
         bags.add(super::super::professions::items::COPPER_ORE, 3);
         p5.inventory = bags.to_save();
@@ -577,6 +586,7 @@ mod tests {
         p5.professions.skills = skills.to_save();
         let text = toml::to_string_pretty(&p5).unwrap();
         assert!(text.contains("[inventory]") && text.contains("[professions.skills"));
+        assert!(text.contains("[purse]") && text.contains("copper = 152340"));
         let back = load_text(&text).profile;
         assert_eq!(back, p5);
         assert_eq!(

@@ -3,7 +3,8 @@
 //! server that is not there). P1 wires the Minor Healing Potion: it restores 15% of the hero's
 //! health, consumes one, and starts the shared potion cooldown, whose sweep the bag slots show.
 //! A co-op client's hero lives on the host, so its heal goes there as a `UseItem`. Every other
-//! item does nothing yet (P2's satchel and effects).
+//! item does nothing yet (P2's satchel and effects). With the goblin's window open, a right-click
+//! sells the stack instead, as in 1.12.
 
 use bevy::prelude::*;
 
@@ -66,7 +67,7 @@ pub(in crate::survivors) fn drink(hero: &mut HeroState) {
 pub(super) fn use_items(
     script: Option<NonSendMut<UiScript>>,
     role: Res<NetRole>,
-    mut bags: ResMut<Bags>,
+    mut wallet: super::econ::Wallet,
     mut outbox: ResMut<UseOutbox>,
     mut ui: ResMut<UiLines>,
     mut hero: Query<&mut HeroState, With<LocalHero>>,
@@ -75,8 +76,16 @@ pub(super) fn use_items(
         return;
     };
     let now = script.now();
+    let super::econ::Wallet { bags, purse, shop } = &mut wallet;
     for (bag, slot) in script.take_container_uses() {
-        match use_item(&mut bags, bag, slot, now) {
+        if shop.open {
+            if let Err(e) = super::econ::sell(bags, purse, shop, bag, slot) {
+                let (key, fallback) = e.global_string();
+                ui.0.push(CastLine::Refused(key, fallback));
+            }
+            continue;
+        }
+        match use_item(bags, bag, slot, now) {
             Used::Potion if *role == NetRole::Client => outbox.0.push(items::MINOR_HEALING_POTION),
             Used::Potion => {
                 if let Ok(mut hero) = hero.single_mut() {
@@ -115,7 +124,7 @@ mod tests {
         let mut bags = Bags::default();
         bags.add(items::MINOR_HEALING_POTION, 1);
         let mut feed = super::super::frames::BagFeed::default();
-        super::super::frames::sync(&mut s, &mut bags, &mut feed);
+        super::super::frames::sync(&mut s, &mut bags, 0, &mut feed);
         s.run("UseContainerItem(0, 1)").unwrap();
         let uses = s.take_container_uses();
         assert_eq!(uses, vec![(0, 1)]);
