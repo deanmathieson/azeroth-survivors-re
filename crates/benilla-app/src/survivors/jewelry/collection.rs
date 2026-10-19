@@ -14,8 +14,9 @@
 //!
 //! Saved in the profile's `collection` section ([`JewelryCollection`]), which a save from before
 //! it reads as empty. Such a save is migrated once on load ([`migrate`]): its Bound jewelry, its
-//! completed decks' trinkets and its old pinned Darkmoon trinket are collected, the pinned
-//! trinket goes into Trinket 1, and the Bound jewelry fills the slots left, rarest first.
+//! completed decks' trinkets, the Rare-or-better pieces its Codex says were taken in past runs and
+//! its old pinned Darkmoon trinket are collected, quietly (no toasts); the pinned trinket goes
+//! into Trinket 1, and the Bound jewelry fills the slots left, rarest first.
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -301,10 +302,11 @@ fn owned_outside_runs(profile: &Profile) -> Vec<&'static Piece> {
     bound.chain(darkmoon_owned(profile)).collect()
 }
 
-/// A save from before the collection, once: its Bound jewelry, completed decks' trinkets and old
-/// pinned Darkmoon trinket are collected; the pinned trinket goes into Trinket 1 and the Bound
-/// jewelry fills the empty slots, rarest first. The pinned field is cleared, as the loadout holds
-/// it now.
+/// A save from before the collection, once: its Bound jewelry, completed decks' trinkets, the
+/// pieces its Codex logged as taken in past runs (the Rare-or-better ones) and its old pinned
+/// Darkmoon trinket are collected, with no toast; the pinned trinket goes into Trinket 1 and the
+/// Bound jewelry fills the empty slots, rarest first. The pinned field is cleared, as the loadout
+/// holds it now.
 pub(in crate::survivors) fn migrate(profile: &mut Profile) {
     if profile.collection.migrated {
         return;
@@ -315,7 +317,16 @@ pub(in crate::survivors) fn migrate(profile: &mut Profile) {
         .pinned_trinket
         .take()
         .and_then(|k| catalog::DARKMOON.iter().find(|p| p.key == k));
-    let owned = owned_outside_runs(profile);
+    let mut owned = owned_outside_runs(profile);
+    // Taken in a past run: a key this build does not know is skipped, a green is not collectable.
+    owned.extend(
+        profile
+            .codex
+            .taken
+            .iter()
+            .filter(|(_, n)| **n > 0)
+            .filter_map(|(k, _)| piece(k)),
+    );
     let mut bound: Vec<&'static Piece> = profile
         .raid
         .bound_keys()
@@ -777,7 +788,10 @@ mod tests {
                     \"three_of_portals\", \"four_of_portals\", \"five_of_portals\", \
                     \"six_of_portals\", \"seven_of_portals\", \"eight_of_portals\"]\n\n\
                     [faire.wardrobe]\npinned_trinket = \"darkmoon_heroism\"\n\n\
-                    [raid]\nbound = [2130, 2131, 2132, 2133, 2135, 2136]\n";
+                    [raid]\nbound = [2130, 2131, 2132, 2133, 2135, 2136]\n\n\
+                    [codex]\nseen = [\"kiss_of_the_spider\"]\n\n\
+                    [codex.taken]\nhand_of_justice = 2\nearthstrike = 1\nthe_1_ring = 3\n\
+                    a_piece_from_a_newer_build = 1\n";
         let mut profile: Profile = toml::from_str(text).unwrap();
         migrate(&mut profile);
         let c = &profile.collection;
@@ -793,10 +807,27 @@ mod tests {
             "ring_of_spell_power",
             "band_of_accuria",
             "choker_of_the_fire_lord",
+            // Taken in past runs, as the Codex logged them.
+            "hand_of_justice",
+            "earthstrike",
         ] {
             assert!(c.has(key), "{key}");
         }
-        assert_eq!(c.unlocked.len(), 8);
+        // Not a green taken, a piece only seen, nor a key this build does not know.
+        assert!(!c.has("the_1_ring") && !c.has("kiss_of_the_spider"));
+        assert!(!c.has("a_piece_from_a_newer_build"));
+        assert_eq!(c.unlocked.len(), 10);
+        // The backfill is quiet: what a migrated save holds raises no toast.
+        {
+            use bevy::ecs::system::RunSystemOnce;
+            let mut world = World::new();
+            world.insert_resource(profile.clone());
+            world.init_resource::<PickedJewels>();
+            world.init_resource::<CollectionToasts>();
+            world.run_system_once(collect_new).unwrap();
+            assert!(world.resource::<CollectionToasts>().queue.is_empty());
+        }
+        let c = &profile.collection;
         // The pinned trinket in Trinket 1; the Bound jewelry in what is left, rarest first:
         // Band of Accuria takes Finger 1, and the first Epic of each kind the rest.
         assert_eq!(
