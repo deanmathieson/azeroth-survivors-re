@@ -1,5 +1,6 @@
-//! The professions' skills (docs/PROFESSIONS.md, 4.6, 5): the four gathering lines and P2's four
-//! crafting ones, their 1.12 `SkillLine.dbc` ids, the player's ranks and learned recipes, and the
+//! The professions' skills (docs/PROFESSIONS.md, 4.6, 5): the four gathering lines, P2's four
+//! crafting ones and P3's Blacksmithing, Leatherworking, Tailoring and Engineering, their 1.12
+//! `SkillLine.dbc` ids, the player's ranks and learned recipes, and the
 //! skill-up rule. A gather's bands are vmangos's `UpdateGatherSkill` (`SkillGainChance`): against
 //! a node's requirement R, orange below R+25 always gains, yellow to R+50 three times in four,
 //! green to R+100 one in four, grey never.
@@ -15,8 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 /// A profession's skill line: `SkillLine.dbc` 186 Mining, 182 Herbalism, 393 Skinning, 356
-/// Fishing, 171 Alchemy, 185 Cooking, 129 First Aid, 333 Enchanting. A new line goes on the end:
-/// a [`super::gather::YieldMsg`] carries one on the wire.
+/// Fishing, 171 Alchemy, 185 Cooking, 129 First Aid, 333 Enchanting, 164 Blacksmithing, 165
+/// Leatherworking, 197 Tailoring, 202 Engineering. A new line goes on the end: a
+/// [`super::gather::YieldMsg`] carries one on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) enum Line {
     Mining,
@@ -27,10 +29,14 @@ pub(crate) enum Line {
     Cooking,
     FirstAid,
     Enchanting,
+    Blacksmithing,
+    Leatherworking,
+    Tailoring,
+    Engineering,
 }
 
 impl Line {
-    pub(crate) const ALL: [Line; 8] = [
+    pub(crate) const ALL: [Line; 12] = [
         Line::Mining,
         Line::Herbalism,
         Line::Skinning,
@@ -39,6 +45,10 @@ impl Line {
         Line::Cooking,
         Line::FirstAid,
         Line::Enchanting,
+        Line::Blacksmithing,
+        Line::Leatherworking,
+        Line::Tailoring,
+        Line::Engineering,
     ];
 
     pub(crate) const fn name(self) -> &'static str {
@@ -51,6 +61,10 @@ impl Line {
             Line::Cooking => "Cooking",
             Line::FirstAid => "First Aid",
             Line::Enchanting => "Enchanting",
+            Line::Blacksmithing => "Blacksmithing",
+            Line::Leatherworking => "Leatherworking",
+            Line::Tailoring => "Tailoring",
+            Line::Engineering => "Engineering",
         }
     }
 
@@ -65,6 +79,10 @@ impl Line {
             Line::Cooking => "cooking",
             Line::FirstAid => "first_aid",
             Line::Enchanting => "enchanting",
+            Line::Blacksmithing => "blacksmithing",
+            Line::Leatherworking => "leatherworking",
+            Line::Tailoring => "tailoring",
+            Line::Engineering => "engineering",
         }
     }
 
@@ -98,6 +116,10 @@ impl Line {
             Line::Cooking => 185,
             Line::FirstAid => 129,
             Line::Enchanting => 333,
+            Line::Blacksmithing => 164,
+            Line::Leatherworking => 165,
+            Line::Tailoring => 197,
+            Line::Engineering => 202,
         }
     }
 
@@ -113,6 +135,10 @@ impl Line {
             Line::Cooking => [2550, 3102, 3413, 18260],
             Line::FirstAid => [3273, 3274, 7924, 10846],
             Line::Enchanting => [7411, 7412, 7413, 13920],
+            Line::Blacksmithing => [2018, 3100, 3538, 9785],
+            Line::Leatherworking => [2108, 3104, 3811, 10662],
+            Line::Tailoring => [3908, 3909, 3910, 12180],
+            Line::Engineering => [4036, 4037, 4038, 12656],
         }
     }
 
@@ -127,6 +153,10 @@ impl Line {
             Line::Cooking => "Interface\\Icons\\INV_Misc_Food_15",
             Line::FirstAid => "Interface\\Icons\\Spell_Holy_SealOfSacrifice",
             Line::Enchanting => "Interface\\Icons\\Trade_Engraving",
+            Line::Blacksmithing => "Interface\\Icons\\Trade_BlackSmithing",
+            Line::Leatherworking => "Interface\\Icons\\INV_Misc_ArmorKit_17",
+            Line::Tailoring => "Interface\\Icons\\Trade_Tailoring",
+            Line::Engineering => "Interface\\Icons\\Trade_Engineering",
         }
     }
 }
@@ -440,7 +470,7 @@ mod tests {
         s.gathered(Line::Fishing, 1, 0);
         let mut save = s.to_save();
         assert_eq!(save["fishing"].rank, 2);
-        save.insert("tailoring".into(), Rank { rank: 9, max: 75 });
+        save.insert("jewelcrafting".into(), Rank { rank: 9, max: 75 });
         save.insert("cooking".into(), Rank { rank: 9, max: 75 });
         save.insert(
             "skinning".into(),
@@ -457,7 +487,10 @@ mod tests {
             9,
             "a crafting line reads back"
         );
-        assert!(!back.to_save().contains_key("tailoring"), "not a line yet");
+        assert!(
+            !back.to_save().contains_key("jewelcrafting"),
+            "not a 1.12 line"
+        );
         assert_eq!(back.rank(Line::Skinning).rank, MAX_RANK, "clamped");
         assert_eq!(
             back.rank(Line::Mining),

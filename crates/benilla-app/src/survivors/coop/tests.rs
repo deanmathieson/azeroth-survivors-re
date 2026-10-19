@@ -1192,6 +1192,7 @@ fn a_clients_meal_at_camp_feeds_the_party_and_a_potion_only_itself() {
     host_app
         .init_resource::<Camp>()
         .init_resource::<crate::creature_anim::PlaySeq>()
+        .init_resource::<super::super::professions::gadgets::GadgetQueue>()
         .add_message::<crate::creature_anim::CastEvent>()
         .add_message::<crate::creature_anim::SpellGoTargets>()
         .add_message::<crate::creature_anim::SwingMessage>()
@@ -1268,6 +1269,127 @@ fn a_clients_meal_at_camp_feeds_the_party_and_a_potion_only_itself() {
         (max_hp(&host_app, theirs) - their_max - (max_hp(&host_app, mine) - my_max)).abs() < 1e-3,
         "one Well Fed each, not two"
     );
+}
+
+/// Gadgets over the loopback (docs/PROFESSIONS.md, 7): a client's Goblin Jumper Cables, sent as a
+/// `UseItem`, go off on the host and shock the host's downed hero back up (the host rolling the
+/// cables' 33% shock); its Goblin Sapper Charge hurts its own hero, where that hero lives, and
+/// nobody else's.
+#[test]
+fn a_clients_jumper_cables_revive_the_host_and_its_sapper_hurts_itself() {
+    use super::super::professions::effects::UseOutbox;
+    use super::super::professions::gadgets::{self, GadgetQueue};
+    use super::super::professions::gather::UiLines;
+    use super::super::professions::items;
+    use crate::net::{FieldChanged, Guid};
+
+    let mut host_app = app();
+    let mut client_app = app();
+    host_app
+        .init_resource::<super::super::campfire::Camp>()
+        .init_resource::<crate::creature_anim::PlaySeq>()
+        .init_resource::<GadgetQueue>()
+        .init_resource::<UiLines>()
+        .add_message::<crate::creature_anim::CastEvent>()
+        .add_message::<crate::creature_anim::SpellGoTargets>()
+        .add_message::<crate::creature_anim::SwingMessage>()
+        .add_message::<crate::combat_text::CombatTextSpawn>()
+        .add_message::<super::super::abilities::Hit>()
+        .add_message::<FieldChanged>()
+        .add_systems(PreUpdate, host::use_items.after(ServerSystems::Receive))
+        .add_systems(Update, gadgets::fire_gadgets);
+    client_app
+        .init_resource::<super::super::professions::gather::GatherOutbox>()
+        .init_resource::<UseOutbox>()
+        .add_systems(
+            PostUpdate,
+            super::client::send_gathers.before(ClientSystems::Send),
+        );
+    let channels = host_app.world().resource::<RepliconChannels>();
+    let (server, transport, port) = net::host(channels, 0).expect("binds the loopback");
+    host_app.insert_resource(server).insert_resource(transport);
+    let to = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let channels = client_app.world().resource::<RepliconChannels>();
+    let (client, transport) = net::join(channels, to).expect("binds a client socket");
+    client_app
+        .insert_resource(client)
+        .insert_resource(transport);
+    pump(&mut host_app, &mut client_app, |h, c| {
+        *c.world().resource::<State<ClientState>>() == ClientState::Connected
+            && h.world_mut()
+                .query::<&AuthorizedClient>()
+                .iter(h.world())
+                .count()
+                == 1
+    });
+    let peer = host_app
+        .world_mut()
+        .query_filtered::<Entity, With<ConnectedClient>>()
+        .single(host_app.world())
+        .unwrap();
+    let body = |guid: u64, x: f32| {
+        (
+            Hero::default(),
+            Guid(guid),
+            Transform::from_xyz(x, 0.0, 0.0),
+            ObjectStore(Default::default()),
+            units::Marks::buffs(),
+        )
+    };
+    let world = host_app.world_mut();
+    let mut downed = hero_of(0, 0);
+    downed.hp = 0.0;
+    downed.dead_t = Some(1.0);
+    let mine = world.spawn((body(1, 0.0), downed, LocalHero)).id();
+    let theirs = world
+        .spawn((
+            body(2, 3.0),
+            hero_of(1, 3),
+            host::Owner(peer),
+            party::Remote,
+        ))
+        .id();
+    let send = |client_app: &mut App, item: u32| {
+        client_app
+            .world_mut()
+            .resource_mut::<UseOutbox>()
+            .0
+            .push(item);
+    };
+    let alive = |app: &App, e: Entity| app.world().get::<HeroState>(e).unwrap().alive();
+    let hp = |app: &App, e: Entity| app.world().get::<HeroState>(e).unwrap().hp;
+
+    // The cables, until a shock misses: the host's hero is up, at half its health.
+    for _ in 0..12 {
+        let before = hp(&host_app, theirs);
+        send(&mut client_app, items::GOBLIN_JUMPER_CABLES);
+        pump(&mut host_app, &mut client_app, |h, _| {
+            alive(h, mine) || hp(h, theirs) < before
+        });
+        if alive(&host_app, mine) {
+            break;
+        }
+    }
+    assert!(alive(&host_app, mine), "the jumper cables got the host up");
+    let max = host_app
+        .world()
+        .get::<HeroState>(mine)
+        .unwrap()
+        .stats()
+        .max_hp;
+    assert!((hp(&host_app, mine) - max * party::REVIVED_HP).abs() < 1e-3);
+
+    // The sapper: the client's own hero takes its share; the host's does not.
+    let (mine_before, theirs_before) = (hp(&host_app, mine), hp(&host_app, theirs));
+    send(&mut client_app, items::GOBLIN_SAPPER_CHARGE);
+    pump(&mut host_app, &mut client_app, |h, _| {
+        hp(h, theirs) < theirs_before
+    });
+    assert!(
+        (hp(&host_app, mine) - mine_before).abs() < 1e-5,
+        "only its user"
+    );
+    assert!(host_app.world().resource::<GadgetQueue>().0.is_empty());
 }
 
 /// Shared party nodes over the loopback (docs/PROFESSIONS.md, 4.3): the host's player and a

@@ -65,6 +65,9 @@ pub(crate) struct NodeDef {
     pub(crate) item: u32,
     /// A chance extra: `(item, percent)`, stone from a vein.
     pub(crate) extra: Option<(u32, u32)>,
+    /// Rarer extras, each rolled on its own: `(item, percent)`, a vein's gems (4.2) and the silver
+    /// a tin vein turns up. Authored.
+    pub(crate) rares: &'static [(u32, u32)],
     /// A rare node spawns this many times less often.
     pub(crate) rarity: u32,
     /// The display's model file name, which the data test checks.
@@ -89,9 +92,15 @@ const fn node(
         req,
         item,
         extra: None,
+        rares: &[],
         rarity: 1,
         model,
     }
+}
+
+/// A vein with its gems.
+const fn gems(vein: NodeDef, rares: &'static [(u32, u32)]) -> NodeDef {
+    NodeDef { rares, ..vein }
 }
 
 const fn vein(
@@ -157,14 +166,19 @@ pub(crate) static NODES: &[NodeDef] = &[
         "tradeskill_fishschool_01",
     ),
     // 15-30
-    vein(
-        "Tin Vein",
-        315,
-        39,
-        65,
-        TIN_ORE,
-        COARSE_STONE,
-        "tin_miningnode_01",
+    gems(
+        vein(
+            "Tin Vein",
+            315,
+            39,
+            65,
+            TIN_ORE,
+            COARSE_STONE,
+            "tin_miningnode_01",
+        ),
+        // A tin vein turns up silver now and then: 1.12's silver veins, which have no model of
+        // their own in the client.
+        &[(SILVER_ORE, 10), (SHADOWGEM, 3), (MOSS_AGATE, 3)],
     ),
     herb("Mageroyal", 268, 9, 50, MAGEROYAL, "bush_magebloom01"),
     herb("Bruiseweed", 358, 11, 100, BRUISEWEED, "bush_bruiseweed01"),
@@ -177,23 +191,29 @@ pub(crate) static NODES: &[NodeDef] = &[
         "tradeskill_fishschool_02",
     ),
     // 30-45
-    vein(
-        "Iron Deposit",
-        312,
-        41,
-        125,
-        IRON_ORE,
-        HEAVY_STONE,
-        "iron_miningnode_01",
+    gems(
+        vein(
+            "Iron Deposit",
+            312,
+            41,
+            125,
+            IRON_ORE,
+            HEAVY_STONE,
+            "iron_miningnode_01",
+        ),
+        &[(LESSER_MOONSTONE, 4), (JADE, 4), (CITRINE, 2)],
     ),
-    vein(
-        "Mithril Deposit",
-        313,
-        379,
-        175,
-        MITHRIL_ORE,
-        SOLID_STONE,
-        "mithril_miningnode_01",
+    gems(
+        vein(
+            "Mithril Deposit",
+            313,
+            379,
+            175,
+            MITHRIL_ORE,
+            SOLID_STONE,
+            "mithril_miningnode_01",
+        ),
+        &[(CITRINE, 4), (AQUAMARINE, 3), (STAR_RUBY, 2)],
     ),
     herb("Kingsblood", 320, 45, 125, KINGSBLOOD, "bush_crownroyal01"),
     herb("Liferoot", 677, 27, 150, LIFEROOT, "bush_liferoot01"),
@@ -224,23 +244,34 @@ pub(crate) static NODES: &[NodeDef] = &[
         "tradeskill_fishschool_oil",
     ),
     // 45-55
-    vein(
-        "Truesilver Deposit",
-        314,
-        380,
-        230,
-        TRUESILVER_ORE,
-        SOLID_STONE,
-        "truesilver_miningnode_01",
+    gems(
+        vein(
+            "Truesilver Deposit",
+            314,
+            380,
+            230,
+            TRUESILVER_ORE,
+            SOLID_STONE,
+            "truesilver_miningnode_01",
+        ),
+        &[(STAR_RUBY, 4), (AQUAMARINE, 4)],
     ),
-    vein(
-        "Small Thorium Vein",
-        3951,
-        400,
-        245,
-        THORIUM_ORE,
-        DENSE_STONE,
-        "thorium_miningnode_01",
+    gems(
+        vein(
+            "Small Thorium Vein",
+            3951,
+            400,
+            245,
+            THORIUM_ORE,
+            DENSE_STONE,
+            "thorium_miningnode_01",
+        ),
+        &[
+            (STAR_RUBY, 3),
+            (BLUE_SAPPHIRE, 2),
+            (ARCANE_CRYSTAL, 3),
+            (AZEROTHIAN_DIAMOND, 1),
+        ],
     ),
     herb("Sungrass", 2315, 441, 230, SUNGRASS, "bush_sungrass"),
     herb("Gromsblood", 2313, 444, 250, GROMSBLOOD, "bush_gromsblood"),
@@ -261,14 +292,21 @@ pub(crate) static NODES: &[NodeDef] = &[
         "tradeskill_fishschool_eelsyellow",
     ),
     // 55-60
-    vein(
-        "Rich Thorium Vein",
-        3952,
-        939,
-        275,
-        THORIUM_ORE,
-        DENSE_STONE,
-        "richthorium_miningnode_01",
+    gems(
+        vein(
+            "Rich Thorium Vein",
+            3952,
+            939,
+            275,
+            THORIUM_ORE,
+            DENSE_STONE,
+            "richthorium_miningnode_01",
+        ),
+        &[
+            (BLUE_SAPPHIRE, 3),
+            (AZEROTHIAN_DIAMOND, 2),
+            (ARCANE_CRYSTAL, 5),
+        ],
     ),
     herb("Dreamfoil", 4635, 1120, 270, DREAMFOIL, "bush_dreamfoil"),
     herb(
@@ -317,6 +355,32 @@ pub(crate) static NODES: &[NodeDef] = &[
         WILD_STEELBLOOM,
         "bush_steelbloom01",
     ),
+    // P3: the gold the Gyrochronatom and the Inlaid Mithril Cylinder need, and Molten Core's dark
+    // iron for its plate, at the end so the nodes before keep their ids.
+    gems(
+        vein(
+            "Gold Vein",
+            311,
+            42,
+            155,
+            GOLD_ORE,
+            HEAVY_STONE,
+            "gold_miningnode_01",
+        ),
+        &[(CITRINE, 3), (JADE, 3)],
+    ),
+    gems(
+        vein(
+            "Dark Iron Deposit",
+            2571,
+            719,
+            230,
+            DARK_IRON_ORE,
+            DENSE_STONE,
+            "darkironnode",
+        ),
+        &[(BLOOD_OF_THE_MOUNTAIN, 4)],
+    ),
 ];
 
 /// A zone band (4.1).
@@ -327,7 +391,7 @@ pub(crate) enum Band {
     B30,
     B45,
     B55,
-    /// Molten Core: no herbs, no water, and no vein yet (Dark Iron has no verified display).
+    /// Molten Core: no herbs and no water, only Dark Iron Deposits.
     Raid,
 }
 
@@ -349,10 +413,10 @@ pub(crate) fn band_nodes(band: Band) -> &'static [usize] {
     match band {
         Band::B1 => &[0, 1, 2, 3],
         Band::B15 => &[0, 4, 5, 6, 7, 29],
-        Band::B30 => &[8, 9, 10, 11, 12, 13, 14, 15, 16, 30],
+        Band::B30 => &[8, 9, 10, 11, 12, 13, 14, 15, 16, 30, 31],
         Band::B45 => &[9, 17, 18, 19, 20, 21, 22],
         Band::B55 => &[18, 23, 24, 25, 26, 27, 28, 22],
-        Band::Raid => &[],
+        Band::Raid => &[32],
     }
 }
 
@@ -529,17 +593,39 @@ pub(crate) fn is_humanoid(name: &str) -> bool {
     HUMANOIDS.iter().any(|h| name.contains(h))
 }
 
-/// What a boss or an elite may drop beside its loot (5.1's rare recipe drops, and two rare
-/// reagents): `(item, percent)` per hero, by band. Authored.
+/// What a boss or an elite may drop beside its loot (5.1's rare recipe drops, and the rarer
+/// reagents: P3's elementals, Felcloth and the plans, patterns and schematics that drop, by band:
+/// the Devilsaur and Volcanic patterns in Un'Goro's Fire Plume Ridge, the Imperial Plate,
+/// Lionheart and Arcanite plans and the epic robes' patterns in the high zones): `(item,
+/// percent)` per hero, by band. Authored.
 pub(crate) fn rare_drops(band: Band) -> &'static [(u32, u32)] {
     match band {
         Band::B1 => &[],
         Band::B15 => &[(RECIPE_SAVORY_DEVIATE_DELIGHT, 15)],
-        Band::B30 => &[(RECIPE_SAVORY_DEVIATE_DELIGHT, 10)],
+        Band::B30 => &[
+            (RECIPE_SAVORY_DEVIATE_DELIGHT, 10),
+            (ELEMENTAL_EARTH, 15),
+            (ELEMENTAL_FIRE, 15),
+            (HEART_OF_FIRE, 10),
+        ],
         Band::B45 => &[
             (ESSENCE_OF_FIRE, 20),
             (RECIPE_FLASK_OF_THE_TITANS, 4),
             (RECIPE_FLASK_OF_SUPREME_POWER, 4),
+            (HEART_OF_FIRE, 15),
+            (CORE_OF_EARTH, 15),
+            (ESSENCE_OF_EARTH, 10),
+            (ELEMENTAL_FIRE, 15),
+            (ELEMENTAL_EARTH, 10),
+            (PATTERN_DEVILSAUR_GAUNTLETS, 4),
+            (PATTERN_DEVILSAUR_LEGGINGS, 4),
+            (PATTERN_VOLCANIC_BREASTPLATE, 5),
+            (PATTERN_VOLCANIC_LEGGINGS, 5),
+            (PATTERN_VOLCANIC_SHOULDERS, 5),
+            (SCHEMATIC_MITHRIL_MECHANICAL_DRAGONLING, 5),
+            (PLANS_IMPERIAL_PLATE_BELT, 4),
+            (PLANS_IMPERIAL_PLATE_BRACERS, 4),
+            (PLANS_IMPERIAL_PLATE_SHOULDERS, 4),
         ],
         Band::B55 => &[
             (RIGHTEOUS_ORB, 25),
@@ -547,6 +633,29 @@ pub(crate) fn rare_drops(band: Band) -> &'static [(u32, u32)] {
             (RECIPE_FLASK_OF_SUPREME_POWER, 5),
             (RECIPE_FLASK_OF_DISTILLED_WISDOM, 5),
             (FORMULA_ENCHANT_WEAPON_CRUSADER, 5),
+            (ESSENCE_OF_EARTH, 15),
+            (ESSENCE_OF_WATER, 15),
+            (ESSENCE_OF_AIR, 15),
+            (ESSENCE_OF_UNDEATH, 15),
+            (ICHOR_OF_UNDEATH, 20),
+            (FELCLOTH, 20),
+            (GOLDEN_PEARL, 10),
+            (PLANS_IMPERIAL_PLATE_BOOTS, 4),
+            (PLANS_IMPERIAL_PLATE_HELM, 4),
+            (PLANS_IMPERIAL_PLATE_CHEST, 4),
+            (PLANS_IMPERIAL_PLATE_LEGGINGS, 4),
+            (PLANS_LIONHEART_HELM, 3),
+            (PLANS_ARCANITE_REAPER, 3),
+            (PATTERN_MOONCLOTH_BAG, 4),
+            (PATTERN_MOONCLOTH_LEGGINGS, 4),
+            (PATTERN_MOONCLOTH_VEST, 4),
+            (PATTERN_BOTTOMLESS_BAG, 3),
+            (PATTERN_ROBE_OF_THE_ARCHMAGE, 3),
+            (PATTERN_TRUEFAITH_VESTMENTS, 3),
+            (SCHEMATIC_THORIUM_GRENADE, 5),
+            (SCHEMATIC_MASTERWORK_TARGET_DUMMY, 4),
+            (SCHEMATIC_ARCANITE_DRAGONLING, 3),
+            (RECIPE_TRANSMUTE_ARCANITE, 4),
         ],
         Band::Raid => &[
             (ESSENCE_OF_FIRE, 30),
@@ -555,8 +664,80 @@ pub(crate) fn rare_drops(band: Band) -> &'static [(u32, u32)] {
             (RECIPE_FLASK_OF_SUPREME_POWER, 8),
             (RECIPE_FLASK_OF_DISTILLED_WISDOM, 8),
             (FORMULA_ENCHANT_WEAPON_CRUSADER, 8),
+            (FIERY_CORE, 25),
+            (LAVA_CORE, 25),
+            (ELEMENTAL_FIRE, 20),
+            (HEART_OF_FIRE, 15),
+            (BLOOD_OF_THE_MOUNTAIN, 10),
+            (BLOODVINE, 10),
+            (FELCLOTH, 10),
         ],
     }
+}
+
+/// What each Molten Core boss drops for the professions beside its loot, `(boss, [(item,
+/// percent)])` per hero: its plans and patterns where they fit (the Corehound Boots off Magmadar,
+/// the Core Felcloth Bag off Majordomo, the Sulfuron Hammer's plans off Sulfuron Harbinger), and
+/// Golemagg's and Ragnaros's Sulfuron Ingots for the Hammer. Authored; in 1.12 most of these fell
+/// off the raid's trash.
+pub(crate) static MC_DROPS: &[(&str, &[(u32, u32)])] = &[
+    ("Lucifron", &[(PATTERN_CORE_ARMOR_KIT, 15)]),
+    (
+        "Magmadar",
+        &[(PATTERN_COREHOUND_BOOTS, 15), (CORE_LEATHER, 50)],
+    ),
+    ("Gehennas", &[(PLANS_FIERY_CHAIN_GIRDLE, 15)]),
+    ("Garr", &[(PLANS_ELEMENTAL_SHARPENING_STONE, 15)]),
+    ("Shazzrah", &[(PATTERN_FLARECORE_GLOVES, 15)]),
+    ("Baron Geddon", &[(PATTERN_FLARECORE_MANTLE, 15)]),
+    (
+        "Sulfuron Harbinger",
+        &[(PLANS_DARK_IRON_PLATE, 15), (PLANS_SULFURON_HAMMER, 10)],
+    ),
+    ("Golemagg the Incinerator", &[(SULFURON_INGOT, 50)]),
+    (
+        "Majordomo Executus",
+        &[(PATTERN_CORE_FELCLOTH_BAG, 15), (PATTERN_MOLTEN_HELM, 15)],
+    ),
+    (
+        "Ragnaros",
+        &[(SULFURON_INGOT, 50), (BLOOD_OF_THE_MOUNTAIN, 50)],
+    ),
+];
+
+/// A Molten Core boss's own drops ([`MC_DROPS`]), by its roster name.
+pub(crate) fn boss_drops(name: &str) -> &'static [(u32, u32)] {
+    MC_DROPS
+        .iter()
+        .find(|(boss, _)| *boss == name)
+        .map_or(&[], |(_, drops)| drops)
+}
+
+/// What a beast gives beside its skin and meat, `(item, percent)`: a devilsaur its Devilsaur
+/// Leather (4.4), a Core Hound its Core Leather, a spider its silk by level (Thick to Ironweb), a
+/// raptor its Wicked Claw, and any other beast of 55 and up now and then a Rugged Hide.
+pub(crate) fn beast_extra(name: &str, level: u32) -> Option<(u32, usize)> {
+    if name.contains("Devilsaur") {
+        return Some((DEVILSAUR_LEATHER, 60));
+    }
+    if name.contains("Core Hound") {
+        return Some((CORE_LEATHER, 30));
+    }
+    let spider = ["Widow", "Spider", "Tarantula", "Recluse"]
+        .iter()
+        .any(|s| name.contains(s));
+    if spider {
+        return match level {
+            0..=30 => None,
+            31..=44 => Some((THICK_SPIDERS_SILK, 12)),
+            45..=54 => Some((SHADOW_SILK, 12)),
+            _ => Some((IRONWEB_SPIDER_SILK, 12)),
+        };
+    }
+    if (name.contains("Raptor") || name.contains("Ravasaur")) && level >= 45 {
+        return Some((WICKED_CLAW, 10));
+    }
+    (level >= 55).then_some((RUGGED_HIDE, 4))
 }
 
 #[cfg(test)]
@@ -613,6 +794,41 @@ mod tests {
             for &(item, pct) in rare_drops(band) {
                 assert!(super::super::items::template(item).is_some());
                 assert!((1..=50).contains(&pct));
+            }
+        }
+        // Molten Core's drops name its bosses, and authored items.
+        for (boss, drops) in MC_DROPS {
+            assert!(
+                crate::survivors::gear::raid::loot_for(boss).is_some(),
+                "{boss} is no Molten Core boss"
+            );
+            for &(item, pct) in *drops {
+                assert!(super::super::items::template(item).is_some(), "{boss}");
+                assert!((1..=50).contains(&pct), "{boss}");
+            }
+        }
+        assert!(boss_drops("Golemagg the Incinerator")
+            .iter()
+            .any(|&(i, _)| i == SULFURON_INGOT));
+        assert!(boss_drops("Hogger").is_empty());
+        assert_eq!(
+            beast_extra("Devilsaur", 52).map(|e| e.0),
+            Some(DEVILSAUR_LEATHER)
+        );
+        assert_eq!(
+            beast_extra("Core Hound", 60).map(|e| e.0),
+            Some(CORE_LEATHER)
+        );
+        assert_eq!(
+            beast_extra("Venom Widow", 58).map(|e| e.0),
+            Some(IRONWEB_SPIDER_SILK)
+        );
+        assert_eq!(beast_extra("Mangy Wolf", 5), None);
+        // Every vein's gems are authored, and rare.
+        for n in NODES {
+            for &(item, pct) in n.rares {
+                assert!(super::super::items::template(item).is_some(), "{}", n.name);
+                assert!((1..=10).contains(&pct), "{}", n.name);
             }
         }
         // A foe is a beast, a humanoid, or neither, never both.

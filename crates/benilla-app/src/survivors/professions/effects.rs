@@ -13,6 +13,14 @@
 //!   [`BANDAGE_HIT_COST`] off what is left, and Recently Bandaged keeps another off for
 //!   [`BANDAGE_COOLDOWN`]. They share no cooldown with the potions.
 //! - **Recipes** teach their recipe ([`super::recipes::taught_by`]).
+//! - **Stones and kits** (P3, [`Use::Stone`], [`Use::Kit`]): a sharpening stone or weightstone
+//!   gives +Physical damage (the Elemental Sharpening Stone, crit), an armor kit damage
+//!   reduction, for 1.12's half hour; one of each at a time, taken at camp or as the run starts.
+//! - **Gadgets** (P3, [`super::gadgets`]): bombs, dummies, boots, pets and the rest, each under its
+//!   own cooldown and the shared engineering lockout ([`ENGINEERING_LOCKOUT`]); where the run is
+//!   simulated they fire, and roll their malfunctions.
+//! - **Bags** (P3) go on the bag bar ([`Bags::equip_bag`]), and **crafted gear** on the picked
+//!   class ([`crate::survivors::gear::crafted::equip`]).
 //!
 //! The bags and the cooldowns are each player's own; the hero lives where the run is simulated,
 //! so a co-op client's use goes to the host as a `UseItem` and the host applies it
@@ -52,12 +60,18 @@ pub(crate) const RUN_BUFF_SECS: f32 = 3600.0;
 pub(crate) const FOOD_SECS: f32 = 900.0;
 /// Elixirs and flasks are taken at camp, or this early in a run.
 pub(crate) const RUN_START_SECS: f32 = 30.0;
+/// A stone's or an armor kit's half hour (1.12's 30 minutes on the weapon or the chest).
+pub(crate) const COATING_SECS: f32 = 1800.0;
+/// The shared engineering lockout after any gadget (5.2), so a bar of bombs can't be spammed.
+pub(crate) const ENGINEERING_LOCKOUT: f32 = 10.0;
 /// The timed buffs' keys in the mechanics toolkit, beside the camp's own; a meal shares Well
 /// Fed's, so the fish and a dish never stack.
 const ELIXIR_KEY: u32 = 0xCA4F_0101;
 const FLASK_KEY: u32 = 0xCA4F_0102;
 const POTION_KEY: u32 = 0xCA4F_0103;
 const FOOD_KEY: u32 = WELL_FED_KEY;
+const STONE_KEY: u32 = 0xCA4F_0104;
+const KIT_KEY: u32 = 0xCA4F_0105;
 
 /// The use spells whose visuals play on the drinker: `Healing Potion`, `Restore Mana`, `Elixir
 /// of the Giants`, `Flask of the Titans`, `Food` and `First Aid`.
@@ -67,12 +81,17 @@ pub(crate) const ELIXIR_SPELL: u32 = 11405;
 pub(crate) const FLASK_SPELL: u32 = 17626;
 pub(crate) const FOOD_SPELL: u32 = 433;
 pub(crate) const BANDAGE_SPELL: u32 = 746;
+/// The stones' and the kits' use spells: `Sharpen Blade` and `Armor +16`.
+pub(crate) const STONE_SPELL: u32 = 2828;
+pub(crate) const KIT_SPELL: u32 = 2832;
 
 /// A cooldown the bags keep: each its own clock, shown on its items' slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Category {
     Potion,
     Bandage,
+    /// The engineering lockout every gadget starts.
+    Engineering,
 }
 
 impl Category {
@@ -80,6 +99,7 @@ impl Category {
         match self {
             Category::Potion => POTION_COOLDOWN,
             Category::Bandage => BANDAGE_COOLDOWN,
+            Category::Engineering => ENGINEERING_LOCKOUT,
         }
     }
 }
@@ -102,6 +122,10 @@ pub(in crate::survivors) enum Use {
     Food(&'static [Bonus]),
     /// Heals this share of the hero's health over [`BANDAGE_SECS`].
     Bandage(f32),
+    /// A sharpening stone or weightstone: these bonuses for [`COATING_SECS`], replacing any other.
+    Stone(&'static [Bonus]),
+    /// An armor kit, the same.
+    Kit(&'static [Bonus]),
 }
 
 impl Use {
@@ -110,13 +134,16 @@ impl Use {
         match self {
             Use::Heal(_) | Use::Buff { .. } => Some(Category::Potion),
             Use::Bandage(_) => Some(Category::Bandage),
-            Use::Elixir(_) | Use::Flask(_) | Use::Food(_) => None,
+            Use::Elixir(_) | Use::Flask(_) | Use::Food(_) | Use::Stone(_) | Use::Kit(_) => None,
         }
     }
 
     /// Whether it is taken only at camp or as the run starts.
     pub(crate) fn at_camp(self) -> bool {
-        matches!(self, Use::Elixir(_) | Use::Flask(_) | Use::Food(_))
+        matches!(
+            self,
+            Use::Elixir(_) | Use::Flask(_) | Use::Food(_) | Use::Stone(_) | Use::Kit(_)
+        )
     }
 }
 
@@ -183,8 +210,28 @@ const fn bandage(item: u32, share: f32) -> Consumable {
     }
 }
 
+const fn stone(item: u32, bonuses: &'static [Bonus]) -> Consumable {
+    Consumable {
+        item,
+        kind: Use::Stone(bonuses),
+        spell: STONE_SPELL,
+    }
+}
+
+const fn kit(item: u32, bonuses: &'static [Bonus]) -> Consumable {
+    Consumable {
+        item,
+        kind: Use::Kit(bonuses),
+        spell: KIT_SPELL,
+    }
+}
+
 const fn b(stat: StatKey, value: f32) -> Bonus {
     Bonus::new(stat, value)
+}
+
+const fn phys(value: f32) -> Bonus {
+    Bonus::school(School::Physical, value)
 }
 
 /// Every usable item. The numbers are ours, sized to 6.1: the best flask, elixir and meal come to
@@ -284,6 +331,26 @@ pub(in crate::survivors) static CONSUMABLES: &[Consumable] = &[
     bandage(HEAVY_MAGEWEAVE_BANDAGE, 0.50),
     bandage(RUNECLOTH_BANDAGE, 0.55),
     bandage(HEAVY_RUNECLOTH_BANDAGE, 0.60),
+    // Blacksmithing's stones (P3): +Physical damage for half an hour, one at a time; the
+    // Elemental Sharpening Stone gives crit instead, as in 1.12.
+    stone(ROUGH_SHARPENING_STONE, &[phys(0.005)]),
+    stone(ROUGH_WEIGHTSTONE, &[phys(0.005)]),
+    stone(COARSE_SHARPENING_STONE, &[phys(0.0075)]),
+    stone(COARSE_WEIGHTSTONE, &[phys(0.0075)]),
+    stone(HEAVY_SHARPENING_STONE, &[phys(0.01)]),
+    stone(HEAVY_WEIGHTSTONE, &[phys(0.01)]),
+    stone(SOLID_SHARPENING_STONE, &[phys(0.0125)]),
+    stone(SOLID_WEIGHTSTONE, &[phys(0.0125)]),
+    stone(DENSE_SHARPENING_STONE, &[phys(0.015)]),
+    stone(DENSE_WEIGHTSTONE, &[phys(0.015)]),
+    stone(ELEMENTAL_SHARPENING_STONE, &[b(StatKey::CritChance, 0.015)]),
+    // Leatherworking's armor kits (P3): damage reduction for half an hour, one at a time.
+    kit(LIGHT_ARMOR_KIT, &[b(StatKey::Armor, 0.01)]),
+    kit(MEDIUM_ARMOR_KIT, &[b(StatKey::Armor, 0.015)]),
+    kit(HEAVY_ARMOR_KIT, &[b(StatKey::Armor, 0.02)]),
+    kit(THICK_ARMOR_KIT, &[b(StatKey::Armor, 0.025)]),
+    kit(RUGGED_ARMOR_KIT, &[b(StatKey::Armor, 0.03)]),
+    kit(CORE_ARMOR_KIT, &[b(StatKey::Armor, 0.04)]),
 ];
 
 /// What `item` does when used, if anything.
@@ -291,9 +358,28 @@ pub(in crate::survivors) fn consumable(item: u32) -> Option<&'static Consumable>
     CONSUMABLES.iter().find(|c| c.item == item)
 }
 
-/// Whether `item` does anything when used: a consumable or a recipe.
+/// Whether `item` does anything when used from the satchel: a consumable, a recipe or a gadget.
 pub(crate) fn usable(item: u32) -> bool {
-    consumable(item).is_some() || recipes::taught_by(item).is_some()
+    consumable(item).is_some()
+        || recipes::taught_by(item).is_some()
+        || super::gadgets::gadget(item).is_some()
+}
+
+/// When `item`'s cooldown started and how long it runs, if one runs on it: its category's, or,
+/// for a gadget, whichever of its own and the engineering lockout ends last.
+pub(crate) fn cooldown_of(bags: &Bags, item: u32) -> Option<(f64, f32)> {
+    if let Some(g) = super::gadgets::gadget(item) {
+        let own = bags.own_cooldown(item).map(|s| (s, g.cooldown));
+        let lockout = bags
+            .cooldown(Category::Engineering)
+            .map(|s| (s, ENGINEERING_LOCKOUT));
+        return [own, lockout]
+            .into_iter()
+            .flatten()
+            .max_by(|a, b| (a.0 + f64::from(a.1)).total_cmp(&(b.0 + f64::from(b.1))));
+    }
+    let cat = consumable(item)?.kind.category()?;
+    bags.cooldown(cat).map(|start| (start, cat.secs()))
 }
 
 /// "+5% damage and +20 max health", as a tooltip sentence reads a list of bonuses.
@@ -317,6 +403,9 @@ pub(crate) fn use_line(item: u32) -> Option<String> {
             r.req
         ));
     }
+    if let Some(g) = super::gadgets::gadget(item) {
+        return Some(super::gadgets::use_line(g));
+    }
     let c = consumable(item)?;
     let pct = |share: f32| (share * 100.0).round() as u32;
     Some(match c.kind {
@@ -338,6 +427,16 @@ pub(crate) fn use_line(item: u32) -> Option<String> {
         Use::Bandage(share) => format!(
             "Heals {}% of your health over {BANDAGE_SECS:.0} sec. Each hit you take shortens it.",
             pct(share)
+        ),
+        Use::Stone(bonuses) => format!(
+            "Sharpens your weapon: {} for {} min. One stone at a time.",
+            describe(bonuses),
+            (COATING_SECS / 60.0) as u32
+        ),
+        Use::Kit(bonuses) => format!(
+            "Reinforces your armor: {} for {} min. One kit at a time.",
+            describe(bonuses),
+            (COATING_SECS / 60.0) as u32
         ),
     })
 }
@@ -366,12 +465,19 @@ pub(in crate::survivors) enum Used {
     NotReady,
     /// Refused, with the stock `GlobalStrings.lua` key and its words.
     Refused(&'static str, &'static str),
+    /// A gadget went off (out of the bags if it is spent): where the run is simulated it fires.
+    Gadget(&'static super::gadgets::GadgetDef),
+    /// A bag went onto the bag bar, into this container.
+    Bag(i64),
+    /// A crafted piece of gear to put on the picked class (the caller's, with the gear store):
+    /// the piece's id and where it lies.
+    Equip(u16, (i64, u32)),
     /// Nothing to use there, or nothing that does anything.
     Nothing,
 }
 
 /// One use of the stack at `(bag, slot)`: the item out of the bags and its cooldown started, or
-/// the recipe learned, or the reason not.
+/// the recipe learned, the bag worn, the gadget fired, or the reason not.
 pub(in crate::survivors) fn use_stack(
     bags: &mut Bags,
     skills: &mut Skills,
@@ -382,6 +488,18 @@ pub(in crate::survivors) fn use_stack(
     let Some(stack) = bags.get(bag, slot) else {
         return Used::Nothing;
     };
+    if let Some(piece) = crate::survivors::gear::crafted_by_item(stack.item) {
+        return Used::Equip(piece.item.id, (bag, slot));
+    }
+    if template(stack.item).is_some_and(|d| d.bag_slots > 0) {
+        return match bags.equip_bag((bag, slot)) {
+            Ok(container) => Used::Bag(container),
+            Err(_) => Used::Refused("ERR_BAG_FULL", "That bag is full."),
+        };
+    }
+    if let Some(g) = super::gadgets::gadget(stack.item) {
+        return super::gadgets::use_gadget(bags, g, (bag, slot), ctx);
+    }
     if let Some(r) = recipes::taught_by(stack.item) {
         if recipes::known(r, skills) {
             return Used::Refused("ERR_LEARN_SPELL_ALREADY_KNOWN", "You already know that.");
@@ -492,6 +610,8 @@ pub(in crate::survivors) fn take_effect(
         Use::Bandage(share) => {
             commands.entity(entity).insert(Bandaging::on(hero, share));
         }
+        Use::Stone(bonuses) => replace_buff(hero, STONE_KEY, COATING_SECS, bonuses),
+        Use::Kit(bonuses) => replace_buff(hero, KIT_KEY, COATING_SECS, bonuses),
     }
     fx.cast(entity, c.spell, &[], None);
 }
@@ -554,24 +674,38 @@ impl Stage<'_> {
     pub(super) fn role(&self) -> NetRole {
         *self.role
     }
+
+    /// The picked class, which crafted gear goes on.
+    pub(super) fn class(&self) -> Option<usize> {
+        self.selection.class
+    }
 }
 
-/// What a use out of the bags reaches: the heroes, their visuals, the co-op outbox and the stock
-/// UI's lines.
+/// What a use out of the bags reaches: the heroes, their visuals, the co-op outbox, the gadgets'
+/// queue, the picked class's gear and the stock UI's lines.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct Taker<'w, 's> {
     commands: Commands<'w, 's>,
     heroes: Query<'w, 's, (Entity, &'static mut HeroState, Has<LocalHero>)>,
     fx: Fx<'w>,
     outbox: ResMut<'w, UseOutbox>,
+    gadgets: ResMut<'w, super::gadgets::GadgetQueue>,
+    gear: crate::survivors::gear::GearStore<'w>,
     pub(super) ui: ResMut<'w, UiLines>,
 }
 
 impl Taker<'_, '_> {
     /// What a local use does once it is out of the bags: a learned recipe is announced; a taken
-    /// item goes to the host from a co-op client, and otherwise takes effect here, on the local
-    /// hero (and, for a meal at camp, every hero).
-    pub(super) fn after(&mut self, used: Used, ctx: UseCtx, role: NetRole) {
+    /// item or a gadget goes to the host from a co-op client, and otherwise takes effect here, on
+    /// the local hero (and, for a meal at camp, every hero); crafted gear goes on `class`.
+    pub(super) fn after(
+        &mut self,
+        bags: &mut Bags,
+        used: Used,
+        ctx: UseCtx,
+        role: NetRole,
+        class: Option<usize>,
+    ) {
         match used {
             Used::Took(c) if role == NetRole::Client => self.outbox.0.push(c.item),
             Used::Took(c) => {
@@ -584,10 +718,39 @@ impl Taker<'_, '_> {
                     }
                 }
             }
+            Used::Gadget(g) if role == NetRole::Client => self.outbox.0.push(g.item),
+            Used::Gadget(g) => {
+                if let Some((entity, ..)) = self.heroes.iter().find(|(.., local)| *local) {
+                    self.gadgets.0.push((entity, g.item));
+                }
+            }
+            Used::Equip(id, at) => {
+                use crate::survivors::gear::crafted;
+                let Some(piece) = crafted::crafted_piece(id) else {
+                    return;
+                };
+                let worn = match class {
+                    None => Err(crafted::EquipError::NoClass),
+                    Some(c) => self
+                        .gear
+                        .edit(c, |g| crafted::equip(g, piece, c))
+                        .unwrap_or(Err(crafted::EquipError::NoClass)),
+                };
+                match worn {
+                    Ok(()) => {
+                        let _ = bags.destroy(at.0, at.1, 1);
+                        self.ui.0.push(CastLine::Equipped(piece.item.name));
+                    }
+                    Err(e) => {
+                        let (key, text) = e.global_string();
+                        self.ui.0.push(CastLine::Refused(key, text));
+                    }
+                }
+            }
             Used::Learned(r) => self.ui.0.push(CastLine::LearnedRecipe(r.name)),
             Used::NotReady => self.ui.0.push(CastLine::NotReady),
             Used::Refused(key, text) => self.ui.0.push(CastLine::Refused(key, text)),
-            Used::Nothing => {}
+            Used::Bag(_) | Used::Nothing => {}
         }
     }
 }
@@ -642,7 +805,7 @@ pub(super) fn use_items(
             continue;
         }
         let used = use_stack(bags, skills, bag, slot, ctx);
-        taker.after(used, ctx, stage.role());
+        taker.after(bags, used, ctx, stage.role(), stage.class());
     }
 }
 
@@ -936,6 +1099,16 @@ mod tests {
             (0.10..=0.18).contains(&total),
             "a flask, an elixir and a meal: {total}"
         );
+        // A sharpening stone on top (P3): never past a fifth.
+        let stone = best(|u| match u {
+            Use::Stone(b) => Some(b),
+            _ => None,
+        });
+        assert!(
+            stone > 0.0 && (0.10..=0.20).contains(&(total + stone)),
+            "with a stone: {}",
+            total + stone
+        );
         for c in CONSUMABLES {
             if let Use::Buff { secs, .. } = c.kind {
                 assert!(secs <= 30.0, "{}", c.item);
@@ -944,6 +1117,62 @@ mod tests {
                 assert!(share <= 0.60, "{}", c.item);
             }
         }
+    }
+
+    /// Stones and kits wait for camp or the run's start, as elixirs do, and say what they do.
+    #[test]
+    fn survivors_effects_stones_and_kits_are_taken_at_camp() {
+        let mut bags = Bags::default();
+        let mut skills = Skills::default();
+        bags.add(DENSE_SHARPENING_STONE, 1);
+        bags.add(CORE_ARMOR_KIT, 1);
+        assert!(matches!(
+            use_stack(&mut bags, &mut skills, 0, 1, in_run(5.0)),
+            Used::Refused(..)
+        ));
+        let camp = UseCtx {
+            at_camp: true,
+            ..in_run(5.0)
+        };
+        assert!(matches!(
+            use_stack(&mut bags, &mut skills, 0, 1, camp),
+            Used::Took(c) if matches!(c.kind, Use::Stone(_))
+        ));
+        assert!(matches!(
+            use_stack(&mut bags, &mut skills, 0, 2, camp),
+            Used::Took(c) if matches!(c.kind, Use::Kit(_))
+        ));
+        assert!(use_line(DENSE_SHARPENING_STONE)
+            .unwrap()
+            .contains("One stone at a time"));
+        assert!(use_line(CORE_ARMOR_KIT)
+            .unwrap()
+            .contains("One kit at a time"));
+    }
+
+    /// A bag right-clicked goes onto the bag bar; a crafted piece is handed to the caller to put
+    /// on the picked class, still in the bags until it goes on.
+    #[test]
+    fn survivors_effects_bags_go_on_the_bar_and_gear_waits_for_the_class() {
+        let mut bags = Bags::default();
+        let mut skills = Skills::default();
+        bags.add(RUNECLOTH_BAG, 1);
+        bags.add(LIONHEART_HELM, 1);
+        assert_eq!(
+            use_stack(&mut bags, &mut skills, 0, 1, UseCtx::default()),
+            Used::Bag(1)
+        );
+        assert_eq!(bags.size(1), 14);
+        let helm = crate::survivors::gear::crafted_by_item(LIONHEART_HELM).unwrap();
+        assert_eq!(
+            use_stack(&mut bags, &mut skills, 0, 2, UseCtx::default()),
+            Used::Equip(helm.item.id, (0, 2))
+        );
+        assert_eq!(
+            bags.count(LIONHEART_HELM),
+            1,
+            "the caller takes it as it goes on"
+        );
     }
 
     /// The right-click through the engine's own `UseContainerItem` lands in the drain.

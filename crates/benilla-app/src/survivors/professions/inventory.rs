@@ -81,14 +81,19 @@ pub(crate) struct Bags {
     slots: BTreeMap<(i64, u32), Stack>,
     generation: u64,
     /// Each cooldown's start on the `GetTime` clock ([`super::effects::Category`]: the shared
-    /// potion cooldown, Recently Bandaged), once started; not saved.
-    cooldowns: [Option<f64>; 2],
+    /// potion cooldown, Recently Bandaged, the engineering lockout), once started; not saved.
+    cooldowns: [Option<f64>; 3],
+    /// Each gadget's own cooldown's start, by item; not saved.
+    own_cooldowns: BTreeMap<u32, f64>,
 }
 
 /// The same contents, whatever the change counter says.
 impl PartialEq for Bags {
     fn eq(&self, other: &Self) -> bool {
-        self.worn == other.worn && self.slots == other.slots && self.cooldowns == other.cooldowns
+        self.worn == other.worn
+            && self.slots == other.slots
+            && self.cooldowns == other.cooldowns
+            && self.own_cooldowns == other.own_cooldowns
     }
 }
 
@@ -133,6 +138,52 @@ impl Bags {
     pub(crate) fn start_cooldown(&mut self, cat: Category, now: f64) {
         self.cooldowns[cat as usize] = Some(now);
         self.touch();
+    }
+
+    /// When gadget `item`'s own cooldown last started, if it has.
+    pub(crate) fn own_cooldown(&self, item: u32) -> Option<f64> {
+        self.own_cooldowns.get(&item).copied()
+    }
+
+    /// Start gadget `item`'s own cooldown at `now`.
+    pub(crate) fn start_own_cooldown(&mut self, item: u32, now: f64) {
+        self.own_cooldowns.insert(item, now);
+        self.touch();
+    }
+
+    /// Put the bag at `from` on in a bag slot, as 1.12's right-click on a bag does: into the first
+    /// empty one, or else in place of the smallest worn bag that is empty and smaller, which goes
+    /// where the new one was. The container it went into, or why not.
+    pub(crate) fn equip_bag(&mut self, from: (i64, u32)) -> Result<i64, BagError> {
+        let stack = self.get(from.0, from.1).ok_or(BagError::NotFound)?;
+        let slots = items::template(stack.item).map_or(0, |t| t.bag_slots);
+        if slots == 0 {
+            return Err(BagError::WrongBag);
+        }
+        if let Some(i) = self.worn.iter().position(|&w| w == 0) {
+            // Not into itself: a bag in an empty bag slot holds nothing yet, so any source but
+            // the slot being filled is fine.
+            self.put(from.0, from.1, None);
+            self.worn[i] = stack.item;
+            self.touch();
+            return Ok(i as i64 + 1);
+        }
+        let swap = (1..=WORN_BAGS as i64)
+            .filter(|&b| b != from.0 && self.contents(b).next().is_none() && self.size(b) < slots)
+            .min_by_key(|&b| self.size(b))
+            .ok_or(BagError::BagFull)?;
+        let old = self.worn(swap);
+        self.put(
+            from.0,
+            from.1,
+            Some(Stack {
+                item: old,
+                count: 1,
+            }),
+        );
+        self.worn[swap as usize - 1] = stack.item;
+        self.touch();
+        Ok(swap)
     }
 
     /// The bags as the profile saves them: worn bags and every occupied slot.
@@ -716,6 +767,42 @@ mod tests {
         // The reagent's slot frees room for the product.
         assert_eq!(b.exchange(&[(LINEN_CLOTH, 1)], &[(COPPER_ORE, 2)]), Ok(()));
         assert_eq!(b.count(COPPER_ORE), 11);
+    }
+
+    /// A right-clicked bag goes into the first empty bag slot and enlarges the bags; with all four
+    /// worn, it takes the place of the smallest empty one, which goes where it was.
+    #[test]
+    fn survivors_bags_equip_a_bag_into_the_bag_bar() {
+        use crate::survivors::professions::items::{MOONCLOTH_BAG, RUNECLOTH_BAG, WOOLEN_BAG};
+        let mut b = one_bag();
+        b.add(MOONCLOTH_BAG, 1);
+        b.add(COPPER_ORE, 1);
+        assert_eq!(
+            b.equip_bag((0, 2)),
+            Err(BagError::WrongBag),
+            "ore is no bag"
+        );
+        assert_eq!(b.equip_bag((0, 1)), Ok(2));
+        assert_eq!((b.worn(2), b.size(2)), (MOONCLOTH_BAG, 16));
+        assert_eq!(b.containers().count(), 3);
+        assert_eq!(b.count(MOONCLOTH_BAG), 0, "out of the bags, onto the bar");
+        // Fill the bar.
+        for container in [3, 4] {
+            b.add(WOOLEN_BAG, 1);
+            assert_eq!(b.equip_bag((0, 1)), Ok(container));
+        }
+        assert_eq!(b.worn, [LINEN_BAG, MOONCLOTH_BAG, WOOLEN_BAG, WOOLEN_BAG]);
+        // A bigger bag swaps out the smallest empty one, which lands where it was.
+        b.add(RUNECLOTH_BAG, 1);
+        assert_eq!(
+            b.equip_bag((0, 1)),
+            Ok(1),
+            "the Linen Bag, smallest and empty"
+        );
+        assert_eq!(b.worn(1), RUNECLOTH_BAG);
+        assert_eq!(b.get(0, 1).map(|s| s.item), Some(LINEN_BAG));
+        // Every worn bag is bigger than the Linen Bag: no room for it.
+        assert_eq!(b.equip_bag((0, 1)), Err(BagError::BagFull));
     }
 
     #[test]

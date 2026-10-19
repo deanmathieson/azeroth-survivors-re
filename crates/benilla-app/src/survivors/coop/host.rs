@@ -460,7 +460,9 @@ pub(super) fn gather_actions(
 }
 
 /// A client used an item from its own bags (already consumed there, its cooldown started there):
-/// its hero takes the effect here, where it lives, and a meal eaten at camp feeds every hero.
+/// its hero takes the effect here, where it lives, and a meal eaten at camp feeds every hero. A
+/// gadget goes off here too (protocol 22): the host fires it and rolls its malfunction, and its
+/// pets, dummies and damage reach every machine as any unit's do.
 pub(super) fn use_items(
     mut commands: Commands,
     mut msgs: MessageReader<FromClient<UseItem>>,
@@ -468,16 +470,21 @@ pub(super) fn use_items(
     camp: Res<Camp>,
     mut heroes: Query<(Entity, Option<&Owner>, &mut HeroState)>,
     mut fx: super::super::units::Fx,
+    mut gadgets: ResMut<professions::gadgets::GadgetQueue>,
 ) {
     for msg in msgs.read() {
-        let Some(c) = professions::effects::consumable(msg.message.item) else {
-            continue;
-        };
         let Some(user) = heroes
             .iter()
             .find(|(_, owner, _)| owner.is_some_and(|o| owns(*o, msg.client_id)))
             .map(|(e, ..)| e)
         else {
+            continue;
+        };
+        if professions::gadgets::gadget(msg.message.item).is_some() {
+            gadgets.0.push((user, msg.message.item));
+            continue;
+        }
+        let Some(c) = professions::effects::consumable(msg.message.item) else {
             continue;
         };
         let party = professions::effects::feeds_party(c, camp.active(&run));

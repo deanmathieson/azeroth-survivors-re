@@ -1,17 +1,22 @@
-//! The curated recipe books (docs/PROFESSIONS.md, 5.1): Mining's Smelting, and P2's Alchemy,
-//! Cooking, First Aid and Enchanting, done at the camp's fire. Each row is a real 1.12 tradeskill
-//! spell: its `Reagent[8]`, its `SPELL_EFFECT_CREATE_ITEM` product and count (or, for an enchant,
-//! its `SPELL_EFFECT_ENCHANT_ITEM_PERMANENT` and the `SpellItemEnchantment` row it names), its
+//! The curated recipe books (docs/PROFESSIONS.md, 5.1): Mining's Smelting, P2's Alchemy, Cooking,
+//! First Aid and Enchanting, and P3's Blacksmithing, Leatherworking, Tailoring and Engineering,
+//! done at the camp's fire. Each row is a real 1.12 tradeskill spell: its `Reagent[8]`, its
+//! `SPELL_EFFECT_CREATE_ITEM` product and count (or, for an enchant, its
+//! `SPELL_EFFECT_ENCHANT_ITEM_PERMANENT` and the `SpellItemEnchantment` row it names), its
 //! `SkillLineAbility` line and trivial bands, its spell focus and its cast time are checked against
-//! the client by [`tests::every_recipe_resolves_in_the_client`].
+//! the client by [`tests::every_recipe_resolves_in_the_client`]. A recipe that drops is read off
+//! a recipe item whose name is the client's own teaching spell's
+//! ([`tests::recipe_items_teach_their_recipes_in_the_client`]).
 //!
 //! **Authored:** the skill each is learned at (the trainer's `reqskillvalue`, from memory: the
 //! client does not carry it), how it is learned ([`Learn`]: at that skill, bought from the camp's
-//! trainer, or read off a recipe that drops in runs), the trainer's prices, and each enchant's
-//! survivors bonuses ([`Enchant`]).
+//! trainer, or read off a recipe that drops in runs), the trainer's prices, Engineering's
+//! specialisations ([`Spec`]: which gadgets each keeps to itself follows the design doc, not 1.12),
+//! and each enchant's survivors bonuses ([`Enchant`]).
 //!
-//! **The camp's fire** stands in for every focus a book names: Smelting's Forge, Cooking's Cooking
-//! Fire and the flasks' Alchemy Lab.
+//! **The camp's fire** stands in for every focus a book names: Smelting's Forge and Black Forge,
+//! Cooking's Cooking Fire, the flasks' Alchemy Lab, the smiths' Anvil and Black Anvil, and
+//! Mooncloth's Moonwell.
 
 use benilla_ui::script::{
     CraftReagent, CraftRecipe, CraftState, CraftTooltip, TradeSkillReagent, TradeSkillRecipe,
@@ -35,6 +40,14 @@ pub(crate) const FORGE: Focus = (3, "Forge");
 pub(crate) const COOKING_FIRE: Focus = (4, "Cooking Fire");
 /// The flasks' focus.
 pub(crate) const ALCHEMY_LAB: Focus = (663, "Alchemy Lab");
+/// Blacksmithing's and Engineering's focus.
+pub(crate) const ANVIL: Focus = (1, "Anvil");
+/// Molten Core's plate: Blackrock Depths' anvil.
+pub(crate) const BLACK_ANVIL: Focus = (623, "Black Anvil");
+/// Smelt Dark Iron's.
+pub(crate) const BLACK_FORGE: Focus = (543, "Black Forge");
+/// Mooncloth's.
+pub(crate) const MOONWELL: Focus = (883, "Moonwell");
 /// Every enchant spell's icon (`SpellIcon.dbc`), which the craft window shows for the row.
 pub(crate) const ENCHANT_ICON: &str = "Interface\\Icons\\Spell_Holy_GreaterHeal";
 /// The craft window's type for Enchanting: the opener's `EffectMiscValue[0]`.
@@ -50,6 +63,59 @@ pub(crate) enum Learn {
     /// Read off this recipe item, which drops in runs.
     Drop(u32),
 }
+
+/// Engineering's 1.12 specialisation, learned from the trainer at Engineering 200: the two are
+/// exclusive. The gadgets each keeps to itself are the design doc's (5.2), not 1.12's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Spec {
+    Gnomish,
+    Goblin,
+}
+
+impl Spec {
+    pub(crate) const ALL: [Spec; 2] = [Spec::Gnomish, Spec::Goblin];
+
+    /// The specialisation's spell (`Spell.dbc`, Engineering's line): "Gnomish Engineer" and
+    /// "Goblin Engineer".
+    pub(crate) const fn spell(self) -> u32 {
+        match self {
+            Spec::Gnomish => 20219,
+            Spec::Goblin => 20222,
+        }
+    }
+
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Spec::Gnomish => "Gnomish Engineer",
+            Spec::Goblin => "Goblin Engineer",
+        }
+    }
+
+    /// The spells' icons (`SpellIcon.dbc`).
+    pub(crate) const fn icon(self) -> &'static str {
+        match self {
+            Spec::Gnomish => "Interface\\Icons\\INV_Gizmo_02",
+            Spec::Goblin => "Interface\\Icons\\Spell_Fire_SelfDestruct",
+        }
+    }
+
+    /// The other one, which learning this rules out.
+    pub(crate) const fn rival(self) -> Spec {
+        match self {
+            Spec::Gnomish => Spec::Goblin,
+            Spec::Goblin => Spec::Gnomish,
+        }
+    }
+
+    /// The specialisation `spell` is, if it is one.
+    pub(crate) fn of_spell(spell: u32) -> Option<Spec> {
+        Spec::ALL.into_iter().find(|s| s.spell() == spell)
+    }
+}
+
+/// The Engineering a specialisation needs, and its price: ours, about five runs' gold.
+pub(crate) const SPEC_SKILL: u16 = 200;
+pub(crate) const SPEC_COST: u32 = 50_000;
 
 /// What an enchant does to the piece it is on: its `SpellItemEnchantment` row (the tooltip's
 /// green line is its name), the survivors slot it goes on, and its bonuses, which join the worn
@@ -84,6 +150,8 @@ pub(crate) struct Recipe {
     pub(crate) focus: Option<Focus>,
     pub(crate) learn: Learn,
     pub(crate) enchant: Option<&'static Enchant>,
+    /// The Engineering specialisation it needs, if any.
+    pub(crate) spec: Option<Spec>,
 }
 
 impl Recipe {
@@ -116,6 +184,13 @@ impl Recipe {
         }
     }
 
+    const fn needs(self, spec: Spec) -> Self {
+        Self {
+            spec: Some(spec),
+            ..self
+        }
+    }
+
     /// The cast, in seconds.
     pub(crate) fn cast_secs(&self) -> f32 {
         self.cast_ms as f32 / 1000.0
@@ -144,6 +219,7 @@ const fn base(
         focus: None,
         learn: Learn::Skill,
         enchant: None,
+        spec: None,
     }
 }
 
@@ -268,6 +344,36 @@ static SMELTING: &[Recipe] = &[
         250,
         (250, 250),
     ),
+    base(
+        Line::Mining,
+        2658,
+        "Smelt Silver",
+        &[(SILVER_ORE, 1)],
+        SILVER_BAR,
+        75,
+        (100, 125),
+    )
+    .at(FORGE),
+    base(
+        Line::Mining,
+        3308,
+        "Smelt Gold",
+        &[(GOLD_ORE, 1)],
+        GOLD_BAR,
+        155,
+        (170, 185),
+    )
+    .at(FORGE),
+    base(
+        Line::Mining,
+        14891,
+        "Smelt Dark Iron",
+        &[(DARK_IRON_ORE, 8)],
+        DARK_IRON_BAR,
+        230,
+        (230, 230),
+    )
+    .at(BLACK_FORGE),
 ];
 
 /// Alchemy.
@@ -575,6 +681,28 @@ static ALCHEMY: &[Recipe] = &[
     .casts(25000)
     .at(ALCHEMY_LAB)
     .dropped(RECIPE_FLASK_OF_DISTILLED_WISDOM),
+    base(
+        Line::Alchemy,
+        11479,
+        "Transmute: Iron to Gold",
+        &[(IRON_BAR, 1)],
+        GOLD_BAR,
+        225,
+        (240, 280),
+    )
+    .casts(25000)
+    .bought(6000),
+    base(
+        Line::Alchemy,
+        17187,
+        "Transmute: Arcanite",
+        &[(THORIUM_BAR, 1), (ARCANE_CRYSTAL, 1)],
+        ARCANITE_BAR,
+        275,
+        (275, 290),
+    )
+    .casts(25000)
+    .dropped(RECIPE_TRANSMUTE_ARCANITE),
 ];
 
 /// Cooking.
@@ -1597,6 +1725,1979 @@ static ENCHANTING: &[Recipe] = &[
         },
     )
     .dropped(FORMULA_ENCHANT_WEAPON_CRUSADER),
+    base(
+        Line::Enchanting,
+        17180,
+        "Enchanted Thorium",
+        &[(THORIUM_BAR, 1), (DREAM_DUST, 3)],
+        ENCHANTED_THORIUM_BAR,
+        250,
+        (250, 260),
+    )
+    .casts(12500)
+    .bought(8000),
+    base(
+        Line::Enchanting,
+        17181,
+        "Enchanted Leather",
+        &[(RUGGED_LEATHER, 1), (LESSER_ETERNAL_ESSENCE, 1)],
+        ENCHANTED_LEATHER,
+        250,
+        (250, 260),
+    )
+    .casts(12500)
+    .bought(8000),
+];
+
+/// Blacksmithing (P3): the stones, the copper-to-thorium ladder, the Imperial Plate, and the
+/// recipes that drop: the Lionheart Helm, the Arcanite Reaper and Molten Core's plans.
+static BLACKSMITHING: &[Recipe] = &[
+    base(
+        Line::Blacksmithing,
+        2660,
+        "Rough Sharpening Stone",
+        &[(ROUGH_STONE, 1)],
+        ROUGH_SHARPENING_STONE,
+        1,
+        (15, 55),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        3115,
+        "Rough Weightstone",
+        &[(ROUGH_STONE, 1), (LINEN_CLOTH, 1)],
+        ROUGH_WEIGHTSTONE,
+        1,
+        (15, 55),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        2663,
+        "Copper Bracers",
+        &[(COPPER_BAR, 2)],
+        COPPER_BRACERS,
+        1,
+        (20, 60),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        3320,
+        "Rough Grinding Stone",
+        &[(ROUGH_STONE, 2)],
+        ROUGH_GRINDING_STONE,
+        25,
+        (45, 85),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        2662,
+        "Copper Chain Pants",
+        &[(COPPER_BAR, 4)],
+        COPPER_CHAIN_PANTS,
+        40,
+        (50, 90),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        2737,
+        "Copper Mace",
+        &[(COPPER_BAR, 6), (WEAK_FLUX, 1), (LINEN_CLOTH, 2)],
+        COPPER_MACE,
+        30,
+        (55, 95),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        2661,
+        "Copper Chain Belt",
+        &[(COPPER_BAR, 6)],
+        COPPER_CHAIN_BELT,
+        55,
+        (75, 115),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        2665,
+        "Coarse Sharpening Stone",
+        &[(COARSE_STONE, 1)],
+        COARSE_SHARPENING_STONE,
+        65,
+        (65, 80),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        3116,
+        "Coarse Weightstone",
+        &[(COARSE_STONE, 1), (WOOL_CLOTH, 1)],
+        COARSE_WEIGHTSTONE,
+        65,
+        (65, 80),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        3326,
+        "Coarse Grinding Stone",
+        &[(COARSE_STONE, 2)],
+        COARSE_GRINDING_STONE,
+        75,
+        (75, 100),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        2668,
+        "Rough Bronze Leggings",
+        &[(BRONZE_BAR, 6)],
+        ROUGH_BRONZE_LEGGINGS,
+        95,
+        (145, 175),
+    )
+    .casts(12500)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        2741,
+        "Bronze Axe",
+        &[(BRONZE_BAR, 7), (WEAK_FLUX, 4), (MEDIUM_LEATHER, 1)],
+        BRONZE_AXE,
+        85,
+        (145, 175),
+    )
+    .casts(12500)
+    .at(ANVIL)
+    .bought(600),
+    base(
+        Line::Blacksmithing,
+        2674,
+        "Heavy Sharpening Stone",
+        &[(HEAVY_STONE, 1)],
+        HEAVY_SHARPENING_STONE,
+        125,
+        (125, 140),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        3117,
+        "Heavy Weightstone",
+        &[(HEAVY_STONE, 1), (WOOL_CLOTH, 1)],
+        HEAVY_WEIGHTSTONE,
+        125,
+        (125, 140),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        3337,
+        "Heavy Grinding Stone",
+        &[(HEAVY_STONE, 3)],
+        HEAVY_GRINDING_STONE,
+        125,
+        (125, 150),
+    )
+    .casts(8000),
+    base(
+        Line::Blacksmithing,
+        8768,
+        "Iron Buckle",
+        &[(IRON_BAR, 1)],
+        IRON_BUCKLE,
+        150,
+        (150, 155),
+    )
+    .makes(2)
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        3501,
+        "Green Iron Bracers",
+        &[(IRON_BAR, 6), (GREEN_DYE, 1)],
+        GREEN_IRON_BRACERS,
+        165,
+        (190, 215),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(2000),
+    base(
+        Line::Blacksmithing,
+        3502,
+        "Green Iron Helm",
+        &[(IRON_BAR, 12), (CITRINE, 1), (GREEN_DYE, 1)],
+        GREEN_IRON_HELM,
+        170,
+        (195, 220),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(2500),
+    base(
+        Line::Blacksmithing,
+        9813,
+        "Barbaric Iron Breastplate",
+        &[(IRON_BAR, 20), (HEAVY_GRINDING_STONE, 4)],
+        BARBARIC_IRON_BREASTPLATE,
+        160,
+        (185, 210),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(2500),
+    base(
+        Line::Blacksmithing,
+        3492,
+        "Hardened Iron Shortsword",
+        &[
+            (IRON_BAR, 6),
+            (STRONG_FLUX, 2),
+            (HEAVY_GRINDING_STONE, 1),
+            (LESSER_MOONSTONE, 2),
+            (HEAVY_LEATHER, 3),
+        ],
+        HARDENED_IRON_SHORTSWORD,
+        160,
+        (185, 210),
+    )
+    .casts(45000)
+    .at(ANVIL)
+    .bought(3000),
+    base(
+        Line::Blacksmithing,
+        9918,
+        "Solid Sharpening Stone",
+        &[(SOLID_STONE, 1)],
+        SOLID_SHARPENING_STONE,
+        200,
+        (200, 210),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        9921,
+        "Solid Weightstone",
+        &[(SOLID_STONE, 1), (SILK_CLOTH, 1)],
+        SOLID_WEIGHTSTONE,
+        200,
+        (200, 210),
+    )
+    .casts(5125),
+    base(
+        Line::Blacksmithing,
+        9920,
+        "Solid Grinding Stone",
+        &[(SOLID_STONE, 4)],
+        SOLID_GRINDING_STONE,
+        200,
+        (200, 210),
+    )
+    .casts(8000),
+    base(
+        Line::Blacksmithing,
+        11454,
+        "Inlaid Mithril Cylinder",
+        &[(MITHRIL_BAR, 5), (GOLD_BAR, 1), (TRUESILVER_BAR, 1)],
+        INLAID_MITHRIL_CYLINDER,
+        200,
+        (225, 250),
+    )
+    .at(ANVIL),
+    base(
+        Line::Blacksmithing,
+        9959,
+        "Heavy Mithril Breastplate",
+        &[(MITHRIL_BAR, 16)],
+        HEAVY_MITHRIL_BREASTPLATE,
+        230,
+        (250, 270),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .bought(6000),
+    base(
+        Line::Blacksmithing,
+        9968,
+        "Heavy Mithril Boots",
+        &[(MITHRIL_BAR, 14), (THICK_LEATHER, 4)],
+        HEAVY_MITHRIL_BOOTS,
+        235,
+        (255, 275),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .bought(6000),
+    base(
+        Line::Blacksmithing,
+        9997,
+        "Wicked Mithril Blade",
+        &[
+            (MITHRIL_BAR, 14),
+            (TRUESILVER_BAR, 4),
+            (SOLID_GRINDING_STONE, 1),
+            (THICK_LEATHER, 2),
+        ],
+        WICKED_MITHRIL_BLADE,
+        230,
+        (250, 275),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .bought(7000),
+    base(
+        Line::Blacksmithing,
+        16641,
+        "Dense Sharpening Stone",
+        &[(DENSE_STONE, 1)],
+        DENSE_SHARPENING_STONE,
+        250,
+        (255, 260),
+    )
+    .casts(8000),
+    base(
+        Line::Blacksmithing,
+        16640,
+        "Dense Weightstone",
+        &[(DENSE_STONE, 1), (RUNECLOTH, 1)],
+        DENSE_WEIGHTSTONE,
+        250,
+        (255, 260),
+    )
+    .casts(8000),
+    base(
+        Line::Blacksmithing,
+        16639,
+        "Dense Grinding Stone",
+        &[(DENSE_STONE, 4)],
+        DENSE_GRINDING_STONE,
+        250,
+        (255, 260),
+    )
+    .casts(8000),
+    base(
+        Line::Blacksmithing,
+        16647,
+        "Imperial Plate Belt",
+        &[(THORIUM_BAR, 22), (RUGGED_LEATHER, 6), (AQUAMARINE, 1)],
+        IMPERIAL_PLATE_BELT,
+        265,
+        (285, 305),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_BELT),
+    base(
+        Line::Blacksmithing,
+        16649,
+        "Imperial Plate Bracers",
+        &[(THORIUM_BAR, 20), (STAR_RUBY, 1)],
+        IMPERIAL_PLATE_BRACERS,
+        270,
+        (290, 310),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_BRACERS),
+    base(
+        Line::Blacksmithing,
+        16646,
+        "Imperial Plate Shoulders",
+        &[(THORIUM_BAR, 24), (RUGGED_LEATHER, 6), (CITRINE, 2)],
+        IMPERIAL_PLATE_SHOULDERS,
+        265,
+        (285, 305),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_SHOULDERS),
+    base(
+        Line::Blacksmithing,
+        16657,
+        "Imperial Plate Boots",
+        &[(THORIUM_BAR, 34), (STAR_RUBY, 1), (AQUAMARINE, 1)],
+        IMPERIAL_PLATE_BOOTS,
+        295,
+        (315, 335),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_BOOTS),
+    base(
+        Line::Blacksmithing,
+        16658,
+        "Imperial Plate Helm",
+        &[(THORIUM_BAR, 34), (STAR_RUBY, 2)],
+        IMPERIAL_PLATE_HELM,
+        295,
+        (315, 335),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_HELM),
+    base(
+        Line::Blacksmithing,
+        16663,
+        "Imperial Plate Chest",
+        &[(THORIUM_BAR, 40), (STAR_RUBY, 2)],
+        IMPERIAL_PLATE_CHEST,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_CHEST),
+    base(
+        Line::Blacksmithing,
+        16730,
+        "Imperial Plate Leggings",
+        &[(THORIUM_BAR, 44), (STAR_RUBY, 2)],
+        IMPERIAL_PLATE_LEGGINGS,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_IMPERIAL_PLATE_LEGGINGS),
+    base(
+        Line::Blacksmithing,
+        16729,
+        "Lionheart Helm",
+        &[
+            (THORIUM_BAR, 80),
+            (ARCANITE_BAR, 12),
+            (WICKED_CLAW, 40),
+            (BLUE_SAPPHIRE, 10),
+            (AZEROTHIAN_DIAMOND, 4),
+        ],
+        LIONHEART_HELM,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_LIONHEART_HELM),
+    base(
+        Line::Blacksmithing,
+        16994,
+        "Arcanite Reaper",
+        &[
+            (ARCANITE_BAR, 20),
+            (ENCHANTED_LEATHER, 6),
+            (DENSE_GRINDING_STONE, 2),
+        ],
+        ARCANITE_REAPER,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(PLANS_ARCANITE_REAPER),
+    base(
+        Line::Blacksmithing,
+        22757,
+        "Elemental Sharpening Stone",
+        &[(ELEMENTAL_EARTH, 2), (DENSE_STONE, 3)],
+        ELEMENTAL_SHARPENING_STONE,
+        300,
+        (300, 320),
+    )
+    .casts(8000)
+    .dropped(PLANS_ELEMENTAL_SHARPENING_STONE),
+    base(
+        Line::Blacksmithing,
+        15296,
+        "Dark Iron Plate",
+        &[(DARK_IRON_BAR, 20), (HEART_OF_FIRE, 8)],
+        DARK_IRON_PLATE,
+        285,
+        (305, 325),
+    )
+    .casts(45000)
+    .at(BLACK_ANVIL)
+    .dropped(PLANS_DARK_IRON_PLATE),
+    base(
+        Line::Blacksmithing,
+        20872,
+        "Fiery Chain Girdle",
+        &[(DARK_IRON_BAR, 6), (FIERY_CORE, 3), (LAVA_CORE, 3)],
+        FIERY_CHAIN_GIRDLE,
+        295,
+        (315, 335),
+    )
+    .casts(60000)
+    .at(BLACK_ANVIL)
+    .dropped(PLANS_FIERY_CHAIN_GIRDLE),
+    base(
+        Line::Blacksmithing,
+        21161,
+        "Sulfuron Hammer",
+        &[
+            (SULFURON_INGOT, 8),
+            (DARK_IRON_BAR, 20),
+            (ARCANITE_BAR, 50),
+            (ESSENCE_OF_FIRE, 25),
+            (BLOOD_OF_THE_MOUNTAIN, 10),
+            (LAVA_CORE, 10),
+            (FIERY_CORE, 10),
+        ],
+        SULFURON_HAMMER,
+        300,
+        (325, 350),
+    )
+    .casts(60000)
+    .at(BLACK_ANVIL)
+    .dropped(PLANS_SULFURON_HAMMER),
+];
+
+/// Leatherworking (P3): the leathers and armor kits, the leather ladder, and the patterns that
+/// drop: the Devilsaur pair, the Volcanic pieces and Molten Core's.
+static LEATHERWORKING: &[Recipe] = &[
+    base(
+        Line::Leatherworking,
+        2881,
+        "Light Leather",
+        &[(RUINED_LEATHER_SCRAPS, 3)],
+        LIGHT_LEATHER,
+        1,
+        (20, 40),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        2152,
+        "Light Armor Kit",
+        &[(LIGHT_LEATHER, 1)],
+        LIGHT_ARMOR_KIT,
+        1,
+        (30, 60),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        9059,
+        "Handstitched Leather Bracers",
+        &[(LIGHT_LEATHER, 2), (COARSE_THREAD, 3)],
+        HANDSTITCHED_LEATHER_BRACERS,
+        1,
+        (40, 70),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        2149,
+        "Handstitched Leather Boots",
+        &[(LIGHT_LEATHER, 2), (COARSE_THREAD, 1)],
+        HANDSTITCHED_LEATHER_BOOTS,
+        1,
+        (40, 70),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        2153,
+        "Handstitched Leather Pants",
+        &[(LIGHT_LEATHER, 4), (COARSE_THREAD, 1)],
+        HANDSTITCHED_LEATHER_PANTS,
+        15,
+        (45, 75),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        7126,
+        "Handstitched Leather Vest",
+        &[(LIGHT_LEATHER, 3), (COARSE_THREAD, 1)],
+        HANDSTITCHED_LEATHER_VEST,
+        1,
+        (40, 70),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        3753,
+        "Handstitched Leather Belt",
+        &[(LIGHT_LEATHER, 6), (COARSE_THREAD, 1)],
+        HANDSTITCHED_LEATHER_BELT,
+        25,
+        (55, 85),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        2160,
+        "Embossed Leather Vest",
+        &[(LIGHT_LEATHER, 8), (COARSE_THREAD, 4)],
+        EMBOSSED_LEATHER_VEST,
+        55,
+        (70, 100),
+    )
+    .casts(12500),
+    base(
+        Line::Leatherworking,
+        3756,
+        "Embossed Leather Gloves",
+        &[(LIGHT_LEATHER, 3), (COARSE_THREAD, 2)],
+        EMBOSSED_LEATHER_GLOVES,
+        55,
+        (85, 115),
+    )
+    .casts(8000),
+    base(
+        Line::Leatherworking,
+        20648,
+        "Medium Leather",
+        &[(LIGHT_LEATHER, 4)],
+        MEDIUM_LEATHER,
+        100,
+        (100, 110),
+    )
+    .casts(8000),
+    base(
+        Line::Leatherworking,
+        2165,
+        "Medium Armor Kit",
+        &[(MEDIUM_LEATHER, 4), (COARSE_THREAD, 1)],
+        MEDIUM_ARMOR_KIT,
+        100,
+        (115, 130),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        2167,
+        "Dark Leather Boots",
+        &[(MEDIUM_LEATHER, 4), (FINE_THREAD, 2), (GRAY_DYE, 1)],
+        DARK_LEATHER_BOOTS,
+        100,
+        (125, 150),
+    )
+    .casts(8000)
+    .bought(600),
+    base(
+        Line::Leatherworking,
+        2169,
+        "Dark Leather Tunic",
+        &[(MEDIUM_LEATHER, 6), (FINE_THREAD, 1), (GRAY_DYE, 1)],
+        DARK_LEATHER_TUNIC,
+        100,
+        (125, 150),
+    )
+    .casts(12500)
+    .bought(600),
+    base(
+        Line::Leatherworking,
+        7135,
+        "Dark Leather Pants",
+        &[(MEDIUM_LEATHER, 12), (GRAY_DYE, 1), (FINE_THREAD, 1)],
+        DARK_LEATHER_PANTS,
+        120,
+        (140, 165),
+    )
+    .casts(25000)
+    .bought(900),
+    base(
+        Line::Leatherworking,
+        20649,
+        "Heavy Leather",
+        &[(MEDIUM_LEATHER, 5)],
+        HEAVY_LEATHER,
+        150,
+        (150, 160),
+    )
+    .casts(8000),
+    base(
+        Line::Leatherworking,
+        3780,
+        "Heavy Armor Kit",
+        &[(HEAVY_LEATHER, 5), (FINE_THREAD, 1)],
+        HEAVY_ARMOR_KIT,
+        150,
+        (170, 190),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        6661,
+        "Barbaric Harness",
+        &[(HEAVY_LEATHER, 14), (FINE_THREAD, 2), (IRON_BUCKLE, 1)],
+        BARBARIC_HARNESS,
+        190,
+        (210, 230),
+    )
+    .casts(25000)
+    .bought(2000),
+    base(
+        Line::Leatherworking,
+        7149,
+        "Barbaric Leggings",
+        &[(HEAVY_LEATHER, 10), (FINE_THREAD, 2), (MOSS_AGATE, 1)],
+        BARBARIC_LEGGINGS,
+        170,
+        (190, 210),
+    )
+    .casts(45000)
+    .bought(2000),
+    base(
+        Line::Leatherworking,
+        20650,
+        "Thick Leather",
+        &[(HEAVY_LEATHER, 6)],
+        THICK_LEATHER,
+        200,
+        (200, 205),
+    )
+    .casts(8000),
+    base(
+        Line::Leatherworking,
+        10487,
+        "Thick Armor Kit",
+        &[(THICK_LEATHER, 5), (SILKEN_THREAD, 1)],
+        THICK_ARMOR_KIT,
+        200,
+        (220, 240),
+    )
+    .casts(5125),
+    base(
+        Line::Leatherworking,
+        10499,
+        "Nightscape Tunic",
+        &[(THICK_LEATHER, 7), (SILKEN_THREAD, 2)],
+        NIGHTSCAPE_TUNIC,
+        205,
+        (225, 245),
+    )
+    .casts(60000)
+    .bought(4000),
+    base(
+        Line::Leatherworking,
+        10507,
+        "Nightscape Headband",
+        &[(THICK_LEATHER, 5), (SILKEN_THREAD, 2)],
+        NIGHTSCAPE_HEADBAND,
+        205,
+        (225, 245),
+    )
+    .casts(60000)
+    .bought(4000),
+    base(
+        Line::Leatherworking,
+        10548,
+        "Nightscape Pants",
+        &[(THICK_LEATHER, 14), (SILKEN_THREAD, 4)],
+        NIGHTSCAPE_PANTS,
+        230,
+        (250, 270),
+    )
+    .casts(60000)
+    .bought(5000),
+    base(
+        Line::Leatherworking,
+        10558,
+        "Nightscape Boots",
+        &[(THICK_LEATHER, 16), (HEAVY_SILKEN_THREAD, 2)],
+        NIGHTSCAPE_BOOTS,
+        235,
+        (255, 275),
+    )
+    .casts(60000)
+    .bought(5000),
+    base(
+        Line::Leatherworking,
+        22331,
+        "Rugged Leather",
+        &[(THICK_LEATHER, 6)],
+        RUGGED_LEATHER,
+        250,
+        (250, 250),
+    )
+    .casts(8000),
+    base(
+        Line::Leatherworking,
+        19058,
+        "Rugged Armor Kit",
+        &[(RUGGED_LEATHER, 5)],
+        RUGGED_ARMOR_KIT,
+        250,
+        (250, 270),
+    )
+    .casts(12500),
+    base(
+        Line::Leatherworking,
+        19047,
+        "Cured Rugged Hide",
+        &[(RUGGED_HIDE, 1), (REFINED_DEEPROCK_SALT, 1)],
+        CURED_RUGGED_HIDE,
+        250,
+        (250, 260),
+    )
+    .casts(12500),
+    base(
+        Line::Leatherworking,
+        19084,
+        "Devilsaur Gauntlets",
+        &[
+            (RUGGED_LEATHER, 30),
+            (DEVILSAUR_LEATHER, 8),
+            (RUNE_THREAD, 1),
+        ],
+        DEVILSAUR_GAUNTLETS,
+        290,
+        (310, 330),
+    )
+    .casts(60000)
+    .dropped(PATTERN_DEVILSAUR_GAUNTLETS),
+    base(
+        Line::Leatherworking,
+        19097,
+        "Devilsaur Leggings",
+        &[
+            (RUGGED_LEATHER, 30),
+            (DEVILSAUR_LEATHER, 14),
+            (CURED_RUGGED_HIDE, 1),
+            (RUNE_THREAD, 1),
+        ],
+        DEVILSAUR_LEGGINGS,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .dropped(PATTERN_DEVILSAUR_LEGGINGS),
+    base(
+        Line::Leatherworking,
+        19076,
+        "Volcanic Breastplate",
+        &[
+            (RUGGED_LEATHER, 8),
+            (ESSENCE_OF_FIRE, 1),
+            (ESSENCE_OF_EARTH, 1),
+            (RUNE_THREAD, 1),
+        ],
+        VOLCANIC_BREASTPLATE,
+        285,
+        (305, 325),
+    )
+    .casts(60000)
+    .dropped(PATTERN_VOLCANIC_BREASTPLATE),
+    base(
+        Line::Leatherworking,
+        19059,
+        "Volcanic Leggings",
+        &[
+            (RUGGED_LEATHER, 6),
+            (ESSENCE_OF_FIRE, 1),
+            (CORE_OF_EARTH, 1),
+            (RUNE_THREAD, 1),
+        ],
+        VOLCANIC_LEGGINGS,
+        270,
+        (290, 310),
+    )
+    .casts(60000)
+    .dropped(PATTERN_VOLCANIC_LEGGINGS),
+    base(
+        Line::Leatherworking,
+        19101,
+        "Volcanic Shoulders",
+        &[
+            (RUGGED_LEATHER, 10),
+            (ESSENCE_OF_FIRE, 1),
+            (ESSENCE_OF_EARTH, 1),
+            (RUNE_THREAD, 2),
+        ],
+        VOLCANIC_SHOULDERS,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .dropped(PATTERN_VOLCANIC_SHOULDERS),
+    base(
+        Line::Leatherworking,
+        22727,
+        "Core Armor Kit",
+        &[(CORE_LEATHER, 3), (RUNE_THREAD, 2)],
+        CORE_ARMOR_KIT,
+        300,
+        (320, 340),
+    )
+    .casts(25000)
+    .dropped(PATTERN_CORE_ARMOR_KIT),
+    base(
+        Line::Leatherworking,
+        20853,
+        "Corehound Boots",
+        &[
+            (CORE_LEATHER, 20),
+            (FIERY_CORE, 6),
+            (LAVA_CORE, 2),
+            (RUNE_THREAD, 2),
+        ],
+        COREHOUND_BOOTS,
+        295,
+        (315, 335),
+    )
+    .casts(60000)
+    .dropped(PATTERN_COREHOUND_BOOTS),
+    base(
+        Line::Leatherworking,
+        20854,
+        "Molten Helm",
+        &[
+            (CORE_LEATHER, 15),
+            (FIERY_CORE, 3),
+            (LAVA_CORE, 6),
+            (RUNE_THREAD, 2),
+        ],
+        MOLTEN_HELM,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .dropped(PATTERN_MOLTEN_HELM),
+];
+
+/// Tailoring (P3): the bolts and bags, the cloth ladder, Mooncloth, and the patterns that drop:
+/// the Mooncloth and Bottomless bags, the epic robes and Molten Core's.
+static TAILORING: &[Recipe] = &[
+    base(
+        Line::Tailoring,
+        2963,
+        "Bolt of Linen Cloth",
+        &[(LINEN_CLOTH, 2)],
+        BOLT_OF_LINEN_CLOTH,
+        1,
+        (25, 50),
+    ),
+    base(
+        Line::Tailoring,
+        12044,
+        "Simple Linen Pants",
+        &[(BOLT_OF_LINEN_CLOTH, 1), (COARSE_THREAD, 1)],
+        SIMPLE_LINEN_PANTS,
+        1,
+        (35, 60),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        2385,
+        "Brown Linen Vest",
+        &[(BOLT_OF_LINEN_CLOTH, 1), (COARSE_THREAD, 1)],
+        BROWN_LINEN_VEST,
+        10,
+        (45, 70),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        8776,
+        "Linen Belt",
+        &[(BOLT_OF_LINEN_CLOTH, 1), (COARSE_THREAD, 1)],
+        LINEN_BELT,
+        25,
+        (50, 85),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        3840,
+        "Heavy Linen Gloves",
+        &[(BOLT_OF_LINEN_CLOTH, 2), (COARSE_THREAD, 1)],
+        HEAVY_LINEN_GLOVES,
+        35,
+        (60, 95),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        3755,
+        "Linen Bag",
+        &[(BOLT_OF_LINEN_CLOTH, 3), (COARSE_THREAD, 3)],
+        LINEN_BAG,
+        45,
+        (70, 105),
+    )
+    .casts(8000),
+    base(
+        Line::Tailoring,
+        2964,
+        "Bolt of Woolen Cloth",
+        &[(WOOL_CLOTH, 3)],
+        BOLT_OF_WOOLEN_CLOTH,
+        75,
+        (90, 105),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        3757,
+        "Woolen Bag",
+        &[(BOLT_OF_WOOLEN_CLOTH, 3), (FINE_THREAD, 1)],
+        WOOLEN_BAG,
+        80,
+        (105, 140),
+    )
+    .casts(12500)
+    .bought(300),
+    base(
+        Line::Tailoring,
+        2401,
+        "Woolen Boots",
+        &[
+            (BOLT_OF_WOOLEN_CLOTH, 4),
+            (FINE_THREAD, 2),
+            (LIGHT_LEATHER, 2),
+        ],
+        WOOLEN_BOOTS,
+        95,
+        (120, 155),
+    )
+    .casts(12500)
+    .bought(400),
+    base(
+        Line::Tailoring,
+        3843,
+        "Heavy Woolen Gloves",
+        &[(BOLT_OF_WOOLEN_CLOTH, 3), (FINE_THREAD, 1)],
+        HEAVY_WOOLEN_GLOVES,
+        85,
+        (110, 145),
+    )
+    .casts(12500)
+    .bought(400),
+    base(
+        Line::Tailoring,
+        3850,
+        "Heavy Woolen Pants",
+        &[(BOLT_OF_WOOLEN_CLOTH, 5), (FINE_THREAD, 4)],
+        HEAVY_WOOLEN_PANTS,
+        110,
+        (135, 170),
+    )
+    .casts(25000)
+    .bought(500),
+    base(
+        Line::Tailoring,
+        3848,
+        "Double-stitched Woolen Shoulders",
+        &[(BOLT_OF_WOOLEN_CLOTH, 3), (FINE_THREAD, 2)],
+        DOUBLE_STITCHED_WOOLEN_SHOULDERS,
+        110,
+        (135, 170),
+    )
+    .casts(12500)
+    .bought(500),
+    base(
+        Line::Tailoring,
+        3839,
+        "Bolt of Silk Cloth",
+        &[(SILK_CLOTH, 4)],
+        BOLT_OF_SILK_CLOTH,
+        125,
+        (135, 145),
+    )
+    .casts(5125),
+    base(
+        Line::Tailoring,
+        3813,
+        "Small Silk Pack",
+        &[
+            (BOLT_OF_SILK_CLOTH, 3),
+            (HEAVY_LEATHER, 2),
+            (FINE_THREAD, 3),
+        ],
+        SMALL_SILK_PACK,
+        150,
+        (170, 200),
+    )
+    .casts(25000)
+    .bought(1500),
+    base(
+        Line::Tailoring,
+        8762,
+        "Silk Headband",
+        &[(BOLT_OF_SILK_CLOTH, 3), (FINE_THREAD, 2)],
+        SILK_HEADBAND,
+        145,
+        (170, 180),
+    )
+    .casts(25000),
+    base(
+        Line::Tailoring,
+        8784,
+        "Green Silk Armor",
+        &[(BOLT_OF_SILK_CLOTH, 5), (GREEN_DYE, 2), (SILKEN_THREAD, 1)],
+        GREEN_SILK_ARMOR,
+        165,
+        (185, 215),
+    )
+    .casts(45000)
+    .bought(2000),
+    base(
+        Line::Tailoring,
+        8774,
+        "Green Silken Shoulders",
+        &[(BOLT_OF_SILK_CLOTH, 5), (SILKEN_THREAD, 2)],
+        GREEN_SILKEN_SHOULDERS,
+        180,
+        (200, 230),
+    )
+    .casts(45000)
+    .bought(2000),
+    base(
+        Line::Tailoring,
+        3865,
+        "Bolt of Mageweave",
+        &[(MAGEWEAVE_CLOTH, 5)],
+        BOLT_OF_MAGEWEAVE,
+        175,
+        (180, 185),
+    )
+    .casts(8000),
+    base(
+        Line::Tailoring,
+        12065,
+        "Mageweave Bag",
+        &[(BOLT_OF_MAGEWEAVE, 4), (SILKEN_THREAD, 2)],
+        MAGEWEAVE_BAG,
+        225,
+        (240, 270),
+    )
+    .casts(60000)
+    .bought(4000),
+    base(
+        Line::Tailoring,
+        12048,
+        "Black Mageweave Vest",
+        &[(BOLT_OF_MAGEWEAVE, 2), (SILKEN_THREAD, 3)],
+        BLACK_MAGEWEAVE_VEST,
+        205,
+        (220, 250),
+    )
+    .casts(60000),
+    base(
+        Line::Tailoring,
+        12049,
+        "Black Mageweave Leggings",
+        &[(BOLT_OF_MAGEWEAVE, 2), (SILKEN_THREAD, 3)],
+        BLACK_MAGEWEAVE_LEGGINGS,
+        205,
+        (220, 250),
+    )
+    .casts(60000),
+    base(
+        Line::Tailoring,
+        12053,
+        "Black Mageweave Gloves",
+        &[(BOLT_OF_MAGEWEAVE, 2), (HEAVY_SILKEN_THREAD, 2)],
+        BLACK_MAGEWEAVE_GLOVES,
+        215,
+        (230, 260),
+    )
+    .casts(60000)
+    .bought(3500),
+    base(
+        Line::Tailoring,
+        12073,
+        "Black Mageweave Boots",
+        &[
+            (BOLT_OF_MAGEWEAVE, 3),
+            (HEAVY_SILKEN_THREAD, 2),
+            (THICK_LEATHER, 2),
+        ],
+        BLACK_MAGEWEAVE_BOOTS,
+        230,
+        (245, 275),
+    )
+    .casts(60000)
+    .bought(3500),
+    base(
+        Line::Tailoring,
+        12069,
+        "Cindercloth Robe",
+        &[
+            (BOLT_OF_MAGEWEAVE, 5),
+            (HEART_OF_FIRE, 2),
+            (HEAVY_SILKEN_THREAD, 2),
+        ],
+        CINDERCLOTH_ROBE,
+        225,
+        (240, 270),
+    )
+    .casts(60000)
+    .bought(4000),
+    base(
+        Line::Tailoring,
+        18401,
+        "Bolt of Runecloth",
+        &[(RUNECLOTH, 5)],
+        BOLT_OF_RUNECLOTH,
+        250,
+        (255, 260),
+    )
+    .casts(12500),
+    base(
+        Line::Tailoring,
+        18405,
+        "Runecloth Bag",
+        &[
+            (BOLT_OF_RUNECLOTH, 5),
+            (RUGGED_LEATHER, 2),
+            (RUNE_THREAD, 1),
+        ],
+        RUNECLOTH_BAG,
+        260,
+        (275, 305),
+    )
+    .casts(60000)
+    .bought(8000),
+    base(
+        Line::Tailoring,
+        18402,
+        "Runecloth Belt",
+        &[(BOLT_OF_RUNECLOTH, 3), (RUNE_THREAD, 1)],
+        RUNECLOTH_BELT,
+        255,
+        (270, 300),
+    )
+    .casts(60000),
+    base(
+        Line::Tailoring,
+        18417,
+        "Runecloth Gloves",
+        &[
+            (BOLT_OF_RUNECLOTH, 4),
+            (RUGGED_LEATHER, 4),
+            (RUNE_THREAD, 1),
+        ],
+        RUNECLOTH_GLOVES,
+        275,
+        (290, 320),
+    )
+    .casts(60000)
+    .bought(8000),
+    base(
+        Line::Tailoring,
+        18408,
+        "Cindercloth Vest",
+        &[(BOLT_OF_RUNECLOTH, 5), (HEART_OF_FIRE, 3), (RUNE_THREAD, 1)],
+        CINDERCLOTH_VEST,
+        260,
+        (275, 305),
+    )
+    .casts(60000)
+    .bought(8000),
+    base(
+        Line::Tailoring,
+        18560,
+        "Mooncloth",
+        &[(FELCLOTH, 2)],
+        MOONCLOTH,
+        250,
+        (290, 320),
+    )
+    .casts(60000)
+    .at(MOONWELL),
+    base(
+        Line::Tailoring,
+        18445,
+        "Mooncloth Bag",
+        &[(BOLT_OF_RUNECLOTH, 4), (MOONCLOTH, 1), (RUNE_THREAD, 1)],
+        MOONCLOTH_BAG,
+        285,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_MOONCLOTH_BAG),
+    base(
+        Line::Tailoring,
+        18440,
+        "Mooncloth Leggings",
+        &[(BOLT_OF_RUNECLOTH, 6), (MOONCLOTH, 4), (RUNE_THREAD, 1)],
+        MOONCLOTH_LEGGINGS,
+        290,
+        (305, 335),
+    )
+    .casts(60000)
+    .dropped(PATTERN_MOONCLOTH_LEGGINGS),
+    base(
+        Line::Tailoring,
+        18447,
+        "Mooncloth Vest",
+        &[(BOLT_OF_RUNECLOTH, 6), (MOONCLOTH, 4), (RUNE_THREAD, 1)],
+        MOONCLOTH_VEST,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_MOONCLOTH_VEST),
+    base(
+        Line::Tailoring,
+        18455,
+        "Bottomless Bag",
+        &[
+            (BOLT_OF_RUNECLOTH, 8),
+            (MOONCLOTH, 12),
+            (LARGE_BRILLIANT_SHARD, 2),
+            (CORE_LEATHER, 2),
+            (RUNE_THREAD, 2),
+        ],
+        BOTTOMLESS_BAG,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_BOTTOMLESS_BAG),
+    base(
+        Line::Tailoring,
+        18457,
+        "Robe of the Archmage",
+        &[
+            (BOLT_OF_RUNECLOTH, 12),
+            (ESSENCE_OF_FIRE, 10),
+            (ESSENCE_OF_AIR, 10),
+            (ESSENCE_OF_EARTH, 10),
+            (ESSENCE_OF_WATER, 10),
+            (RUNE_THREAD, 2),
+        ],
+        ROBE_OF_THE_ARCHMAGE,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_ROBE_OF_THE_ARCHMAGE),
+    base(
+        Line::Tailoring,
+        18456,
+        "Truefaith Vestments",
+        &[
+            (BOLT_OF_RUNECLOTH, 12),
+            (MOONCLOTH, 10),
+            (RIGHTEOUS_ORB, 4),
+            (GOLDEN_PEARL, 4),
+            (GHOST_DYE, 10),
+            (RUNE_THREAD, 2),
+        ],
+        TRUEFAITH_VESTMENTS,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_TRUEFAITH_VESTMENTS),
+    base(
+        Line::Tailoring,
+        20848,
+        "Flarecore Mantle",
+        &[
+            (BOLT_OF_RUNECLOTH, 12),
+            (FIERY_CORE, 4),
+            (LAVA_CORE, 4),
+            (ENCHANTED_LEATHER, 6),
+            (RUNE_THREAD, 2),
+        ],
+        FLARECORE_MANTLE,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_FLARECORE_MANTLE),
+    base(
+        Line::Tailoring,
+        20849,
+        "Flarecore Gloves",
+        &[
+            (BOLT_OF_RUNECLOTH, 8),
+            (FIERY_CORE, 6),
+            (ESSENCE_OF_FIRE, 4),
+            (ENCHANTED_LEATHER, 2),
+            (RUNE_THREAD, 2),
+        ],
+        FLARECORE_GLOVES,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_FLARECORE_GLOVES),
+    base(
+        Line::Tailoring,
+        26087,
+        "Core Felcloth Bag",
+        &[
+            (FELCLOTH, 20),
+            (CORE_LEATHER, 16),
+            (BLOODVINE, 8),
+            (ESSENCE_OF_FIRE, 4),
+            (IRONWEB_SPIDER_SILK, 4),
+        ],
+        CORE_FELCLOTH_BAG,
+        300,
+        (315, 345),
+    )
+    .casts(60000)
+    .dropped(PATTERN_CORE_FELCLOTH_BAG),
+];
+
+/// Engineering (P3): the parts, the bombs and gadgets, and the schematics that drop; the
+/// specialisations' gadgets need theirs ([`Spec`]).
+static ENGINEERING: &[Recipe] = &[
+    base(
+        Line::Engineering,
+        3918,
+        "Rough Blasting Powder",
+        &[(ROUGH_STONE, 1)],
+        ROUGH_BLASTING_POWDER,
+        1,
+        (20, 40),
+    )
+    .casts(5125),
+    base(
+        Line::Engineering,
+        3922,
+        "Handful of Copper Bolts",
+        &[(COPPER_BAR, 1)],
+        HANDFUL_OF_COPPER_BOLTS,
+        30,
+        (45, 60),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3923,
+        "Rough Copper Bomb",
+        &[
+            (COPPER_BAR, 1),
+            (HANDFUL_OF_COPPER_BOLTS, 1),
+            (ROUGH_BLASTING_POWDER, 2),
+            (LINEN_CLOTH, 1),
+        ],
+        ROUGH_COPPER_BOMB,
+        30,
+        (60, 90),
+    )
+    .makes(2)
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3926,
+        "Copper Modulator",
+        &[
+            (HANDFUL_OF_COPPER_BOLTS, 2),
+            (COPPER_BAR, 1),
+            (LINEN_CLOTH, 2),
+        ],
+        COPPER_MODULATOR,
+        65,
+        (95, 125),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3929,
+        "Coarse Blasting Powder",
+        &[(COARSE_STONE, 1)],
+        COARSE_BLASTING_POWDER,
+        75,
+        (85, 95),
+    )
+    .casts(5125),
+    base(
+        Line::Engineering,
+        3932,
+        "Target Dummy",
+        &[
+            (COPPER_MODULATOR, 1),
+            (HANDFUL_OF_COPPER_BOLTS, 2),
+            (BRONZE_BAR, 1),
+            (WOOL_CLOTH, 1),
+        ],
+        TARGET_DUMMY,
+        85,
+        (115, 145),
+    )
+    .casts(8000)
+    .at(ANVIL)
+    .bought(500),
+    base(
+        Line::Engineering,
+        3942,
+        "Whirring Bronze Gizmo",
+        &[(BRONZE_BAR, 2), (WOOL_CLOTH, 1)],
+        WHIRRING_BRONZE_GIZMO,
+        100,
+        (125, 175),
+    )
+    .casts(5125)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3945,
+        "Heavy Blasting Powder",
+        &[(HEAVY_STONE, 1)],
+        HEAVY_BLASTING_POWDER,
+        125,
+        (125, 145),
+    )
+    .casts(5125),
+    base(
+        Line::Engineering,
+        3953,
+        "Bronze Framework",
+        &[(BRONZE_BAR, 2), (MEDIUM_LEATHER, 1), (WOOL_CLOTH, 1)],
+        BRONZE_FRAMEWORK,
+        125,
+        (145, 195),
+    )
+    .casts(5125),
+    base(
+        Line::Engineering,
+        3955,
+        "Explosive Sheep",
+        &[
+            (BRONZE_FRAMEWORK, 1),
+            (WHIRRING_BRONZE_GIZMO, 1),
+            (HEAVY_BLASTING_POWDER, 2),
+            (WOOL_CLOTH, 2),
+        ],
+        EXPLOSIVE_SHEEP,
+        150,
+        (175, 200),
+    )
+    .casts(8000)
+    .at(ANVIL)
+    .bought(2000),
+    base(
+        Line::Engineering,
+        3958,
+        "Iron Strut",
+        &[(IRON_BAR, 2)],
+        IRON_STRUT,
+        160,
+        (160, 180),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3962,
+        "Iron Grenade",
+        &[(IRON_BAR, 1), (HEAVY_BLASTING_POWDER, 1), (SILK_CLOTH, 1)],
+        IRON_GRENADE,
+        175,
+        (175, 215),
+    )
+    .makes(4)
+    .casts(8000)
+    .at(ANVIL)
+    .bought(2000),
+    base(
+        Line::Engineering,
+        3973,
+        "Silver Contact",
+        &[(SILVER_BAR, 1)],
+        SILVER_CONTACT,
+        90,
+        (110, 140),
+    )
+    .makes(5)
+    .casts(5125),
+    base(
+        Line::Engineering,
+        3967,
+        "Big Iron Bomb",
+        &[
+            (IRON_BAR, 3),
+            (HEAVY_BLASTING_POWDER, 3),
+            (SILVER_CONTACT, 1),
+        ],
+        BIG_IRON_BOMB,
+        190,
+        (190, 230),
+    )
+    .makes(2)
+    .casts(12500)
+    .at(ANVIL)
+    .bought(3000),
+    base(
+        Line::Engineering,
+        9273,
+        "Goblin Jumper Cables",
+        &[
+            (IRON_BAR, 6),
+            (WHIRRING_BRONZE_GIZMO, 2),
+            (FLASK_OF_OIL, 2),
+            (SILK_CLOTH, 2),
+            (SHADOWGEM, 2),
+            (FUSED_WIRING, 1),
+        ],
+        GOBLIN_JUMPER_CABLES,
+        165,
+        (160, 200),
+    )
+    .casts(12500)
+    .bought(3000),
+    base(
+        Line::Engineering,
+        12584,
+        "Gold Power Core",
+        &[(GOLD_BAR, 1)],
+        GOLD_POWER_CORE,
+        150,
+        (150, 190),
+    )
+    .makes(3)
+    .casts(25000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        3961,
+        "Gyrochronatom",
+        &[(IRON_BAR, 1), (GOLD_POWER_CORE, 1)],
+        GYROCHRONATOM,
+        170,
+        (170, 210),
+    )
+    .casts(8000)
+    .at(ANVIL)
+    .bought(2000),
+    base(
+        Line::Engineering,
+        3969,
+        "Mechanical Dragonling",
+        &[
+            (BRONZE_FRAMEWORK, 1),
+            (IRON_STRUT, 4),
+            (GYROCHRONATOM, 4),
+            (CITRINE, 2),
+            (FUSED_WIRING, 1),
+        ],
+        MECHANICAL_DRAGONLING,
+        200,
+        (220, 240),
+    )
+    .casts(45000)
+    .at(ANVIL)
+    .bought(6000),
+    base(
+        Line::Engineering,
+        12585,
+        "Solid Blasting Powder",
+        &[(SOLID_STONE, 2)],
+        SOLID_BLASTING_POWDER,
+        175,
+        (175, 195),
+    )
+    .casts(8000),
+    base(
+        Line::Engineering,
+        12589,
+        "Mithril Tube",
+        &[(MITHRIL_BAR, 3)],
+        MITHRIL_TUBE,
+        195,
+        (195, 235),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        12591,
+        "Unstable Trigger",
+        &[
+            (MITHRIL_BAR, 1),
+            (MAGEWEAVE_CLOTH, 1),
+            (SOLID_BLASTING_POWDER, 1),
+        ],
+        UNSTABLE_TRIGGER,
+        200,
+        (200, 240),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        12599,
+        "Mithril Casing",
+        &[(MITHRIL_BAR, 3)],
+        MITHRIL_CASING,
+        215,
+        (215, 255),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        12760,
+        "Goblin Sapper Charge",
+        &[
+            (MAGEWEAVE_CLOTH, 1),
+            (SOLID_BLASTING_POWDER, 3),
+            (UNSTABLE_TRIGGER, 1),
+        ],
+        GOBLIN_SAPPER_CHARGE,
+        205,
+        (205, 245),
+    )
+    .casts(25000)
+    .bought(6000)
+    .needs(Spec::Goblin),
+    base(
+        Line::Engineering,
+        8895,
+        "Goblin Rocket Boots",
+        &[
+            (BLACK_MAGEWEAVE_BOOTS, 1),
+            (MITHRIL_TUBE, 2),
+            (HEAVY_LEATHER, 4),
+            (GOBLIN_ROCKET_FUEL, 2),
+            (UNSTABLE_TRIGGER, 1),
+        ],
+        GOBLIN_ROCKET_BOOTS,
+        225,
+        (245, 265),
+    )
+    .casts(12500)
+    .at(ANVIL)
+    .bought(8000)
+    .needs(Spec::Goblin),
+    base(
+        Line::Engineering,
+        12716,
+        "Goblin Mortar",
+        &[
+            (MITHRIL_TUBE, 2),
+            (MITHRIL_BAR, 4),
+            (SOLID_BLASTING_POWDER, 5),
+            (GOLD_POWER_CORE, 1),
+            (ELEMENTAL_FIRE, 1),
+        ],
+        GOBLIN_MORTAR,
+        205,
+        (225, 245),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(8000)
+    .needs(Spec::Goblin),
+    base(
+        Line::Engineering,
+        12908,
+        "Goblin Dragon Gun",
+        &[
+            (MITHRIL_TUBE, 2),
+            (GOBLIN_ROCKET_FUEL, 4),
+            (MITHRIL_BAR, 6),
+            (TRUESILVER_BAR, 6),
+            (UNSTABLE_TRIGGER, 1),
+        ],
+        GOBLIN_DRAGON_GUN,
+        240,
+        (260, 280),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(10000)
+    .needs(Spec::Goblin),
+    base(
+        Line::Engineering,
+        12906,
+        "Gnomish Battle Chicken",
+        &[
+            (MITHRIL_CASING, 1),
+            (TRUESILVER_BAR, 6),
+            (MITHRIL_BAR, 6),
+            (INLAID_MITHRIL_CYLINDER, 2),
+            (GOLD_POWER_CORE, 1),
+            (JADE, 2),
+        ],
+        GNOMISH_BATTLE_CHICKEN,
+        230,
+        (250, 270),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(8000)
+    .needs(Spec::Gnomish),
+    base(
+        Line::Engineering,
+        12902,
+        "Gnomish Net-o-Matic Projector",
+        &[
+            (MITHRIL_TUBE, 1),
+            (SHADOW_SILK, 2),
+            (THICK_SPIDERS_SILK, 4),
+            (SOLID_BLASTING_POWDER, 2),
+            (MITHRIL_BAR, 4),
+        ],
+        GNOMISH_NET_O_MATIC_PROJECTOR,
+        210,
+        (230, 250),
+    )
+    .casts(25000)
+    .at(ANVIL)
+    .bought(8000)
+    .needs(Spec::Gnomish),
+    base(
+        Line::Engineering,
+        12759,
+        "Gnomish Death Ray",
+        &[
+            (MITHRIL_TUBE, 2),
+            (UNSTABLE_TRIGGER, 1),
+            (ESSENCE_OF_UNDEATH, 1),
+            (ICHOR_OF_UNDEATH, 4),
+            (INLAID_MITHRIL_CYLINDER, 1),
+        ],
+        GNOMISH_DEATH_RAY,
+        240,
+        (260, 280),
+    )
+    .casts(12500)
+    .at(ANVIL)
+    .bought(10000)
+    .needs(Spec::Gnomish),
+    base(
+        Line::Engineering,
+        12624,
+        "Mithril Mechanical Dragonling",
+        &[
+            (MITHRIL_BAR, 14),
+            (HEART_OF_FIRE, 4),
+            (TRUESILVER_BAR, 4),
+            (INLAID_MITHRIL_CYLINDER, 2),
+            (GOBLIN_ROCKET_FUEL, 2),
+            (STAR_RUBY, 2),
+        ],
+        MITHRIL_MECHANICAL_DRAGONLING,
+        250,
+        (270, 290),
+    )
+    .casts(45000)
+    .at(ANVIL)
+    .dropped(SCHEMATIC_MITHRIL_MECHANICAL_DRAGONLING),
+    base(
+        Line::Engineering,
+        19788,
+        "Dense Blasting Powder",
+        &[(DENSE_STONE, 2)],
+        DENSE_BLASTING_POWDER,
+        250,
+        (250, 260),
+    )
+    .casts(8000),
+    base(
+        Line::Engineering,
+        19791,
+        "Thorium Widget",
+        &[(THORIUM_BAR, 3), (RUNECLOTH, 1)],
+        THORIUM_WIDGET,
+        260,
+        (280, 300),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        23070,
+        "Dense Dynamite",
+        &[(DENSE_BLASTING_POWDER, 2), (RUNECLOTH, 3)],
+        DENSE_DYNAMITE,
+        250,
+        (250, 270),
+    )
+    .makes(2)
+    .casts(8000),
+    base(
+        Line::Engineering,
+        19795,
+        "Thorium Tube",
+        &[(THORIUM_BAR, 6)],
+        THORIUM_TUBE,
+        275,
+        (295, 315),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        19790,
+        "Thorium Grenade",
+        &[
+            (THORIUM_WIDGET, 1),
+            (THORIUM_BAR, 3),
+            (DENSE_BLASTING_POWDER, 3),
+            (RUNECLOTH, 3),
+        ],
+        THORIUM_GRENADE,
+        260,
+        (280, 300),
+    )
+    .makes(3)
+    .casts(8000)
+    .at(ANVIL)
+    .dropped(SCHEMATIC_THORIUM_GRENADE),
+    base(
+        Line::Engineering,
+        19814,
+        "Masterwork Target Dummy",
+        &[
+            (MITHRIL_CASING, 1),
+            (THORIUM_TUBE, 1),
+            (THORIUM_WIDGET, 2),
+            (TRUESILVER_BAR, 1),
+            (RUGGED_LEATHER, 2),
+            (RUNECLOTH, 4),
+        ],
+        MASTERWORK_TARGET_DUMMY,
+        275,
+        (295, 315),
+    )
+    .casts(12500)
+    .at(ANVIL)
+    .dropped(SCHEMATIC_MASTERWORK_TARGET_DUMMY),
+    base(
+        Line::Engineering,
+        19815,
+        "Delicate Arcanite Converter",
+        &[(ARCANITE_BAR, 1), (IRONWEB_SPIDER_SILK, 1)],
+        DELICATE_ARCANITE_CONVERTER,
+        285,
+        (305, 325),
+    )
+    .casts(8000)
+    .at(ANVIL),
+    base(
+        Line::Engineering,
+        19830,
+        "Arcanite Dragonling",
+        &[
+            (MITHRIL_MECHANICAL_DRAGONLING, 1),
+            (DELICATE_ARCANITE_CONVERTER, 8),
+            (ENCHANTED_THORIUM_BAR, 10),
+            (THORIUM_WIDGET, 6),
+            (GOLD_POWER_CORE, 4),
+            (ENCHANTED_LEATHER, 6),
+        ],
+        ARCANITE_DRAGONLING,
+        300,
+        (320, 340),
+    )
+    .casts(60000)
+    .at(ANVIL)
+    .dropped(SCHEMATIC_ARCANITE_DRAGONLING),
 ];
 
 /// `line`'s book, in the order its trainer teaches it; empty for a gathering line without one.
@@ -1607,6 +3708,10 @@ pub(crate) fn book(line: Line) -> &'static [Recipe] {
         Line::Cooking => COOKING,
         Line::FirstAid => FIRST_AID,
         Line::Enchanting => ENCHANTING,
+        Line::Blacksmithing => BLACKSMITHING,
+        Line::Leatherworking => LEATHERWORKING,
+        Line::Tailoring => TAILORING,
+        Line::Engineering => ENGINEERING,
         Line::Herbalism | Line::Skinning | Line::Fishing => &[],
     }
 }
@@ -1641,17 +3746,49 @@ pub(crate) fn enchant_line(e: &Enchant) -> String {
 }
 
 /// Whether the player knows `r`: a skill recipe once the skill reaches it, a bought or dropped one
-/// once learned.
+/// once learned; a specialisation's only with that specialisation.
 pub(crate) fn known(r: &Recipe, skills: &Skills) -> bool {
-    match r.learn {
+    let learned = match r.learn {
         Learn::Skill => skills.rank(r.line).rank >= r.req,
         Learn::Trainer(_) | Learn::Drop(_) => skills.learned(r.spell),
-    }
+    };
+    learned && r.spec.is_none_or(|s| skills.learned(s.spell()))
 }
 
-/// Whether the player may learn `r` now: unknown, and the skill there.
+/// Whether the player may learn `r` now: not learned yet, the skill there, and its
+/// specialisation held.
 pub(crate) fn learnable(r: &Recipe, skills: &Skills) -> bool {
-    !known(r, skills) && skills.rank(r.line).rank >= r.req
+    !known(r, skills)
+        && !skills.learned(r.spell)
+        && skills.rank(r.line).rank >= r.req
+        && r.spec.is_none_or(|s| skills.learned(s.spell()))
+}
+
+/// The Engineering specialisation the player holds, if any.
+pub(crate) fn spec_of(skills: &Skills) -> Option<Spec> {
+    Spec::ALL.into_iter().find(|s| skills.learned(s.spell()))
+}
+
+/// Whether the player may take a specialisation now: Engineering at [`SPEC_SKILL`], and neither
+/// held.
+pub(crate) fn spec_open(skills: &Skills) -> bool {
+    spec_of(skills).is_none() && skills.rank(Line::Engineering).rank >= SPEC_SKILL
+}
+
+/// Whether a saved learned spell is one this build knows: a recipe or a specialisation.
+pub(crate) fn known_spell(spell: u32) -> bool {
+    recipe(spell).is_some() || Spec::of_spell(spell).is_some()
+}
+
+/// The tradeskill window's header for a product: its item class.
+fn group_name(class: u32) -> &'static str {
+    match class {
+        0 => "Consumable",
+        1 => "Container",
+        2 => "Weapon",
+        4 => "Armor",
+        _ => "Trade Goods",
+    }
 }
 
 /// One cast: the reagents out of the bags and the product in, or nothing at all.
@@ -1687,15 +3824,8 @@ pub(crate) fn trade_skill_state(
         .map(|rec| {
             let product = items::template(rec.product);
             TradeSkillRecipe {
-                // The product's class is the header: Consumable or Trade Goods.
-                group: product.map(|p| {
-                    let name = if p.class == 0 {
-                        "Consumable"
-                    } else {
-                        "Trade Goods"
-                    };
-                    (p.class, 0, name.to_string())
-                }),
+                // The product's class is the header: Consumable, Armor, Trade Goods…
+                group: product.map(|p| (p.class, 0, group_name(p.class).to_string())),
                 spell_id: rec.spell,
                 name: rec.name.to_string(),
                 difficulty: crate::ui_tradeskill::difficulty(
@@ -1744,15 +3874,31 @@ pub(crate) fn trade_skill_state(
 }
 
 /// The stock craft window's snapshot of Enchanting: every enchant the player knows, its colour,
-/// its reagents, and what it does to the piece it goes on.
+/// its reagents, and what it does to the piece it goes on; and the items Enchanting makes
+/// (Enchanted Thorium and Leather), as the 1.12 window lists them beside the enchants.
 pub(crate) fn craft_state(bags: &Bags, skills: &Skills) -> CraftState {
     let r = skills.rank(Line::Enchanting);
     let recipes = ENCHANTING
         .iter()
         .filter(|rec| known(rec, skills))
-        .filter_map(|rec| {
-            let e = rec.enchant?;
-            Some(CraftRecipe {
+        .map(|rec| {
+            let product = items::template(rec.product);
+            let (icon, description) = match rec.enchant {
+                Some(e) => (
+                    ENCHANT_ICON.to_string(),
+                    format!(
+                        "Permanently enchant the {} piece you wear: {}. It takes hold from your \
+                         next run.",
+                        e.slot.label().to_lowercase(),
+                        enchant_line(e)
+                    ),
+                ),
+                None => (
+                    product.map_or_else(|| ENCHANT_ICON.to_string(), items::icon_path),
+                    format!("Creates {}.", product.map_or(rec.name, |p| p.name)),
+                ),
+            };
+            CraftRecipe {
                 spell_id: rec.spell,
                 name: rec.name.to_string(),
                 sub_name: String::new(),
@@ -1762,13 +3908,8 @@ pub(crate) fn craft_state(bags: &Bags, skills: &Skills) -> CraftState {
                     u32::from(rec.trivial.1),
                 ),
                 num_available: available(bags, rec),
-                icon: Some(ENCHANT_ICON.to_string()),
-                description: Some(format!(
-                    "Permanently enchant the {} piece you wear: {}. It takes hold from your next \
-                     run.",
-                    e.slot.label().to_lowercase(),
-                    enchant_line(e)
-                )),
+                icon: Some(icon),
+                description: Some(description),
                 needs_item_target: false,
                 reagents: rec
                     .reagents
@@ -1787,7 +3928,7 @@ pub(crate) fn craft_state(bags: &Bags, skills: &Skills) -> CraftState {
                 tools: Vec::new(),
                 tooltip: CraftTooltip::Spell(rec.spell),
                 spell_level: 0,
-            })
+            }
         })
         .collect();
     CraftState {
@@ -1838,12 +3979,20 @@ mod tests {
                 assert_eq!(def.class, 9, "{}", r.name);
                 assert_eq!(taught_by(item), Some(r));
             }
+            if r.spec.is_some() {
+                assert_eq!(r.line, Line::Engineering, "{}", r.name);
+                assert!(r.req >= SPEC_SKILL, "{}", r.name);
+            }
         }
         for line in [
             Line::Alchemy,
             Line::Cooking,
             Line::FirstAid,
             Line::Enchanting,
+            Line::Blacksmithing,
+            Line::Leatherworking,
+            Line::Tailoring,
+            Line::Engineering,
         ] {
             let n = book(line).len();
             assert!((10..=45).contains(&n), "{}: {n} recipes", line.name());
@@ -1998,11 +4147,18 @@ mod tests {
         for n in nodes::NODES {
             used.insert(n.item);
             used.extend(n.extra.map(|(i, _)| i));
+            used.extend(n.rares.iter().map(|&(i, _)| i));
         }
         for level in 0..=63 {
             used.insert(nodes::skin(level).0);
             used.insert(nodes::meat(level));
             used.insert(nodes::cloth(level));
+            for name in ["Devilsaur", "Core Hound", "Widow", "Raptor"] {
+                used.extend(nodes::beast_extra(name, level).map(|(i, _)| i));
+            }
+        }
+        for boss in nodes::MC_DROPS {
+            used.extend(boss.1.iter().map(|&(i, _)| i));
         }
         for band in [
             nodes::Band::B1,
@@ -2060,9 +4216,12 @@ mod tests {
                         && enchants.name(e.id) == Some(e.name)
                 }
                 None => {
+                    // `BasePoints` plus the die's roll, at least one: vmangos's `DoCreateItem`
+                    // makes one where the transmutes' sideless die adds nothing.
+                    let count = (s.effect_base_points[0] + s.effect_die_sides[0]).max(1);
                     s.effects[0] == CREATE_ITEM
                         && s.effect_item_type[0] == r.product
-                        && s.effect_base_points[0] + s.effect_die_sides[0] == r.made as i32
+                        && count == r.made as i32
                 }
             };
             let ok = s.name == r.name
@@ -2089,7 +4248,15 @@ mod tests {
                 ));
             }
         }
-        for (id, name) in [FORGE, COOKING_FIRE, ALCHEMY_LAB] {
+        for (id, name) in [
+            FORGE,
+            COOKING_FIRE,
+            ALCHEMY_LAB,
+            ANVIL,
+            BLACK_ANVIL,
+            BLACK_FORGE,
+            MOONWELL,
+        ] {
             if focus.name(id) != Some(name) {
                 bad.push(format!("focus {id} is {:?}, not {name}", focus.name(id)));
             }
@@ -2097,6 +4264,12 @@ mod tests {
         for (spell, name, line) in [
             (SMELTING_SPELL, "Smelting", Line::Mining),
             (DISENCHANT_SPELL, "Disenchant", Line::Enchanting),
+            (
+                Spec::Gnomish.spell(),
+                Spec::Gnomish.name(),
+                Line::Engineering,
+            ),
+            (Spec::Goblin.spell(), Spec::Goblin.name(), Line::Engineering),
         ] {
             let found = spells.get(spell).map(|s| s.name.as_str());
             if found != Some(name) || skills.spell_to_line(spell) != Some(line.skill_line()) {
@@ -2110,6 +4283,101 @@ mod tests {
         {
             bad.push(format!("the enchants' icon is not {ENCHANT_ICON}"));
         }
+        for spec in Spec::ALL {
+            let icon = spells.get(spec.spell()).and_then(|s| s.icon.as_deref());
+            if !icon.is_some_and(|i| i.eq_ignore_ascii_case(spec.icon())) {
+                bad.push(format!("{}: icon {icon:?}", spec.name()));
+            }
+        }
         assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// `SPELL_EFFECT_LEARN_SPELL`, a recipe item's use.
+    const LEARN_SPELL: u32 = 36;
+
+    /// The recipe items are real: each one's name is a `Spell.dbc` spell (the item's use: "Plans:
+    /// Lionheart Helm") whose `SPELL_EFFECT_LEARN_SPELL` teaches the recipe it is read for. Its
+    /// entry is from memory. Every mismatch is listed.
+    #[test]
+    fn recipe_items_teach_their_recipes_in_the_client() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open the MPQ chain");
+        let spells = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
+        let mut teaches: std::collections::HashMap<&str, Vec<u32>> =
+            std::collections::HashMap::new();
+        for id in 1..40_000 {
+            if let Some(s) = spells.get(id).filter(|s| s.effects[0] == LEARN_SPELL) {
+                teaches
+                    .entry(s.name.as_str())
+                    .or_default()
+                    .push(s.effect_trigger_spell[0]);
+            }
+        }
+        let mut bad = Vec::new();
+        let mut checked = 0;
+        for r in all() {
+            let Learn::Drop(item) = r.learn else {
+                continue;
+            };
+            let Some(def) = items::template(item) else {
+                bad.push(format!("{}: no recipe item {item}", r.name));
+                continue;
+            };
+            checked += 1;
+            if !teaches
+                .get(def.name)
+                .is_some_and(|learnt| learnt.contains(&r.spell))
+            {
+                bad.push(format!(
+                    "{}: no spell named it teaches {} ({:?})",
+                    def.name,
+                    r.spell,
+                    teaches.get(def.name)
+                ));
+            }
+        }
+        assert!(checked >= 40, "{checked} recipe items");
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// The specialisations: neither until Engineering 200, then either, never both; a
+    /// specialisation's recipes stay unknown without it.
+    #[test]
+    fn survivors_recipes_engineering_specialisations() {
+        use std::collections::BTreeMap;
+        let novice = Skills::from_save(&BTreeMap::from([(
+            "engineering".to_string(),
+            super::super::skills::Rank {
+                rank: 150,
+                max: 225,
+            },
+        )]));
+        assert!(!spec_open(&novice), "not before 200");
+        let mut tinker = Skills::from_save(&BTreeMap::from([(
+            "engineering".to_string(),
+            super::super::skills::Rank {
+                rank: 250,
+                max: 300,
+            },
+        )]));
+        assert!(spec_open(&tinker));
+        let chicken = recipe(12906).expect("Gnomish Battle Chicken");
+        assert_eq!(chicken.spec, Some(Spec::Gnomish));
+        assert!(!learnable(chicken, &tinker), "Gnomish only");
+        tinker.learn(Spec::Gnomish.spell());
+        assert_eq!(spec_of(&tinker), Some(Spec::Gnomish));
+        assert!(!spec_open(&tinker), "one at a time");
+        assert!(learnable(chicken, &tinker));
+        tinker.learn(chicken.spell);
+        assert!(known(chicken, &tinker));
+        let sapper = recipe(12760).expect("Goblin Sapper Charge");
+        assert_eq!(sapper.spec, Some(Spec::Goblin));
+        assert!(!learnable(sapper, &tinker), "the rival's");
+        assert!(known_spell(Spec::Goblin.spell()) && known_spell(12760));
+        assert!(!known_spell(1));
+        // The window lists the chicken, and not the sapper.
+        let state = trade_skill_state(&Bags::default(), &tinker, Line::Engineering, 0);
+        assert!(state.recipes.iter().any(|r| r.spell_id == 12906));
+        assert!(!state.recipes.iter().any(|r| r.spell_id == 12760));
     }
 }

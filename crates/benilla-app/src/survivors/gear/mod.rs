@@ -20,8 +20,12 @@
 //!
 //! `WOW_SURVIVORS_GEAR=all|<n>` collects every piece of each class, or its first `n` in catalog
 //! order (Common first), and wears the best of them, in memory only: nothing of it is saved.
+//!
+//! The professions add crafted pieces apart from the catalog too ([`crafted`]): bag items until
+//! equipped, then kept in a class's collection like the rest.
 
 mod catalog;
+pub(super) mod crafted;
 mod drops;
 mod looks;
 pub(super) mod looks_create;
@@ -40,6 +44,7 @@ use super::bonus::{Bonus, Bonuses};
 pub(super) use super::cards::Rarity;
 use super::meta::MetaParts;
 use super::{enemies, hud, profile, treasure, Phase, Selection};
+pub(super) use crafted::{by_item as crafted_by_item, class_mask as crafted_class_mask};
 pub(super) use looks::results_title;
 pub(super) use looks::Features;
 pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, HeroNames, LooksDice};
@@ -263,17 +268,23 @@ pub(super) fn items_for(class: usize) -> &'static [Item] {
     catalog::CLASS_ITEMS.get(class).copied().unwrap_or(&[])
 }
 
-/// The piece with id `id`, from any class's catalog or the raid's ([`raid`]).
+/// The piece with id `id`, from any class's catalog, the raid's ([`raid`]) or the crafted block
+/// ([`crafted`]).
 pub(super) fn item(id: u16) -> Option<&'static Item> {
     catalog::CLASS_ITEMS
         .iter()
         .flat_map(|items| items.iter())
         .find(|i| i.id == id)
         .or_else(|| raid::raid_piece(id).map(|p| &p.item))
+        .or_else(|| crafted::crafted_piece(id).map(|p| &p.item))
 }
 
-/// Whether class `class` may wear `piece`: its own catalog's, or a raid piece listing it.
+/// Whether class `class` may wear `piece`: its own catalog's, or a raid or crafted piece listing
+/// it.
 pub(super) fn usable_by(piece: &Item, class: usize) -> bool {
+    if let Some(p) = crafted::crafted_piece(piece.id) {
+        return p.classes.contains(&class);
+    }
     match raid::raid_piece(piece.id) {
         Some(p) => p.kind == raid::RaidKind::Gear && p.classes.contains(&class),
         None => piece.class == class,

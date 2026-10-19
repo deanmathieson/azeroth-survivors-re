@@ -178,7 +178,7 @@ pub(super) fn satchel_input(
             Click::Use => {
                 let (bags, skills) = pack.bags_and_skills();
                 let used = use_slot(bags, skills, &satchel, i, ctx);
-                taker.after(used, ctx, stage.role());
+                taker.after(bags, used, ctx, stage.role(), stage.class());
             }
         }
     }
@@ -277,11 +277,9 @@ pub(crate) fn slot_text(bags: &Bags, satchel: &Satchel, i: usize, now: f64) -> (
         return (String::new(), String::new());
     }
     let count = bags.count(item).to_string();
-    let left = effects::consumable(item)
-        .and_then(|c| c.kind.category())
-        .and_then(|cat| {
-            let start = bags.cooldown(cat)?;
-            let left = start + f64::from(cat.secs()) - now;
+    let left = effects::cooldown_of(bags, item)
+        .and_then(|(start, secs)| {
+            let left = start + f64::from(secs) - now;
             (left > 0.0).then(|| format!("{}", left.ceil() as u32))
         })
         .unwrap_or_default();

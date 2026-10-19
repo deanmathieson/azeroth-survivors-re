@@ -5,7 +5,8 @@
 //! Under the FrameXML opt-in ([`crate::run_mode::SurvivorsUi`]) the goblin's goods are the stock
 //! `MerchantFrame`'s (`professions::stations`), so this window becomes his Services beside it, and
 //! the ready check gains the Train button that opens the stock trainer and the Smelt, Alchemy,
-//! Cook, First Aid and Enchant buttons that open the crafting books.
+//! Cook, First Aid and Enchant buttons that open the crafting books, and (P3) the Smith, Leather,
+//! Tailor and Tinker buttons for Blacksmithing, Leatherworking, Tailoring and Engineering.
 
 use bevy::prelude::*;
 
@@ -364,31 +365,40 @@ fn build(
             );
             if stock {
                 use crate::survivors::professions::skills::Line;
-                for buttons in [
-                    [
+                let rows: [&[(CampButton, &str)]; 3] = [
+                    &[
                         (CampButton::Train, "Train"),
                         (CampButton::Book(Line::Mining), "Smelt"),
                         (CampButton::Book(Line::Alchemy), "Alchemy"),
                     ],
-                    [
+                    &[
                         (CampButton::Book(Line::Cooking), "Cook"),
                         (CampButton::Book(Line::FirstAid), "First Aid"),
                         (CampButton::Book(Line::Enchanting), "Enchant"),
                     ],
-                ] {
+                    &[
+                        (CampButton::Book(Line::Blacksmithing), "Smith"),
+                        (CampButton::Book(Line::Leatherworking), "Leather"),
+                        (CampButton::Book(Line::Tailoring), "Tailor"),
+                        (CampButton::Book(Line::Engineering), "Tinker"),
+                    ],
+                ];
+                for buttons in rows {
                     root.spawn(Node {
                         column_gap: px(8.0),
                         ..default()
                     })
                     .with_children(|row| {
-                        for (button, text) in buttons {
+                        // The row of four, the P3 crafts, a little narrower.
+                        let width = if buttons.len() > 3 { 70.0 } else { 92.0 };
+                        for &(button, text) in buttons {
                             glue_button(
                                 row,
                                 &glue,
                                 f,
                                 button,
                                 text,
-                                92.0,
+                                width,
                                 26.0,
                                 GlueBtnKind::Dialog,
                                 1.0,

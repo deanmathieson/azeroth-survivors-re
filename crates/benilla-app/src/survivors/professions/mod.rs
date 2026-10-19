@@ -17,6 +17,12 @@
 //!   bandages used from the bags or the satchel bar on 4-6 ([`effects`], [`satchel`]); meat and
 //!   cloth off kills, rare recipes and reagents off bosses ([`gather`]); disenchanting
 //!   ([`disenchant`]); and enchants on the worn gear (`gear::GearSave::enchants`).
+//! - **P3:** Blacksmithing, Leatherworking, Tailoring and Engineering ([`recipes`]), their books
+//!   at camp; crafted gear equipped from the bags into the class's collection
+//!   (`gear::crafted`); tailored bags on the bag bar ([`inventory::Bags::equip_bag`]); stones and
+//!   armor kits ([`effects`]); the gadgets, their pets and decoys and malfunctions, fired where
+//!   the run is simulated ([`gadgets`]); gems, gold and dark iron veins, and Molten Core's own
+//!   plans and patterns off its bosses ([`nodes`]).
 //!
 //! - **Opt-in:** this plugin inserts [`crate::run_mode::SurvivorsUi`] beside `CaptureMode`, so the
 //!   world entry loads the curated interface; the stock net drains stand down under it.
@@ -31,6 +37,7 @@ pub(crate) mod disenchant;
 pub(crate) mod econ;
 pub(crate) mod effects;
 pub(crate) mod frames;
+pub(crate) mod gadgets;
 pub(crate) mod gather;
 pub(crate) mod inventory;
 pub(crate) mod items;
@@ -93,6 +100,7 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<gather::Gathering>()
         .init_resource::<gather::UiLines>()
         .init_resource::<effects::UseOutbox>()
+        .init_resource::<gadgets::GadgetQueue>()
         .init_resource::<econ::Purse>()
         .init_resource::<econ::GoldTally>()
         .init_resource::<econ::Shop>()
@@ -169,6 +177,16 @@ pub(super) fn plugin(app: &mut App) {
                 (satchel::build_satchel, satchel::tick_satchel).chain(),
                 effects::tick_bandages.run_if(super::party::simulates),
             ),
+        )
+        // The gadgets used this frame go off, and their pets and dummies run, where the run is
+        // simulated (a co-op client's arrive as `UseItem`s).
+        .add_systems(
+            Update,
+            (gadgets::fire_gadgets, gadgets::run_gadget_units)
+                .chain()
+                .after(satchel::satchel_input)
+                .run_if(super::party::simulates)
+                .run_if(super::strip::world_runs),
         )
         // A click on a bag is the bag's, never the HUD's under it.
         .add_systems(

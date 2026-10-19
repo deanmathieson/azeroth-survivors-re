@@ -29,6 +29,8 @@ pub(crate) struct BagFeed {
     templates: bool,
     /// The purse last pushed.
     money: Option<u64>,
+    /// The `(class, race)` last pushed as the player's requirement state.
+    req: Option<(u32, u32)>,
 }
 
 /// `Update`, after the input pass: apply this frame's bag gestures, then push what changed, so the
@@ -37,6 +39,7 @@ pub(super) fn sync_bags(
     script: Option<NonSendMut<UiScript>>,
     mut bags: ResMut<Bags>,
     purse: Res<super::econ::Purse>,
+    selection: Res<super::super::Selection>,
     mut feed: Local<VmMemo<BagFeed>>,
 ) {
     let Some(mut script) = script else {
@@ -49,6 +52,28 @@ pub(super) fn sync_bags(
         purse.copper(),
         feed,
     );
+    let class = selection.class_def().map_or(0, |c| u32::from(c.id));
+    let race = selection
+        .look
+        .and_then(|i| selection.looks.get(i))
+        .map_or(1, |l| u32::from(l.1).max(1));
+    push_requirements(&mut script, class, race, feed);
+}
+
+/// The picked class and its race as the stock tooltip's requirement checks read them: a crafted
+/// piece's class line is red for a class that may not wear it (`AllowableClass`). Nothing until a
+/// class is picked (level 0 judges nothing).
+pub(crate) fn push_requirements(script: &mut UiScript, class: u32, race: u32, feed: &mut BagFeed) {
+    if feed.req == Some((class, race)) {
+        return;
+    }
+    feed.req = Some((class, race));
+    script.set_player_req_state(benilla_ui::script::PlayerReqState {
+        level: if class == 0 { 0 } else { 60 },
+        class_id: class,
+        race_id: race,
+        ..Default::default()
+    });
 }
 
 /// [`sync_bags`]' body: `money` is the purse, in copper.
@@ -134,9 +159,8 @@ fn show_error(script: &mut UiScript, e: BagError) {
 pub(super) fn snapshot(bags: &Bags) -> HashMap<i64, ContainerState> {
     // A cooldown's sweep, `(start ms on GetTime, duration ms, enabled)`, on its items' slots.
     let cooldown = |item: u32| {
-        let cat = super::effects::consumable(item)?.kind.category()?;
-        bags.cooldown(cat)
-            .map(|start| ((start * 1000.0) as i64, (cat.secs() * 1000.0) as u32, true))
+        super::effects::cooldown_of(bags, item)
+            .map(|(start, secs)| ((start * 1000.0) as i64, (secs * 1000.0) as u32, true))
     };
     bags.containers()
         .map(|bag| {

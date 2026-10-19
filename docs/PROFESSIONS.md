@@ -1,6 +1,6 @@
 # Professions and the WoW inventory
 
-Status: P0 (the bags spike), most of P1 (gathering, skills, the purse, the camp's merchant, trainer and Smelting, tracking) and most of P2 (Alchemy, Cooking, First Aid, Enchanting and the satchel bar) are built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
+Status: P0 (the bags spike), most of P1 (gathering, skills, the purse, the camp's merchant, trainer and Smelting, tracking), most of P2 (Alchemy, Cooking, First Aid, Enchanting and the satchel bar) and most of P3 (Blacksmithing, Leatherworking, Tailoring, Engineering, crafted gear, bags and gadgets) are built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
 
 Ground rules, as for the rest of the fork:
 
@@ -744,6 +744,88 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
 - each malfunction rolls at its rate over 10,000 seeded uses; the Target Dummy redirects `party::pick_target`;
 - co-op: Jumper Cables revive a remote ally, and a Sapper Charge hurts its user on every machine;
 - **screenshot:** the Blacksmithing window at home with the Forge met; a Lionheart Helm tooltip in the bags (BoE line, class line, green bonus lines); a Battle Chicken and a Target Dummy mid-run; the bag bar with a Mooncloth Bag.
+
+**Progress (2026-10-19): built and green; the screenshots, duplicate boss drops and the Mind Control Cap are not.**
+
+- **Built, the lines and the books** (`skills.rs`, `recipes.rs`, `items.rs`):
+  - Blacksmithing (164), Leatherworking (165), Tailoring (197) and Engineering (202) are skill lines beside the eight before, on their real rank spells, so the one "Profession Trainer" sells their ranks too. The camp gains a third row of book buttons: Smith, Leather, Tailor and Tinker.
+  - **Curated books:**
+    - Blacksmithing, 43 recipes: the stones, the copper-to-mithril ladder, the Imperial Plate, the Lionheart Helm, the Arcanite Reaper and Molten Core's plans.
+    - Leatherworking, 35: the leathers, the armor kits, the leather ladder, the Devilsaur pair, the Volcanic pieces and the Core Armor Kit.
+    - Tailoring, 39: the bolts, every bag, the cloth ladder, Mooncloth, the Robe of the Archmage, the Truefaith Vestments and Flarecore.
+    - Engineering, 40: the parts, the bombs, the dummies, the dragonlings and the specialisations' gadgets.
+  - **Beside them:** Smelting gains Silver, Gold and Dark Iron; Alchemy gains Transmute: Arcanite and Iron to Gold; Enchanting gains Enchanted Thorium and Enchanted Leather, listed in its craft window.
+  - **Checked:** `every_recipe_resolves_in_the_client` checks every one as P2's are, against `Spell.dbc` and `SkillLineAbility`. A product count now reads the transmutes' dice too.
+  - **About 240 new item templates:**
+    - the ores, bars and gems;
+    - the elementals and Molten Core's materials (Fiery and Lava Core, Core Leather, the Sulfuron Ingot, Blood of the Mountain);
+    - the threads, fluxes and dyes, which the goblin sells;
+    - the parts, the gadgets, the stones, the kits and the bags;
+    - 73 crafted pieces and 35 recipe items.
+  - **The recipe items:** each one's name is its real teaching spell's ("Plans: Lionheart Helm", effect 36, learning 16729), checked by `recipe_items_teach_their_recipes_in_the_client`, P2's too.
+  - **Engineering's specialisations:** Gnomish Engineer (20219) or Goblin Engineer (20222), bought from the trainer at Engineering 200, one or the other. The doc's split decides which schematics each keeps (5.2): Gnomish the Battle Chicken, the Net-o-Matic and the Death Ray; Goblin the Sapper Charge, the Rocket Boots, the Mortar and the Dragon Gun.
+- **Built, crafted gear** (`gear/crafted.rs`):
+  - **The pieces:** 73 of them, ids from 3000, the copper ladder to the Lionheart Helm, the Arcanite Reaper, the Devilsaur pair, the epic robes, Molten Core's plate and the Sulfuron Hammer. Each is a bind-on-equip bag item until worn.
+  - **Equipping:** a right-click in the bags checks the picked class may wear it, collects it into that class's gear, puts it on and takes the bag item. From then on it is ordinary gear: it shows in the Armory's new Crafted row (with "Crafted by Blacksmithing (300)"), takes enchants, and is drawn on the hero and, through the hero's worn displays, on every other machine.
+  - **The tooltip:** the stock one prints Binds when equipped, the armour type, the green `Equip:` bonus lines and a class line (`AllowableClass`). The bags' feed now pushes the picked class and race, so the class line is red for a class that may not wear the piece.
+  - **Checked:**
+    - `crafted_displays_and_icons_exist_in_the_client`: each display row carries the icon and draws its slot.
+    - `survivors_crafted_never_beats_the_boss_piece`: a piece's bonuses, each against the best of its kind at the rarity, are worth less than the boss piece of its slot and rarity for every class that may wear it.
+- **Built, bags, stones and kits:**
+  - **Bags:** Tailoring makes the Linen, Woolen, Silk, Mageweave, Runecloth, Mooncloth, Bottomless and Core Felcloth bags (6 to 20 slots). A right-click on a bag puts it on the bag bar: into the first empty bag slot, or in place of the smallest empty worn bag (`Bags::equip_bag`). The stock `ContainerFrame` opens it as a real container.
+  - **Stones and kits:** sharpening stones and weightstones give +0.5% to +1.5% Physical damage (the Elemental Sharpening Stone +1.5% crit). Armor kits give +1% to +4% damage reduction (the Core Armor Kit the most). Each lasts 1.12's half hour, one stone and one kit at a time, taken at camp or as the run starts. The power budget now counts a stone: under a fifth with the best flask, elixir and meal.
+- **Built, the gadgets** (`gadgets.rs`; numbers ours, the spells and displays real):
+  - **The gadgets:**
+    - **Bombs:** the Rough Copper Bomb, the Iron Grenade, the Big Iron Bomb, the Thorium Grenade and Dense Dynamite, thrown at the thickest pack in 25 yards: Fire damage, and a stun from all but the dynamite.
+    - **The Goblin Sapper Charge:** 200 damage around you, and a fifth of your own health, every time.
+    - **The Goblin Mortar and the Goblin Dragon Gun:** a kept bomb, and a cone of fire.
+    - **Target Dummy and Masterwork Target Dummy:** the horde within 25 yards chases the dummy, never a boss, until its time or health runs out. `enemies::move_enemies` asks `gadgets::decoy_for` before `chase_target`, and the dummy takes the blows.
+    - **The Goblin Rocket Boots:** +60% speed for 20 s.
+    - **The pets:** the Gnomish Battle Chicken, which Battle Squawks shorter cooldowns onto the heroes near it, and the Mechanical, Mithril and Arcanite dragonlings, which breathe Flame Buffet on their prey's pack. The Explosive Sheep runs at the thickest pack and blows up.
+    - **The Gnomish Net-o-Matic:** a cone that roots for 10 s.
+    - **The Gnomish Death Ray:** 400 Shadow damage at the healthiest foe, drawn from a tenth of your health.
+    - **The Goblin Jumper Cables:** a downed ally in 15 yards gets up.
+  - **Use:** each has its own cooldown plus the shared 10 s engineering lockout, never at camp. Bombs, dummies, sheep and sappers are spent; the devices are kept.
+  - **Malfunctions,** rolled per use, with the user told:
+    - the boots blow up (5%: a knockdown and Fire damage);
+    - the chicken (10%) and the older dragonlings (5% and 3%) turn on you for 8 s;
+    - the Net-o-Matic nets you (10%);
+    - the Death Ray hits you (10%);
+    - the cables shock you instead (33%).
+
+    The Arcanite Dragonling and the bombs are honest.
+  - **Checked:**
+    - each gadget's use spell and the pets' and dummies' creature displays (the robot chicken 6909, the mechanical whelps 4465, 7908 and 12489, the wooden dummies 3019 and 16074, the robot sheep 3886), by `gadget_spells_and_displays_resolve_in_the_client`;
+    - each malfunction's rate over 10,000 seeded uses;
+    - the dummy's redirect.
+- **Built, the supply** (`nodes.rs`, `gather.rs`):
+  - **Veins:** a Gold Vein (lock 42, 155) in the 30-45 band and a Dark Iron Deposit (lock 719, 230, `DarkIronNode`) in Molten Core, both checked by `every_node_resolves_in_the_client`. Veins turn up gems now and then, a tin vein Silver Ore, a thorium vein Arcane Crystal for the Arcanite transmute.
+  - **Kills:** devilsaurs give Devilsaur Leather, Core Hounds Core Leather, spiders their silk by level, raptors Wicked Claws, and old beasts Rugged Hides.
+  - **Drops:** bosses drop the elementals, Felcloth and the plans and patterns by band.
+  - **Molten Core's own drops:** Lucifron the Core Armor Kit, Magmadar the Corehound Boots, Gehennas the Fiery Chain Girdle, Garr the Elemental Sharpening Stone, Shazzrah and Geddon the Flarecore patterns, Sulfuron Harbinger Dark Iron Plate and the Sulfuron Hammer, Majordomo the Core Felcloth Bag and the Molten Helm. Golemagg and Ragnaros drop the Sulfuron Ingots (`nodes::MC_DROPS`).
+- **Co-op:**
+  - **Gadgets:** a client's gadget goes to the host as a `UseItem`, already spent and cooled down at home. The host fires it, rolls its malfunction and spawns its pets and dummies as ordinary units, which replicate like any other.
+  - **The loopback test:** `a_clients_jumper_cables_revive_the_host_and_its_sapper_hurts_itself`.
+  - **The protocol is now 22:** `Line` grew by four, and `UseItem` carries gadgets.
+- **Profile version 7:** no new field. The crafting lines' skills, a specialisation, P3's bag items and crafted gear sit in version 6's fields but would be dropped by a version 6 build (`survivors_profile_v6_migrates_to_v7_and_v7_round_trips`).
+- **Deviations:**
+  - **The bag bar:** the stock bag buttons (`MainMenuBarBagButtons`) are not loaded. A bag goes on by a right-click, and a worn bag comes off only by being swapped.
+  - **Crafted ids from 3000,** not 2000, which the raid's pieces took.
+  - **The Sulfuron Hammer:** an Epic crafted piece whose real recipe needs eight Sulfuron Ingots. Those are bag items off Golemagg and Ragnaros, apart from the raid vault's ingot token, and the raid's own forge (an Eye and an Ingot to Sulfuras) is unchanged.
+  - **Rarities:** the Imperial Plate is 1.12's Uncommon, not Rare.
+  - **The Core Felcloth Bag:** a general 20-slot bag, not 1.12's 28-slot soul bag. Its Bloodvine, a Zul'Gurub herb in 1.12, drops off Molten Core here.
+  - **Goblin stock:** Goblin Rocket Fuel, Refined Deeprock Salt and Ghost Dye, which other trades made in 1.12.
+  - **Vein extras:** Silver turns up in tin veins, since the client has no silver vein model.
+  - **Gadget visuals:** the dragonlings breathe Flame Buffet (9658).
+  - **Authored without a 1.12 source:** the gadgets' numbers and every malfunction rate.
+  - **From memory, unverified:** the recipe items' entries (their names are checked), the new items' icons and the crafted pieces' display rows (each checked to carry its icon and draw its slot).
+  - **The camp's fire** meets every focus: the Anvil, the Black Anvil, the Black Forge and the Moonwell too.
+  - **No 20-hour cooldowns** on the transmutes and Mooncloth yet (P4).
+- **Still to do in P3:**
+  - duplicate boss drops as Soulbound bag copies;
+  - the Gnomish Mind Control Cap and the Discombobulator Ray;
+  - the screenshot check;
+  - crafting at home.
 
 ### P4. Polish: the bank, trade and specialisations
 

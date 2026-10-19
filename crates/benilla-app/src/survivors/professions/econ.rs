@@ -23,8 +23,10 @@ use super::super::profile::RunEnded;
 use super::super::Run;
 use super::inventory::{BagError, Bags, Stack};
 use super::items::{
-    self, ItemDef, COAL, CRYSTAL_VIAL, EMPTY_VIAL, HOT_SPICES, LEADED_VIAL, LINEN_BAG, MILD_SPICES,
-    REFRESHING_SPRING_WATER, SOOTHING_SPICES,
+    self, ItemDef, COAL, COARSE_THREAD, CRYSTAL_VIAL, EMPTY_VIAL, FINE_THREAD, FLASK_OF_OIL,
+    FUSED_WIRING, GHOST_DYE, GOBLIN_ROCKET_FUEL, GRAY_DYE, GREEN_DYE, HEAVY_SILKEN_THREAD,
+    HOT_SPICES, LEADED_VIAL, LINEN_BAG, MILD_SPICES, REFINED_DEEPROCK_SALT,
+    REFRESHING_SPRING_WATER, RUNE_THREAD, SILKEN_THREAD, SOOTHING_SPICES, STRONG_FLUX, WEAK_FLUX,
 };
 
 /// A run's gold piece, in the purse's copper: a silver.
@@ -35,8 +37,10 @@ pub(crate) const BANK_PERCENT: u64 = 25;
 pub(crate) const BUYBACK_SLOTS: usize = 12;
 
 /// What the goblin sells, `(item, price in copper)`: Smelt Steel's Coal, the potion recipes' three
-/// vials, a Linen Bag, and Cooking's spices and water. New wares go on the end, so the rows before
-/// keep their places. The prices are ours.
+/// vials, a Linen Bag, Cooking's spices and water, and (P3) the crafters' threads, fluxes and dyes,
+/// Engineering's wiring, oil and rocket fuel, and the salt that cures a rugged hide. New wares go
+/// on the end, so the rows before keep their places. The prices are ours; the rocket fuel, the
+/// salt and the Ghost Dye are goblin stock here, made by other trades in 1.12.
 pub(crate) static GOBLIN_WARES: &[(u32, u32)] = &[
     (COAL, 500),
     (EMPTY_VIAL, 4),
@@ -47,6 +51,20 @@ pub(crate) static GOBLIN_WARES: &[(u32, u32)] = &[
     (HOT_SPICES, 40),
     (SOOTHING_SPICES, 100),
     (REFRESHING_SPRING_WATER, 5),
+    (COARSE_THREAD, 10),
+    (FINE_THREAD, 100),
+    (SILKEN_THREAD, 500),
+    (HEAVY_SILKEN_THREAD, 1600),
+    (RUNE_THREAD, 5000),
+    (WEAK_FLUX, 100),
+    (STRONG_FLUX, 200),
+    (GRAY_DYE, 350),
+    (GREEN_DYE, 100),
+    (GHOST_DYE, 1500),
+    (FUSED_WIRING, 3000),
+    (FLASK_OF_OIL, 300),
+    (GOBLIN_ROCKET_FUEL, 2000),
+    (REFINED_DEEPROCK_SALT, 2000),
 ];
 
 /// The profile's gold, in copper.

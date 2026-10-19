@@ -1,9 +1,10 @@
 //! The Armory's Collection tab: the picked class's 45 pieces as a grid, a row per rarity (with the
 //! battlegrounds that drop it) and a column per slot, uncollected pieces a dim "?" and worn ones
 //! badged "E". Under them, Molten Core: the class's Tier 1 set in its slots, and the raid's named
-//! pieces it may wear. The left column tallies the collection and the account's raid vault;
-//! clicking a piece shows it under Details, with what it grants, who drops it and an Equip button
-//! once it is collected.
+//! pieces it may wear; then the crafted pieces it may wear (P3), equipped from the bags. The left
+//! column tallies the collection and the account's raid vault; clicking a piece shows it under
+//! Details, with what it grants, who drops it (or which craft makes it) and an Equip button once
+//! it is collected.
 //!
 //! The other gear tabs share this file's kit: [`item_icon`], [`item_tip`], [`progress_bar`] and
 //! [`sheen`].
@@ -16,9 +17,9 @@ use crate::glue::art::{DIM, GOLD};
 use crate::glue::widgets::{glue_button, outlined_text, overlay, GlueBtnKind, GlueText, Hilight};
 use crate::survivors::gear::raid::RaidKind;
 use crate::survivors::gear::{
-    class_gear, gear_for, item, items_for, percent, progress, raid_piece, raid_vault, rarity_label,
-    set_of, sources, tier_set, usable_by, zones_dropping, GearAction, GearSave, GearView, Item,
-    ItemIcon, RaidVault, Slot, RARITIES,
+    class_gear, crafted, gear_for, item, items_for, percent, progress, raid_piece, raid_vault,
+    rarity_label, set_of, sources, tier_set, usable_by, zones_dropping, GearAction, GearSave,
+    GearView, Item, ItemIcon, RaidVault, Slot, RARITIES,
 };
 
 /// `GREEN_FONT_COLOR`: what a piece grants, and a worn piece.
@@ -106,6 +107,9 @@ fn tally(
         let on = set.worn(&gear.equipped_ids());
         row(p, ctx, set.name, GOLD, &format!("{on} / 8"));
     }
+    let made: Vec<_> = crafted::for_class(class).collect();
+    let have = made.iter().filter(|c| gear.has(c.item.id)).count();
+    row(p, ctx, "Crafted", GOLD, &format!("{have} / {}", made.len()));
     row(p, ctx, "Eye of Sulfuras", GOLD, &vault.eyes.to_string());
     row(p, ctx, "Sulfuron Ingots", GOLD, &vault.ingots.to_string());
     for id in &vault.bound {
@@ -256,6 +260,61 @@ fn grid(
         });
     }
     raid_rows(p, ctx, class, gear, picked);
+    crafted_rows(p, ctx, class, gear, picked);
+}
+
+/// The crafted pieces class `class` may wear, as many to a row as there are slots: what
+/// Blacksmithing, Leatherworking and Tailoring make, equipped from the bags.
+fn crafted_rows(
+    p: &mut ChildSpawnerCommands,
+    ctx: &TabCtx,
+    class: usize,
+    gear: &GearSave,
+    picked: Option<&Item>,
+) {
+    let made: Vec<&'static Item> = crafted::for_class(class).map(|c| &c.item).collect();
+    if made.is_empty() {
+        return;
+    }
+    p.spawn(Node {
+        flex_shrink: 0.0,
+        margin: UiRect::top(Val::Px(10.0)),
+        ..default()
+    })
+    .with_children(|l| {
+        text(l, ctx, "Crafted", 13.0, GOLD);
+    });
+    for chunk in made.chunks(Slot::ALL.len()) {
+        p.spawn(Node {
+            flex_shrink: 0.0,
+            column_gap: Val::Px(2.0),
+            ..default()
+        })
+        .with_children(|r| {
+            for i in 0..Slot::ALL.len() {
+                r.spawn(Node {
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|c| {
+                    if let Some(&piece) = chunk.get(i) {
+                        let on = picked.is_some_and(|p| p.id == piece.id);
+                        piece_cell(c, ctx, piece, gear, on);
+                    }
+                });
+            }
+        });
+    }
+}
+
+/// Which craft makes crafted piece `piece`: its profession and the skill its recipe needs.
+fn craft_of(piece: &Item) -> Option<(&'static str, u16)> {
+    let real = crafted::crafted_piece(piece.id)?.real;
+    crate::survivors::professions::recipes::all()
+        .find(|r| r.product == real)
+        .map(|r| (r.line.name(), r.req))
 }
 
 /// Molten Core under the rarities: the class's Tier 1 set in its slots, then the raid's named
@@ -474,7 +533,19 @@ fn details(p: &mut ChildSpawnerCommands, ctx: &TabCtx, gear: &GearSave, picked: 
             DIM,
         );
     }
-    para(p, ctx, "Dropped by", 13.0, GOLD);
+    if let Some((line, req)) = craft_of(piece) {
+        para(p, ctx, "Crafted by", 13.0, GOLD);
+        para(p, ctx, &format!("{line} ({req})"), 12.0, Color::WHITE);
+        para(
+            p,
+            ctx,
+            "Binds when equipped: right-click it in your bags to wear it.",
+            11.0,
+            DIM,
+        );
+    } else {
+        para(p, ctx, "Dropped by", 13.0, GOLD);
+    }
     for s in sources(piece) {
         para(p, ctx, s.boss, 12.0, Color::WHITE);
         para(

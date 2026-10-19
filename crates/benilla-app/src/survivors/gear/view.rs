@@ -36,8 +36,11 @@ pub(in crate::survivors) struct Source {
 }
 
 /// Every boss that drops `item`, in battleground and roster order; a raid piece's Molten Core
-/// bosses, each with its odds for a solo kill.
+/// bosses, each with its odds for a solo kill; none for a crafted piece, which is made.
 pub(in crate::survivors) fn sources(item: &Item) -> Vec<Source> {
+    if super::crafted::crafted_piece(item.id).is_some() {
+        return Vec::new();
+    }
     if super::raid_piece(item.id).is_some() {
         return super::raid::sources(item.id)
             .into_iter()

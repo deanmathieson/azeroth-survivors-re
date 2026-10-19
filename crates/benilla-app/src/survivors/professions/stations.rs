@@ -40,7 +40,7 @@ const TRAINER_TYPE_TRADESKILL: u32 = 2;
 const MERCHANT_NAME: &str = "Goblin Merchant";
 const TRAINER_NAME: &str = "Profession Trainer";
 const TRAINER_GREETING: &str =
-    "Gather it, brew it, cook it, bind it or enchant it: show me what you can do, and I will teach you more.";
+    "Gather it, brew it, cook it, bind it, enchant it, forge it, sew it or blow it up: show me what you can do, and I will teach you more.";
 
 /// The camp's Train and book buttons ask for their windows here; each press toggles.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -410,6 +410,37 @@ pub(crate) fn trainer_state(skills: &Skills) -> TrainerState {
                 )
             });
         }
+        if line == Line::Engineering {
+            // The specialisations, at Engineering 200, one or the other.
+            for spec in recipes::Spec::ALL {
+                let held = skills.learned(spec.spell());
+                services.push(TrainerService {
+                    texture: Some(spec.icon().to_string()),
+                    description: format!(
+                        "Makes you a {}, with the schematics only {} know. You may only be one: \
+                         Gnomish or Goblin.",
+                        spec.name(),
+                        if spec == recipes::Spec::Gnomish {
+                            "gnomes"
+                        } else {
+                            "goblins"
+                        }
+                    ),
+                    category: category(held, recipes::spec_open(skills)),
+                    skill_req: Some(TrainerSkillReq {
+                        name: line.name().to_string(),
+                        rank: u32::from(recipes::SPEC_SKILL),
+                        met: r.rank >= recipes::SPEC_SKILL,
+                    }),
+                    ..service(
+                        spec.spell(),
+                        spec.name().to_string(),
+                        String::new(),
+                        recipes::SPEC_COST,
+                    )
+                });
+            }
+        }
         for rec in recipes::book(line) {
             let Learn::Trainer(cost) = rec.learn else {
                 continue;
@@ -445,14 +476,30 @@ pub(crate) enum Trained {
     Rank(Line, usize),
     /// A recipe.
     Recipe(&'static Recipe),
+    /// An Engineering specialisation.
+    Spec(recipes::Spec),
 }
 
-/// One `BuyTrainerService`: a rank spell's line and step, or a recipe, paid from the purse.
+/// One `BuyTrainerService`: a rank spell's line and step, a recipe or a specialisation, paid from
+/// the purse.
 pub(crate) fn train(
     skills: &mut Skills,
     purse: &mut Purse,
     spell: u32,
 ) -> Result<Trained, TrainError> {
+    if let Some(spec) = recipes::Spec::of_spell(spell) {
+        if skills.learned(spec.spell()) || skills.learned(spec.rival().spell()) {
+            return Err(TrainError::NotNext);
+        }
+        if !recipes::spec_open(skills) {
+            return Err(TrainError::LowSkill);
+        }
+        if !purse.spend(u64::from(recipes::SPEC_COST)) {
+            return Err(TrainError::NoMoney);
+        }
+        skills.learn(spec.spell());
+        return Ok(Trained::Spec(spec));
+    }
     if let Some(rec) = recipes::recipe(spell) {
         let Learn::Trainer(cost) = rec.learn else {
             return Err(TrainError::NotNext);
@@ -505,6 +552,7 @@ fn trainer_window(
             match train(skills, purse, spell) {
                 Ok(Trained::Rank(line, step)) => lines.push(CastLine::Learned(line, step)),
                 Ok(Trained::Recipe(rec)) => lines.push(CastLine::LearnedRecipe(rec.name)),
+                Ok(Trained::Spec(spec)) => lines.push(CastLine::LearnedRecipe(spec.name())),
                 Err(TrainError::NoMoney) => refuse(lines, ShopError::NoMoney),
                 Err(e) => debug!("survivors: trainer refused {spell}: {e:?}"),
             }
@@ -1032,6 +1080,112 @@ pub(crate) mod tests {
         w.frame(&mut s, false, 0.016);
         assert_eq!(seen(&s), vec!["TRADE_SKILL_CLOSE"]);
         assert_eq!(w.desk.book, None);
+    }
+
+    /// The smith's book at camp: Copper Bracers from two bars, a bind-on-equip piece of gear in
+    /// the bags; then the tailor's, a Linen Bag from bolts and thread.
+    #[test]
+    fn survivors_stations_the_smith_and_the_tailor_make_gear_and_bags() {
+        use crate::survivors::professions::items::{
+            BOLT_OF_LINEN_CLOTH, COARSE_THREAD, COPPER_BRACERS, LINEN_BAG,
+        };
+        let mut s = UiScript::new().unwrap();
+        events(&mut s);
+        let mut w = World::default();
+        w.bags.add(COPPER_BAR, 2);
+        w.bags.add(BOLT_OF_LINEN_CLOTH, 3);
+        w.bags.add(COARSE_THREAD, 3);
+        w.desk.toggle(Line::Blacksmithing);
+        w.frame(&mut s, true, 0.016);
+        assert_eq!(seen(&s), vec!["TRADE_SKILL_SHOW"]);
+        let row = s
+            .eval::<i64>(
+                "for i = 1, GetNumTradeSkills() do \
+                   if GetTradeSkillInfo(i) == 'Copper Bracers' then return i end \
+                 end return 0",
+            )
+            .unwrap();
+        assert!(row > 0, "Copper Bracers at 1");
+        s.run(&format!("DoTradeSkill({row}, 1)")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        assert!(w.crafter.busy());
+        w.frame(&mut s, true, 5.2);
+        assert_eq!(w.bags.count(COPPER_BRACERS), 1);
+        assert_eq!(
+            super::super::items::template(COPPER_BRACERS).map(|d| d.bonding),
+            Some(2),
+            "binds when equipped"
+        );
+        w.desk.toggle(Line::Tailoring);
+        w.skills = Skills::from_save(&std::collections::BTreeMap::from([(
+            "tailoring".to_string(),
+            Rank { rank: 60, max: 75 },
+        )]));
+        w.frame(&mut s, true, 0.016);
+        let row = s
+            .eval::<i64>(
+                "for i = 1, GetNumTradeSkills() do \
+                   if GetTradeSkillInfo(i) == 'Linen Bag' then return i end \
+                 end return 0",
+            )
+            .unwrap();
+        assert!(row > 0, "Linen Bag at 45");
+        s.run(&format!("DoTradeSkill({row}, 1)")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        w.frame(&mut s, true, 8.1);
+        assert_eq!(w.bags.count(LINEN_BAG), 1);
+    }
+
+    /// The trainer sells Engineering's specialisations at 200, one of them, never both.
+    #[test]
+    fn survivors_stations_the_trainer_sells_one_engineering_specialisation() {
+        use recipes::Spec;
+        let mut w = World {
+            skills: Skills::from_save(&std::collections::BTreeMap::from([(
+                "engineering".to_string(),
+                Rank {
+                    rank: 210,
+                    max: 225,
+                },
+            )])),
+            ..Default::default()
+        };
+        let category_of = |skills: &Skills, spell: u32| {
+            trainer_state(skills)
+                .services
+                .into_iter()
+                .find(|sv| sv.spell_id == spell)
+                .unwrap()
+                .category
+        };
+        assert_eq!(
+            category_of(&w.skills, Spec::Goblin.spell()),
+            TrainerServiceCategory::Available
+        );
+        assert_eq!(
+            train(&mut w.skills, &mut w.purse, Spec::Gnomish.spell()),
+            Err(TrainError::NoMoney)
+        );
+        w.purse.earn(u64::from(recipes::SPEC_COST));
+        assert_eq!(
+            train(&mut w.skills, &mut w.purse, Spec::Gnomish.spell()),
+            Ok(Trained::Spec(Spec::Gnomish))
+        );
+        assert_eq!(w.purse.copper(), 0);
+        w.purse.earn(u64::from(recipes::SPEC_COST));
+        assert_eq!(
+            train(&mut w.skills, &mut w.purse, Spec::Goblin.spell()),
+            Err(TrainError::NotNext),
+            "one or the other"
+        );
+        assert_eq!(
+            category_of(&w.skills, Spec::Gnomish.spell()),
+            TrainerServiceCategory::Used
+        );
+        assert_eq!(
+            category_of(&w.skills, Spec::Goblin.spell()),
+            TrainerServiceCategory::Unavailable
+        );
     }
 
     /// Enchanting's craft window: an enchant needs a piece worn in its slot, takes its dust, and

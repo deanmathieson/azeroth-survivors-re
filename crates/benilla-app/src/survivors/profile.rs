@@ -28,9 +28,12 @@ use super::{data, Run, Selection};
 /// and the tracking ([`super::professions::save`]), which a version 4 build would drop, so it opens
 /// a version 5 save read-only. 6: the learned recipes and the satchel bar
 /// ([`super::professions::save`]) and each piece's enchant (`GearSave::enchants`), which a version
-/// 5 build would drop, so it opens a version 6 save read-only. Each version only adds fields, so
-/// an older save loads as it is and is written back as this version.
-pub(super) const PROFILE_VERSION: u32 = 6;
+/// 5 build would drop, so it opens a version 6 save read-only. 7: Blacksmithing, Leatherworking,
+/// Tailoring and Engineering's skills, an Engineering specialisation, P3's bag items and crafted
+/// gear (ids from 3000), all in the version 6 fields but dropped by a version 6 build, which so
+/// opens a version 7 save read-only. Each version only adds, so an older save loads as it is and
+/// is written back as this version.
+pub(super) const PROFILE_VERSION: u32 = 7;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
 
@@ -613,7 +616,7 @@ mod tests {
     }
 
     /// A version 5 save (P1's: bags, skills, purse; no recipes, satchel or enchants) loads as it
-    /// is and is written back as version 6; P2's recipes, satchel and enchants round-trip.
+    /// is and is written back as this version; P2's recipes, satchel and enchants round-trip.
     #[test]
     fn survivors_profile_v5_migrates_to_v6_and_v6_round_trips() {
         let v5 = "version = 5\n\n[account]\nruns = 7\n\n[purse]\ncopper = 120\n\n\
@@ -623,7 +626,7 @@ mod tests {
         assert!(loaded.corrupt_text.is_none());
         let p = loaded.profile;
         assert!(p.writable);
-        assert_eq!(p.version, 6, "written back as version 6");
+        assert_eq!(p.version, PROFILE_VERSION, "written back as this version");
         assert_eq!((p.account.runs, p.purse.copper), (7, 120));
         assert_eq!(p.professions.skills["mining"].rank, 80);
         assert!(p.professions.recipes.is_empty() && p.professions.satchel.is_empty());
@@ -634,10 +637,60 @@ mod tests {
         p6.professions.satchel = vec![13446, 0, 14530];
         p6.classes.get_mut("mage").unwrap().gear.enchant(108, 1900);
         let text = toml::to_string_pretty(&p6).unwrap();
-        assert!(text.contains("version = 6"), "{text}");
+        assert!(
+            text.contains(&format!("version = {PROFILE_VERSION}")),
+            "{text}"
+        );
         assert!(text.contains("recipes = [") && text.contains("satchel = ["));
         let back = load_text(&text).profile;
         assert_eq!(back, p6);
+    }
+
+    /// A version 6 save (P2's) loads as it is and is written back as version 7; P3's crafting
+    /// skills, a specialisation, a tailored bag on the bag bar, a crafted piece in the bags and one
+    /// worn round-trip, and a version 6 build would open the result read-only.
+    #[test]
+    fn survivors_profile_v6_migrates_to_v7_and_v7_round_trips() {
+        use super::super::professions::{inventory::Bags, items, recipes::Spec, skills};
+        let v6 = "version = 6\n\n[account]\nruns = 9\n\n[professions]\nrecipes = [7836]\n\n\
+                  [professions.skills.alchemy]\nrank = 90\nmax = 150\n";
+        let loaded = load_text(v6);
+        assert!(loaded.corrupt_text.is_none());
+        let p = loaded.profile;
+        assert!(p.writable);
+        assert_eq!(p.version, 7, "written back as version 7");
+        assert_eq!(p.professions.recipes, vec![7836]);
+
+        let mut p7 = p.clone();
+        p7.professions.skills.insert(
+            "engineering".into(),
+            skills::Rank {
+                rank: 230,
+                max: 300,
+            },
+        );
+        p7.professions.recipes.push(Spec::Gnomish.spell());
+        let mut bags = Bags::with_worn([items::MOONCLOTH_BAG, 0, 0, 0]);
+        bags.add(items::LIONHEART_HELM, 1);
+        p7.inventory = bags.to_save();
+        let lionheart = super::super::gear::crafted_by_item(items::LIONHEART_HELM).unwrap();
+        p7.classes
+            .entry("warrior".into())
+            .or_default()
+            .gear
+            .collect(&lionheart.item);
+        let text = toml::to_string_pretty(&p7).unwrap();
+        assert!(text.starts_with("version = 7\n"), "{text}");
+        assert!(text.contains("[professions.skills.engineering]"));
+        let back = load_text(&text).profile;
+        assert_eq!(back, p7);
+        assert_eq!(Bags::from_save(&back.inventory), bags);
+        assert!(back.classes["warrior"].gear.wears(lionheart.item.id));
+        let newer = text.replacen("version = 7", "version = 8", 1);
+        assert!(
+            !load_text(&newer).profile.writable,
+            "a newer save stays read-only"
+        );
     }
 
     #[test]

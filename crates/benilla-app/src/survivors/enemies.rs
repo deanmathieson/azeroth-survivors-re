@@ -1397,6 +1397,10 @@ pub(super) fn move_enemies(
     world: WorldPoint,
     mut heroes: Query<(Entity, &Transform, &mut HeroState), (With<Hero>, Without<Enemy>)>,
     mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MovementState), Without<Hero>>,
+    mut decoys: Query<
+        (Entity, &Transform, &mut super::professions::gadgets::Decoy),
+        (Without<Hero>, Without<Enemy>),
+    >,
     mut fx: Fx,
     mut hits: MessageWriter<Hit>,
     mut detours: Local<HashMap<Entity, Detour>>,
@@ -1428,6 +1432,12 @@ pub(super) fn move_enemies(
     let map = selection.stage_def();
     let hero_down = seen.iter().all(|h| !h.up);
     let wake = treasure::wake_radius(map.leash);
+    // The engineers' target dummies standing: the horde near one chases it instead (P3).
+    let lures: Vec<(Entity, Vec3)> = decoys
+        .iter()
+        .filter(|(.., d)| d.standing())
+        .map(|(e, t, _)| (e, t.translation))
+        .collect();
 
     // Separation over a coarse grid: only neighbours in the same or adjacent cells push.
     const CELL: f32 = 3.0;
@@ -1528,7 +1538,8 @@ pub(super) fn move_enemies(
 
         // Under Fade a hero is lost to the horde (bosses still see it): with every hero standing
         // lost, it mills where it stands.
-        let chase = chase_target(pos, e.boss, e.taunted, run.elapsed, &seen);
+        let lure = super::professions::gadgets::decoy_for(pos, e.boss, &lures);
+        let chase = lure.or_else(|| chase_target(pos, e.boss, e.taunted, run.elapsed, &seen));
         let lost = !hero_down && chase.is_none();
         let held = e.stun_t > 0.0 || e.root_t > 0.0 || lost;
         let to_target = chase.map_or(to_hero, |(_, at)| flat(at - pos));
@@ -1608,6 +1619,14 @@ pub(super) fn move_enemies(
             && e.attack_cd <= 0.0
             && !hero_down
         {
+            // A target dummy soaks the blow.
+            if let Ok((.., mut dummy)) = decoys.get_mut(target) {
+                e.attack_cd = if e.boss { 1.0 } else { 1.3 };
+                let raw = e.damage * e.weaken;
+                dummy.hp -= raw;
+                fx.swing(ent, target, raw);
+                continue;
+            }
             let Ok((_, _, mut struck)) = heroes.get_mut(target) else {
                 continue;
             };

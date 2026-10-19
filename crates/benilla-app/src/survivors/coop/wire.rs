@@ -423,7 +423,8 @@ pub(in crate::survivors) struct GatherAction {
 
 /// The client used an item from its own bags (already consumed there, its cooldown started
 /// there): the host applies it to the client's hero, and a meal eaten at camp to every hero
-/// ([`super::super::professions::effects`]). Any consumable since protocol 21.
+/// ([`super::super::professions::effects`]). Any consumable since protocol 21; since 22 a gadget
+/// too, which the host fires and whose malfunction it rolls ([`super::super::professions::gadgets`]).
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct UseItem {
     pub(in crate::survivors) item: u32,

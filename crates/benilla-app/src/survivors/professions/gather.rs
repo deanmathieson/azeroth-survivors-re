@@ -168,6 +168,12 @@ pub(crate) fn harvest(
             items.push((extra, 1));
         }
     }
+    // A vein's gems and the silver a tin vein turns up, each on its own odds.
+    for &(rare, pct) in def.rares {
+        if rng.index(100) < pct as usize {
+            items.push((rare, 1));
+        }
+    }
     Some(YieldMsg {
         line: def.kind.line(),
         req: def.req,
@@ -261,8 +267,8 @@ pub(super) fn spawn_nodes(
         return;
     };
     let home = units::wow_to_bevy(map.center);
-    // Every fourth spawn tries for a pool, which needs water in reach.
-    let pools = spawner.spawned % 4 == 3;
+    // Every fourth spawn tries for a pool, which needs water in reach, where the band has one.
+    let pools = spawner.spawned % 4 == 3 && band.iter().any(|&i| NODES[i].kind == Kind::Pool);
     let Some(def_i) = pick_node(band, &skills, pools, &mut rng) else {
         return;
     };
@@ -467,6 +473,10 @@ pub(crate) enum CastLine {
     LearnedRecipe(&'static str),
     /// An enchant put on the worn gear, by its `SpellItemEnchantment` name.
     Enchanted(&'static str),
+    /// A crafted piece put on the picked class, by its name.
+    Equipped(&'static str),
+    /// A gadget's malfunction, in its own words.
+    Malfunction(&'static str),
     Full,
     NotReady,
     /// A refusal: the `GlobalStrings.lua` key and the words if the key is missing.
@@ -539,6 +549,10 @@ pub(in crate::survivors) fn kill_rolls(
             nodes::meat(level),
             KILL_DROP_CHANCE,
         );
+        // A devilsaur's leather, a Core Hound's, a spider's silk, a raptor's claw (P3).
+        if let Some((extra, chance)) = nodes::beast_extra(kill.def.name, level) {
+            roll(Line::Skinning, NO_SKILL_UP, extra, chance);
+        }
     }
     if nodes::is_humanoid(kill.def.name) {
         roll(
@@ -549,8 +563,15 @@ pub(in crate::survivors) fn kill_rolls(
         );
     }
     if kill.boss || kill.elite {
+        // A Molten Core boss's own plans and ingots (P3) beside its band's.
+        let own: &[(u32, u32)] = if kill.boss {
+            nodes::boss_drops(kill.def.name)
+        } else {
+            &[]
+        };
         let items: Vec<(u32, u16)> = nodes::rare_drops(band)
             .iter()
+            .chain(own)
             // An elite drops a fifth as often as a boss.
             .filter(|&&(_, pct)| rng.index(100) < if kill.boss { pct } else { pct / 5 } as usize)
             .map(|&(item, _)| (item, 1))
@@ -755,6 +776,13 @@ pub(crate) fn announce(script: &mut UiScript, line: &CastLine) {
         CastLine::Enchanted(name) => {
             let text = format!("{name} is on your gear: it takes hold from your next run.");
             script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        CastLine::Equipped(name) => {
+            let text = format!("You equip {name}: it is soulbound now, and in your collection.");
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        CastLine::Malfunction(text) => {
+            script.fire_event("UI_ERROR_MESSAGE", vec![ScriptValue::Str((*text).into())]);
         }
         CastLine::SkillUp(l, rank) => {
             let text = format(

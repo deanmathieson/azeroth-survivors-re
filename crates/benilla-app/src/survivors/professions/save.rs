@@ -3,7 +3,9 @@
 //! (`[professions]`). Read once after the profile loads; written back through
 //! [`Profile::mark_dirty`] whenever any changes, so the profile's one writer saves them with
 //! everything else. The bags, purse, skills and tracking are new in profile version 5; the recipes
-//! and the satchel in version 6.
+//! and the satchel in version 6. Version 7 (P3) adds no field: it marks a save holding the four
+//! crafting lines' skills, an Engineering specialisation (kept with the learned recipes), P3's
+//! bag items and crafted gear, which a version 6 build would drop.
 
 use std::collections::BTreeMap;
 
@@ -20,8 +22,9 @@ use super::skills::{Rank, Skills};
 use super::tracking::Tracking;
 
 /// `[professions]`: the skills by slug, the tracking in force (`minerals`, `herbs`, or empty), the
-/// recipe spells learned beyond the skills' own, and the satchel bar's items (0 an empty slot).
-/// Specialisations and cooldowns come with the phases that use them.
+/// recipe spells learned beyond the skills' own (and, since P3, an Engineering specialisation's
+/// spell), and the satchel bar's items (0 an empty slot). The other specialisations and the
+/// cooldowns come with P4.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct ProfessionsSave {
@@ -59,7 +62,7 @@ pub(super) fn load_saved(profile: Option<Res<Profile>>, shadow: Res<Shadow>, mut
         .recipes
         .iter()
         .copied()
-        .filter(|&s| recipes::recipe(s).is_some());
+        .filter(|&s| recipes::known_spell(s));
     *saved.skills = Skills::from_save(&profile.professions.skills).with_learned(known);
     *saved.purse = Purse::with(profile.purse.copper);
     *saved.tracking = Tracking::from_slug(&profile.professions.tracking);

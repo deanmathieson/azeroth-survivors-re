@@ -207,8 +207,12 @@ mod tests {
         assert_eq!(epic[0].0, LARGE_BRILLIANT_SHARD);
         assert!((1..=2).contains(&epic[0].1));
         assert!(roll(1, Band::B1, &mut rng).is_empty());
-        // Every material an enchant needs comes from some tier.
-        for r in super::super::recipes::book(Line::Enchanting) {
+        // Every material an enchant needs comes from some tier (Enchanted Thorium and Leather,
+        // which make items, take a bar and a leather as well).
+        for r in super::super::recipes::book(Line::Enchanting)
+            .iter()
+            .filter(|r| r.enchant.is_some())
+        {
             for &(item, _) in r.reagents {
                 let rare = [ESSENCE_OF_FIRE, RIGHTEOUS_ORB].contains(&item);
                 let found = TIERS.iter().any(|(_, t)| {
