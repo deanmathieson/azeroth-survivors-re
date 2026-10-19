@@ -349,7 +349,9 @@ fn proc_specs(kind: ProcKind) -> &'static [MechanicSpec] {
             aura: 12043,
         },
     )
-    .visual(12043)
+    // Elemental Mastery's flash: a next-spell-crits guarantee with a cast and an impact kit, where
+    // Presence of Mind's (the held aura) has only a cast and a state.
+    .visual(16166)
     .cooldown(12.0)];
     const SHIELD: [MechanicSpec; 1] = [MechanicSpec::new(
         Trigger::OnLowHealth { threshold: 0.35 },
