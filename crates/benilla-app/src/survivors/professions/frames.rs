@@ -115,6 +115,14 @@ fn show_error(script: &mut UiScript, e: BagError) {
 
 /// The bags as the stock container snapshots, keyed by container id.
 pub(super) fn snapshot(bags: &Bags) -> HashMap<i64, ContainerState> {
+    // The potion cooldown's sweep, `(start ms on GetTime, duration ms, enabled)`.
+    let cooldown = bags.potion_cooldown().map(|start| {
+        (
+            (start * 1000.0) as i64,
+            (super::effects::POTION_COOLDOWN * 1000.0) as u32,
+            true,
+        )
+    });
     bags.containers()
         .map(|bag| {
             let name = if bag == BACKPACK {
@@ -136,6 +144,7 @@ pub(super) fn snapshot(bags: &Bags) -> HashMap<i64, ContainerState> {
                             link: Some(items::link(def)),
                             // A Bind on Pickup item in the bags is already bound.
                             already_bound: def.bonding == 1,
+                            cooldown: cooldown.filter(|_| def.entry == items::MINOR_HEALING_POTION),
                             ..Default::default()
                         },
                     ))
@@ -204,13 +213,14 @@ pub(super) fn bag_keys(
     capture: Res<UiKeyboardCapture>,
     phase: Res<State<super::super::Phase>>,
     strip: Option<Res<super::super::strip::HandStrip>>,
+    skills: Res<super::skills::Skills>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let playing = *phase.get() == super::super::Phase::Playing;
     let hand = super::super::strip::hand_up(*phase.get(), strip.as_deref());
-    handle_keys(&mut script, &mut keys, &capture, playing && !hand);
+    handle_keys(&mut script, &mut keys, &capture, playing && !hand, &skills);
 }
 
 /// The keys, in order:
@@ -219,12 +229,14 @@ pub(super) fn bag_keys(
 /// - **Esc** closes the stock windows first (popups, menus, bags), and only an Esc that closed
 ///   nothing reaches the survivors menu;
 /// - **B** toggles every bag (stock `OpenAllBags`) while a run is playing and no hand is up (B
-///   banishes then).
+///   banishes then);
+/// - **K** toggles the skills readout, the same.
 pub(super) fn handle_keys(
     script: &mut UiScript,
     keys: &mut ButtonInput<KeyCode>,
     capture: &UiKeyboardCapture,
     bags_allowed: bool,
+    skills: &super::skills::Skills,
 ) {
     if capture.typing {
         let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
@@ -243,6 +255,38 @@ pub(super) fn handle_keys(
         crate::ui_script::run_or_warn(script, "OpenAllBags()");
         keys.clear_just_pressed(KeyCode::KeyB);
     }
+    if bags_allowed && keys.just_pressed(KeyCode::KeyK) {
+        crate::ui_script::run_or_warn(script, &skills_readout(skills));
+        keys.clear_just_pressed(KeyCode::KeyK);
+    }
+}
+
+/// K's skills readout: P1's stand-in for the stock `SkillFrame`, which lives in
+/// `CharacterFrame` and its pages, far outside the curated load. The stock `GameTooltip`, held at
+/// the screen's centre, lists the professions and then the secondary skill, each as rank / cap; K
+/// or Esc hides it.
+pub(crate) fn skills_readout(skills: &super::skills::Skills) -> String {
+    use super::skills::Line;
+    let mut lua = String::from(
+        "if SurvivorsSkills_Shown and GameTooltip:IsShown() then            GameTooltip:Hide() SurvivorsSkills_Shown = nil return end          GameTooltip:SetOwner(UIParent, 'ANCHOR_NONE') GameTooltip:ClearAllPoints()          GameTooltip:SetPoint('CENTER', UIParent, 'CENTER', 0, 120)          GameTooltip:SetText(SKILLS or 'Skills', 1, 1, 1) ",
+    );
+    for (secondary, header) in [
+        (false, "TRADE_SKILLS or 'Professions'"),
+        (true, "'Secondary Skills'"),
+    ] {
+        lua.push_str(&format!("GameTooltip:AddLine({header}, 1, 0.82, 0) "));
+        for line in Line::ALL.iter().filter(|l| l.secondary() == secondary) {
+            let r = skills.rank(*line);
+            lua.push_str(&format!(
+                "GameTooltip:AddDoubleLine('{}', '{}/{}', 1, 1, 1, 1, 1, 1) ",
+                line.name(),
+                r.rank,
+                r.max
+            ));
+        }
+    }
+    lua.push_str("GameTooltip:Show() SurvivorsSkills_Shown = 1");
+    lua
 }
 
 /// The survivors Esc arbitration (`SurvivorsUi_Escape`, the shim's): whether it closed something.
@@ -354,6 +398,7 @@ pub(super) fn open_and_hover(script: &mut UiScript) {
 mod tests {
     use super::*;
     use crate::survivors::professions::items::{COPPER_ORE, LINEN_BAG, LINEN_CLOTH};
+    use crate::survivors::professions::skills::Skills;
 
     fn vm() -> UiScript {
         UiScript::new().expect("a VM")
@@ -504,13 +549,13 @@ mod tests {
         let capture = UiKeyboardCapture::default();
 
         keys.press(KeyCode::KeyB);
-        handle_keys(&mut s, &mut keys, &capture, true);
+        handle_keys(&mut s, &mut keys, &capture, true, &Skills::default());
         assert_eq!(s.eval::<i64>("return OPEN").unwrap(), 1, "B opens");
         assert!(!keys.just_pressed(KeyCode::KeyB), "and B is spent");
 
         keys.reset_all();
         keys.press(KeyCode::Escape);
-        handle_keys(&mut s, &mut keys, &capture, true);
+        handle_keys(&mut s, &mut keys, &capture, true, &Skills::default());
         assert_eq!(s.eval::<i64>("return OPEN").unwrap(), 0, "Esc closes");
         assert!(
             !keys.just_pressed(KeyCode::Escape),
@@ -519,7 +564,7 @@ mod tests {
 
         keys.reset_all();
         keys.press(KeyCode::Escape);
-        handle_keys(&mut s, &mut keys, &capture, true);
+        handle_keys(&mut s, &mut keys, &capture, true, &Skills::default());
         assert!(
             keys.just_pressed(KeyCode::Escape),
             "with nothing open, Esc reaches the survivors menu"
@@ -528,7 +573,7 @@ mod tests {
         // While the hand is up (or off the playing screen), B is the hand's.
         keys.reset_all();
         keys.press(KeyCode::KeyB);
-        handle_keys(&mut s, &mut keys, &capture, false);
+        handle_keys(&mut s, &mut keys, &capture, false, &Skills::default());
         assert_eq!(s.eval::<i64>("return OPEN").unwrap(), 0);
         assert!(keys.just_pressed(KeyCode::KeyB), "B is left for the banish");
 
@@ -540,7 +585,7 @@ mod tests {
             typing: true,
             ..Default::default()
         };
-        handle_keys(&mut s, &mut keys, &typing, true);
+        handle_keys(&mut s, &mut keys, &typing, true, &Skills::default());
         assert_eq!(s.eval::<i64>("return OPEN").unwrap(), 0);
         assert!(!keys.just_pressed(KeyCode::KeyW) && !keys.just_pressed(KeyCode::KeyB));
     }

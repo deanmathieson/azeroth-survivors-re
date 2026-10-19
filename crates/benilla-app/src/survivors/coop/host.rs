@@ -18,6 +18,7 @@ use super::super::hud::{Choice, Offer};
 use super::super::jewelry;
 use super::super::party::{self, HandDecision};
 use super::super::partyui::MemberName;
+use super::super::professions;
 use super::super::profile::Profile;
 use super::super::raid::{Telegraph, Yelled};
 use super::super::roulette::RouletteWon;
@@ -91,6 +92,8 @@ pub(super) fn plugin(app: &mut App) {
             apply_self_res,
             camp_actions,
             hand_actions,
+            gather_actions,
+            use_items,
         )
             .after(ServerSystems::Receive)
             .run_if(hosting),
@@ -121,6 +124,7 @@ pub(super) fn plugin(app: &mut App) {
                 relay_fx,
                 relay_yells,
                 relay_roulettes,
+                send_remote_yields,
             )
                 .run_if(hosting_run),
             tick,
@@ -402,6 +406,88 @@ pub(super) fn camp_actions(
             continue;
         };
         campfire::apply(&mut camp, &mut run, &mut hero, ask, &mut rng);
+    }
+}
+
+/// A client finished a gather: its own hero's player rolls its own yield on the node, once, as
+/// the host's own gathers do ([`professions::gather::harvest`]), and the yield goes back to it
+/// alone. A depleted node, a repeat or too low a rank sends nothing.
+pub(super) fn gather_actions(
+    mut msgs: MessageReader<FromClient<GatherAction>>,
+    heroes: Query<(&Owner, &HeroState), With<party::Remote>>,
+    party_size: Query<(), With<HeroState>>,
+    mut nodes: Query<(
+        &mut professions::gather::NetNode,
+        &mut professions::gather::NodeLife,
+    )>,
+    mut rng: ResMut<Rng>,
+    mut out: MessageWriter<ToClients<Yield>>,
+) {
+    let party = party_size.iter().count();
+    for msg in msgs.read() {
+        let Some(player) = heroes
+            .iter()
+            .find(|(owner, _)| owns(**owner, msg.client_id))
+            .map(|(_, hero)| hero.player)
+        else {
+            continue;
+        };
+        let Some((mut node, mut life)) = nodes
+            .iter_mut()
+            .find(|(node, _)| node.id == msg.message.node)
+        else {
+            continue;
+        };
+        if let Some(y) = professions::gather::harvest(
+            &mut node,
+            &mut life,
+            player,
+            msg.message.rank,
+            party,
+            &mut rng,
+        ) {
+            out.write(ToClients {
+                targets: SendTargets::Single(msg.client_id),
+                message: Yield(y),
+            });
+        }
+    }
+}
+
+/// A client drank from its own bags: its hero takes the effect here, where it lives.
+pub(super) fn use_items(
+    mut msgs: MessageReader<FromClient<UseItem>>,
+    mut heroes: Query<(&Owner, &mut HeroState), With<party::Remote>>,
+) {
+    for msg in msgs.read() {
+        if msg.message.item != professions::items::MINOR_HEALING_POTION {
+            continue;
+        }
+        if let Some((_, mut hero)) = heroes
+            .iter_mut()
+            .find(|(owner, _)| owns(**owner, msg.client_id))
+        {
+            professions::effects::drink(&mut hero);
+        }
+    }
+}
+
+/// The yields rolled here for other players (a skinned kill), each to its player's client.
+fn send_remote_yields(
+    remote: Option<ResMut<professions::gather::RemoteYields>>,
+    heroes: Query<(&Owner, &HeroState), With<party::Remote>>,
+    mut out: MessageWriter<ToClients<Yield>>,
+) {
+    let Some(mut remote) = remote else {
+        return;
+    };
+    for (player, y) in std::mem::take(&mut remote.0) {
+        if let Some((owner, _)) = heroes.iter().find(|(_, hero)| hero.player == player) {
+            out.write(ToClients {
+                targets: SendTargets::Single(ClientId::Client(owner.0)),
+                message: Yield(y),
+            });
+        }
     }
 }
 

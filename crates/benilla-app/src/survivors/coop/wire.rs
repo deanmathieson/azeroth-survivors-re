@@ -403,9 +403,32 @@ pub(in crate::survivors) enum CampAction {
     Buy(u8),
 }
 
+/// The client's hero finished a gather on a node ([`super::super::professions::gather`]), at
+/// this rank of its skill: the host rolls its yield, once per player and node. The host trusts
+/// the rank, as it trusts a client about its own machine.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct GatherAction {
+    pub(in crate::survivors) node: u32,
+    pub(in crate::survivors) rank: u16,
+}
+
+/// The client drank an item from its own bags (already consumed there): the host applies it to
+/// the client's hero. P1 sends the Minor Healing Potion.
+#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct UseItem {
+    pub(in crate::survivors) item: u32,
+}
+
 // ---------------------------------------------------------------------------------------------
 // Host → client
 // ---------------------------------------------------------------------------------------------
+
+/// A yield the host rolled for this client's player: a gather it finished, or a kill it skinned.
+/// Its machine stores it.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(in crate::survivors) struct Yield(
+    pub(in crate::survivors) super::super::professions::gather::YieldMsg,
+);
 
 /// The host's answer to [`Hello`]: the player number it gave this client.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -754,6 +777,22 @@ mod tests {
             ..run
         };
         assert_eq!(round(&camp), camp);
+        let gather = GatherAction { node: 7, rank: 76 };
+        assert_eq!(round(&gather), gather);
+        let used = UseItem { item: 118 };
+        assert_eq!(round(&used), used);
+        let y = Yield(super::super::super::professions::gather::YieldMsg {
+            line: super::super::super::professions::skills::Line::Mining,
+            req: 65,
+            items: vec![(2771, 2), (2836, 1)],
+        });
+        assert_eq!(round(&y), y);
+        let node = super::super::super::professions::gather::NetNode {
+            id: 3,
+            def: 4,
+            depleted: true,
+        };
+        assert_eq!(round(&node), node);
         for action in [
             CampAction::Ready,
             CampAction::Fish,

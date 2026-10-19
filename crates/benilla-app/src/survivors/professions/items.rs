@@ -32,6 +32,80 @@ pub(crate) const LINEN_BAG: u32 = 4238;
 /// display and icon are the gear catalog's (`gear/catalog.rs`, id 120).
 pub(crate) const HELM_OF_VALOR: u32 = 16731;
 
+// The gathered materials (section 3.3), each a real 1.12 entry from memory.
+/// Iron Ore. Entry unverified.
+pub(crate) const IRON_ORE: u32 = 2772;
+/// Mithril Ore. Entry unverified.
+pub(crate) const MITHRIL_ORE: u32 = 3858;
+/// Truesilver Ore. Entry unverified.
+pub(crate) const TRUESILVER_ORE: u32 = 7911;
+/// Thorium Ore. Entry unverified.
+pub(crate) const THORIUM_ORE: u32 = 10620;
+/// Rough Stone. Entry unverified.
+pub(crate) const ROUGH_STONE: u32 = 2835;
+/// Coarse Stone. Entry unverified.
+pub(crate) const COARSE_STONE: u32 = 2836;
+/// Heavy Stone. Entry unverified.
+pub(crate) const HEAVY_STONE: u32 = 2838;
+/// Solid Stone. Entry unverified.
+pub(crate) const SOLID_STONE: u32 = 7912;
+/// Dense Stone. Entry unverified.
+pub(crate) const DENSE_STONE: u32 = 12365;
+/// Mageroyal. Entry unverified.
+pub(crate) const MAGEROYAL: u32 = 785;
+/// Bruiseweed. Entry unverified.
+pub(crate) const BRUISEWEED: u32 = 2453;
+/// Kingsblood. Entry unverified.
+pub(crate) const KINGSBLOOD: u32 = 3356;
+/// Liferoot. Entry unverified.
+pub(crate) const LIFEROOT: u32 = 3357;
+/// Fadeleaf. Entry unverified.
+pub(crate) const FADELEAF: u32 = 3818;
+/// Goldthorn. Entry unverified.
+pub(crate) const GOLDTHORN: u32 = 3821;
+/// Khadgar's Whisker. Entry unverified.
+pub(crate) const KHADGARS_WHISKER: u32 = 3358;
+/// Purple Lotus. Entry unverified.
+pub(crate) const PURPLE_LOTUS: u32 = 8831;
+/// Sungrass. Entry unverified.
+pub(crate) const SUNGRASS: u32 = 8838;
+/// Gromsblood. Entry unverified.
+pub(crate) const GROMSBLOOD: u32 = 8846;
+/// Golden Sansam. Entry unverified.
+pub(crate) const GOLDEN_SANSAM: u32 = 13464;
+/// Dreamfoil. Entry unverified.
+pub(crate) const DREAMFOIL: u32 = 13463;
+/// Mountain Silversage. Entry unverified.
+pub(crate) const MOUNTAIN_SILVERSAGE: u32 = 13465;
+/// Plaguebloom. Entry unverified.
+pub(crate) const PLAGUEBLOOM: u32 = 13466;
+/// Icecap. Entry unverified.
+pub(crate) const ICECAP: u32 = 13467;
+/// Black Lotus. Entry unverified.
+pub(crate) const BLACK_LOTUS: u32 = 13468;
+/// Ruined Leather Scraps. Entry unverified.
+pub(crate) const RUINED_LEATHER_SCRAPS: u32 = 2934;
+/// Light Leather. Entry unverified.
+pub(crate) const LIGHT_LEATHER: u32 = 2318;
+/// Medium Leather. Entry unverified.
+pub(crate) const MEDIUM_LEATHER: u32 = 2319;
+/// Heavy Leather. Entry unverified.
+pub(crate) const HEAVY_LEATHER: u32 = 4234;
+/// Thick Leather. Entry unverified.
+pub(crate) const THICK_LEATHER: u32 = 4304;
+/// Rugged Leather. Entry unverified.
+pub(crate) const RUGGED_LEATHER: u32 = 8170;
+/// Raw Brilliant Smallfish. Entry unverified.
+pub(crate) const RAW_BRILLIANT_SMALLFISH: u32 = 6291;
+/// Raw Longjaw Mud Snapper. Entry unverified.
+pub(crate) const RAW_LONGJAW_MUD_SNAPPER: u32 = 6289;
+/// Deviate Fish. Entry unverified.
+pub(crate) const DEVIATE_FISH: u32 = 6522;
+/// Oily Blackmouth. Entry unverified.
+pub(crate) const OILY_BLACKMOUTH: u32 = 6358;
+/// Stonescale Eel. Entry unverified.
+pub(crate) const STONESCALE_EEL: u32 = 13422;
+
 /// One authored template.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ItemDef {
@@ -87,8 +161,8 @@ const fn goods(
     }
 }
 
-/// Every authored item. Stack sizes are 1.12's as remembered (ore 10, bars, herbs and cloth 20,
-/// potions 5); prices and effects are ours.
+/// Every authored item. Stack sizes are 1.12's as remembered (ore and leather 10; bars, stone,
+/// herbs, cloth and fish 20; potions 5); prices and effects are ours.
 pub(crate) static ITEMS: &[ItemDef] = &[
     goods(COPPER_ORE, "Copper Ore", 1, "INV_Ore_Copper_01", 10, 5),
     goods(TIN_ORE, "Tin Ore", 1, "INV_Ore_Tin_01", 10, 25),
@@ -96,6 +170,168 @@ pub(crate) static ITEMS: &[ItemDef] = &[
     goods(PEACEBLOOM, "Peacebloom", 1, "INV_Misc_Flower_02", 20, 5),
     goods(SILVERLEAF, "Silverleaf", 1, "INV_Misc_Herb_10", 20, 5),
     goods(LINEN_CLOTH, "Linen Cloth", 1, "INV_Fabric_Linen_01", 20, 13),
+    goods(IRON_ORE, "Iron Ore", 1, "INV_Ore_Iron_01", 10, 150),
+    goods(MITHRIL_ORE, "Mithril Ore", 1, "INV_Ore_Mithril_02", 10, 250),
+    goods(
+        TRUESILVER_ORE,
+        "Truesilver Ore",
+        2,
+        "INV_Ore_TrueSilver_01",
+        10,
+        500,
+    ),
+    goods(THORIUM_ORE, "Thorium Ore", 1, "INV_Ore_Thorium_02", 10, 250),
+    goods(ROUGH_STONE, "Rough Stone", 1, "INV_Stone_04", 20, 2),
+    goods(COARSE_STONE, "Coarse Stone", 1, "INV_Stone_02", 20, 7),
+    goods(HEAVY_STONE, "Heavy Stone", 1, "INV_Stone_05", 20, 15),
+    goods(SOLID_STONE, "Solid Stone", 1, "INV_Stone_10", 20, 25),
+    goods(DENSE_STONE, "Dense Stone", 1, "INV_Stone_08", 20, 250),
+    goods(MAGEROYAL, "Mageroyal", 1, "INV_Jewelry_Talisman_03", 20, 5),
+    goods(BRUISEWEED, "Bruiseweed", 1, "INV_Misc_Herb_01", 20, 10),
+    goods(KINGSBLOOD, "Kingsblood", 1, "INV_Misc_Herb_03", 20, 30),
+    goods(LIFEROOT, "Liferoot", 1, "INV_Misc_Root_02", 20, 30),
+    goods(FADELEAF, "Fadeleaf", 1, "INV_Misc_Herb_12", 20, 50),
+    goods(GOLDTHORN, "Goldthorn", 1, "INV_Misc_Herb_15", 20, 60),
+    goods(
+        KHADGARS_WHISKER,
+        "Khadgar's Whisker",
+        1,
+        "INV_Misc_Herb_08",
+        20,
+        60,
+    ),
+    goods(PURPLE_LOTUS, "Purple Lotus", 1, "INV_Misc_Herb_17", 20, 30),
+    goods(SUNGRASS, "Sungrass", 1, "INV_Misc_Herb_18", 20, 60),
+    goods(GROMSBLOOD, "Gromsblood", 1, "INV_Misc_Herb_16", 20, 100),
+    goods(
+        GOLDEN_SANSAM,
+        "Golden Sansam",
+        1,
+        "INV_Misc_Herb_SansamRoot",
+        20,
+        200,
+    ),
+    goods(
+        DREAMFOIL,
+        "Dreamfoil",
+        1,
+        "INV_Misc_Herb_DreamFoil",
+        20,
+        200,
+    ),
+    goods(
+        MOUNTAIN_SILVERSAGE,
+        "Mountain Silversage",
+        1,
+        "INV_Misc_Herb_MountainSilverSage",
+        20,
+        250,
+    ),
+    goods(
+        PLAGUEBLOOM,
+        "Plaguebloom",
+        1,
+        "INV_Misc_Herb_PlagueBloom",
+        20,
+        250,
+    ),
+    goods(ICECAP, "Icecap", 1, "INV_Misc_Herb_IceCap", 20, 250),
+    goods(
+        BLACK_LOTUS,
+        "Black Lotus",
+        1,
+        "INV_Misc_Herb_BlackLotus",
+        20,
+        1000,
+    ),
+    goods(
+        RUINED_LEATHER_SCRAPS,
+        "Ruined Leather Scraps",
+        0,
+        "INV_Misc_LeatherScrap_02",
+        10,
+        1,
+    ),
+    goods(
+        LIGHT_LEATHER,
+        "Light Leather",
+        1,
+        "INV_Misc_LeatherScrap_03",
+        10,
+        15,
+    ),
+    goods(
+        MEDIUM_LEATHER,
+        "Medium Leather",
+        1,
+        "INV_Misc_LeatherScrap_05",
+        10,
+        25,
+    ),
+    goods(
+        HEAVY_LEATHER,
+        "Heavy Leather",
+        1,
+        "INV_Misc_LeatherScrap_07",
+        10,
+        60,
+    ),
+    goods(
+        THICK_LEATHER,
+        "Thick Leather",
+        1,
+        "INV_Misc_LeatherScrap_08",
+        10,
+        150,
+    ),
+    goods(
+        RUGGED_LEATHER,
+        "Rugged Leather",
+        1,
+        "INV_Misc_LeatherScrap_02",
+        10,
+        250,
+    ),
+    goods(
+        RAW_BRILLIANT_SMALLFISH,
+        "Raw Brilliant Smallfish",
+        1,
+        "INV_Misc_Fish_02",
+        20,
+        1,
+    ),
+    goods(
+        RAW_LONGJAW_MUD_SNAPPER,
+        "Raw Longjaw Mud Snapper",
+        1,
+        "INV_Misc_Fish_05",
+        20,
+        2,
+    ),
+    goods(
+        DEVIATE_FISH,
+        "Deviate Fish",
+        1,
+        "INV_Misc_MonsterTail_03",
+        20,
+        10,
+    ),
+    goods(
+        OILY_BLACKMOUTH,
+        "Oily Blackmouth",
+        1,
+        "INV_Misc_Fish_07",
+        20,
+        4,
+    ),
+    goods(
+        STONESCALE_EEL,
+        "Stonescale Eel",
+        1,
+        "INV_Misc_Fish_18",
+        20,
+        10,
+    ),
     ItemDef {
         entry: MINOR_HEALING_POTION,
         name: "Minor Healing Potion",
@@ -294,6 +530,42 @@ mod tests {
         (MINOR_HEALING_POTION, 15710),
         (LINEN_BAG, 1183),
         (HELM_OF_VALOR, 31284),
+        (IRON_ORE, 4689),
+        (MITHRIL_ORE, 20661),
+        (TRUESILVER_ORE, 20657),
+        (THORIUM_ORE, 20658),
+        (ROUGH_STONE, 1364),
+        (COARSE_STONE, 3131),
+        (HEAVY_STONE, 1405),
+        (SOLID_STONE, 4719),
+        (DENSE_STONE, 4718),
+        (MAGEROYAL, 942),
+        (BRUISEWEED, 2025),
+        (KINGSBLOOD, 2948),
+        (LIFEROOT, 1500),
+        (FADELEAF, 18169),
+        (GOLDTHORN, 19497),
+        (KHADGARS_WHISKER, 1264),
+        (PURPLE_LOTUS, 19493),
+        (SUNGRASS, 19492),
+        (GROMSBLOOD, 19494),
+        (GOLDEN_SANSAM, 24690),
+        (DREAMFOIL, 24689),
+        (MOUNTAIN_SILVERSAGE, 24692),
+        (PLAGUEBLOOM, 24693),
+        (ICECAP, 24691),
+        (BLACK_LOTUS, 24688),
+        (RUINED_LEATHER_SCRAPS, 4673),
+        (LIGHT_LEATHER, 4674),
+        (MEDIUM_LEATHER, 4675),
+        (HEAVY_LEATHER, 4677),
+        (THICK_LEATHER, 7594),
+        (RUGGED_LEATHER, 20951),
+        (RAW_BRILLIANT_SMALLFISH, 1208),
+        (RAW_LONGJAW_MUD_SNAPPER, 4810),
+        (DEVIATE_FISH, 18096),
+        (OILY_BLACKMOUTH, 18536),
+        (STONESCALE_EEL, 32520),
     ];
 
     /// The looks are real: each display id is an `ItemDisplayInfo.dbc` row whose inventory icon is

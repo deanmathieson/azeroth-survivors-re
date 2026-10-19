@@ -434,6 +434,9 @@ fn refresh_badge(
     }
 }
 
+/// The Auto-build button's width.
+const AUTO_BUTTON_W: f32 = 200.0;
+
 fn spawn_auto_button(
     mut commands: Commands,
     font: Option<Res<HudFont>>,
@@ -447,10 +450,14 @@ fn spawn_auto_button(
         .spawn((
             AutoBuildButton,
             Button,
+            // Centred above the strip's badge: the bottom-right corner is the stock bags'.
             Node {
                 position_type: PositionType::Absolute,
-                right: Val::Px(24.0),
-                bottom: Val::Px(STRIP_BOTTOM + 14.0),
+                left: Val::Percent(50.0),
+                width: Val::Px(AUTO_BUTTON_W),
+                margin: UiRect::left(Val::Px(-AUTO_BUTTON_W / 2.0)),
+                justify_content: JustifyContent::Center,
+                bottom: Val::Px(STRIP_BOTTOM + 52.0),
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(4.0)),

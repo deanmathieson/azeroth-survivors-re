@@ -20,6 +20,12 @@ pub(crate) struct CaptureMode;
 #[derive(Resource)]
 pub(crate) struct SurvivorsUi;
 
+/// Run condition: the stock UI feeds and drains own their queues, which is every run but
+/// survivors' FrameXML opt-in, where a survivors system owns each (or nothing should run).
+pub(crate) fn stock_ui_owns(survivors: Option<Res<SurvivorsUi>>) -> bool {
+    survivors.is_none()
+}
+
 /// The rig's derived character name when `$WOW_RIG` names a body, inserted by
 /// `capture::ProbeRigPlugin`. While present the roster ignores `$WOW_CHAR`: the rig may have to
 /// create its body first, and the `WOW_CHAR` one-shot cannot wait for that.

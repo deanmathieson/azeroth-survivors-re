@@ -1,21 +1,32 @@
-//! Professions and the WoW inventory (docs/PROFESSIONS.md). P0, the spike: the stock 1.12 bags
-//! and item tooltip, loaded as a curated FrameXML ([`crate::ui_script`]'s `survivors_ui`), open
-//! over the survivors HUD on B, mirroring a local [`inventory::Bags`].
+//! Professions and the WoW inventory (docs/PROFESSIONS.md).
+//!
+//! - **P0:** the stock 1.12 bags and item tooltip, loaded as a curated FrameXML
+//!   ([`crate::ui_script`]'s `survivors_ui`), open over the survivors HUD on B, mirroring a local
+//!   [`inventory::Bags`].
+//! - **P1:** the bags and the four gathering skills persist in the profile (version 5,
+//!   [`save`]); veins, herbs and fishing pools spawn in runs and are gathered while fighting, each
+//!   hero's yield its own ([`gather`]); beasts are skinned; the camp's bobber lands fish; the
+//!   potion is drunk from the bags ([`effects`]); K shows the skills.
 //!
 //! - **Opt-in:** this plugin inserts [`crate::run_mode::SurvivorsUi`] beside `CaptureMode`, so the
 //!   world entry loads the curated interface; the stock net drains stand down under it.
 //! - **Kill switch:** `WOW_SURVIVORS_FRAMEXML=0` (also `off`, `false`, `no`) leaves the whole
-//!   plugin out: no FrameXML, no bags, as before P0.
-//! - **Test aid:** `WOW_SURVIVORS_OPEN=bags` opens every bag and hovers the first item once a run
-//!   is playing; with `WOW_SURVIVORS_SHOTS=<dir>` it also saves `<dir>/bags.png`.
-//!
-//! Until P1's profile carries an inventory, the bags hold the P0 test inventory
-//! ([`items::TEST_INVENTORY`]) in memory only; nothing is saved.
+//!   plugin out: no FrameXML, no bags, no gathering, as before P0.
+//! - **Test aids:** `WOW_SURVIVORS_BAGS=test` fills the bags with [`items::TEST_INVENTORY`] in
+//!   memory only, and saves neither the bags nor the skills. `WOW_SURVIVORS_OPEN=bags` opens every
+//!   bag and hovers the first item once a run is playing; with `WOW_SURVIVORS_SHOTS=<dir>` it also
+//!   saves `<dir>/bags.png`.
 
+pub(crate) mod effects;
 pub(crate) mod frames;
+pub(crate) mod gather;
 pub(crate) mod inventory;
 pub(crate) mod items;
+pub(crate) mod nodes;
+pub(crate) mod save;
+pub(crate) mod skills;
 
+use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
 
 use crate::ui_script::{ingame_ui_up, UiInput, UiPaint};
@@ -36,6 +47,11 @@ pub(crate) fn framexml_enabled_by(value: Option<&str>) -> bool {
     })
 }
 
+/// A run's world is up and not behind a loading screen.
+fn world_shown(loading: Option<Res<crate::loading_screen::LoadingScreen>>) -> bool {
+    !loading.is_some_and(|l| l.covering())
+}
+
 pub(super) fn plugin(app: &mut App) {
     if !framexml_enabled() {
         info!("survivors: WOW_SURVIVORS_FRAMEXML is off — no FrameXML, no bags");
@@ -43,9 +59,24 @@ pub(super) fn plugin(app: &mut App) {
     }
     let open_bags = crate::webenv::var("WOW_SURVIVORS_OPEN")
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("bags"));
+    let shadow = crate::webenv::var("WOW_SURVIVORS_BAGS")
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("test"));
     // Present before `OnEnter(InWorld)`, where the UI lifecycle decides what to load.
     app.insert_resource(crate::run_mode::SurvivorsUi)
-        .insert_resource(inventory::Bags::test_inventory())
+        .insert_resource(save::Shadow(shadow))
+        .insert_resource(if shadow {
+            inventory::Bags::test_inventory()
+        } else {
+            inventory::Bags::default()
+        })
+        .init_resource::<skills::Skills>()
+        .init_resource::<gather::YieldInbox>()
+        .init_resource::<gather::GatherOutbox>()
+        .init_resource::<gather::RemoteYields>()
+        .init_resource::<gather::NodeSpawner>()
+        .init_resource::<gather::Gathering>()
+        .init_resource::<gather::UiLines>()
+        .init_resource::<effects::UseOutbox>()
         .insert_resource(frames::OpenBagsAid {
             done: !open_bags,
             shot_dir: crate::webenv::var("WOW_SURVIVORS_SHOTS")
@@ -53,6 +84,9 @@ pub(super) fn plugin(app: &mut App) {
                 .map(std::path::PathBuf::from),
             shot_t: None,
         })
+        // The profile is in by then (`profile::load_profile`, `Startup`).
+        .add_systems(PostStartup, save::load_saved)
+        .add_systems(Update, save::save_changes)
         // The keys, after the UI key feed (the keyboard capture) and the binding dispatch, and
         // before every survivors key system in `WorldStage::Input` and after it.
         .add_systems(
@@ -62,15 +96,36 @@ pub(super) fn plugin(app: &mut App) {
                 .after(crate::bindings::BindingSet)
                 .run_if(ingame_ui_up),
         )
-        // The gestures' intents, drained after the input pass that queued them, and the push,
-        // before this frame's paint.
+        // The gestures' intents, drained after the input pass that queued them (a right-click's
+        // use ahead of the stock script-call applier), and the push, before this frame's paint.
         .add_systems(
             Update,
-            (frames::sync_bags, frames::open_bags_aid)
+            (effects::use_items, frames::sync_bags, frames::open_bags_aid)
                 .chain()
                 .after(UiInput)
                 .before(UiPaint)
+                .before(crate::script_calls::apply_script_calls)
                 .run_if(ingame_ui_up),
+        )
+        // Gathering: the run's nodes where it is simulated, every machine's own gathers, the
+        // yields into the bags, and what the stock UI is told of it all.
+        .add_systems(
+            Update,
+            (
+                (gather::spawn_nodes, gather::skin_kills)
+                    .run_if(super::party::simulates)
+                    .run_if(super::strip::world_runs)
+                    .run_if(world_shown),
+                gather::gather
+                    .run_if(super::strip::world_runs)
+                    .run_if(world_shown),
+                gather::camp_catch,
+                gather::take_yields,
+                gather::show_lines.run_if(ingame_ui_up),
+            )
+                .chain()
+                .after(WorldStage::Input)
+                .after(super::enemies::drop_loot),
         )
         // A click on a bag is the bag's, never the HUD's under it.
         .add_systems(
@@ -115,7 +170,13 @@ pub(crate) mod test_support {
         fn press(&mut self, script: &mut UiScript, key: KeyCode) -> bool {
             let mut keys = ButtonInput::<KeyCode>::default();
             keys.press(key);
-            handle_keys(script, &mut keys, &UiKeyboardCapture::default(), true);
+            handle_keys(
+                script,
+                &mut keys,
+                &UiKeyboardCapture::default(),
+                true,
+                &super::skills::Skills::default(),
+            );
             !keys.just_pressed(key)
         }
 
@@ -132,7 +193,61 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::*;
+
     use super::framexml_enabled_by;
+
+    /// The whole client with survivors on top, its schedules built: a system-order cycle or a
+    /// conflicting query in one system (Bevy's B0001) fails here, not at a player's launch.
+    #[test]
+    fn survivors_professions_the_survivors_schedules_build() {
+        use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _on = EnvGuard::unset("WOW_SURVIVORS_FRAMEXML");
+        // `game_plugins`' headless client, with survivors added before it finishes.
+        let mut app = App::new();
+        app.add_plugins(
+            benilla_world::boot::tuned_default_plugins(bevy::window::Window::default())
+                .disable::<bevy::winit::WinitPlugin>()
+                .disable::<bevy::log::LogPlugin>()
+                .set(bevy::window::WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                })
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::WgpuSettings {
+                        backends: None,
+                        ..default()
+                    }
+                    .into(),
+                    ..default()
+                }),
+        );
+        app.add_plugins(benilla_world::world_plugins::WorldPlugins);
+        app.add_plugins(crate::game_plugins::GamePlugins {
+            connect: false,
+            start: crate::char_select::ClientState::InWorld,
+        });
+        app.add_plugins(crate::survivors::SurvivorsPlugin);
+        app.finish();
+        app.cleanup();
+        let labels: Vec<_> = app
+            .world()
+            .resource::<Schedules>()
+            .iter()
+            .map(|(_, schedule)| schedule.label())
+            .collect();
+        for label in labels {
+            app.world_mut().schedule_scope(label, |world, schedule| {
+                if let Err(e) = schedule.initialize(world) {
+                    panic!("{label:?} does not build: {e}");
+                }
+            });
+        }
+    }
 
     #[test]
     fn survivors_framexml_kill_switch() {

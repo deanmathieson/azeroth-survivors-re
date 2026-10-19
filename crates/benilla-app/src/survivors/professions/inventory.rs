@@ -51,15 +51,45 @@ impl BagError {
     }
 }
 
+/// The bags' save section (docs/PROFESSIONS.md, 8): `[inventory]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct InventorySave {
+    /// The worn bag entries in containers 1-4; 0 is empty.
+    pub(crate) bags: [u32; WORN_BAGS],
+    pub(crate) items: Vec<SlotSave>,
+}
+
+/// One saved slot.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SlotSave {
+    /// 0 the Backpack, 1-4 the worn bags.
+    pub(crate) bag: i64,
+    pub(crate) slot: u32,
+    pub(crate) item: u32,
+    pub(crate) count: u32,
+}
+
 /// The containers and their contents. `generation` moves on every change, so the feed pushes
 /// only when something did.
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Debug, Default)]
 pub(crate) struct Bags {
     /// The worn bags' entries, containers 1-4; 0 is an empty bag slot.
     worn: [u32; WORN_BAGS],
     /// Occupied slots by `(container, 1-based slot)`.
     slots: BTreeMap<(i64, u32), Stack>,
     generation: u64,
+    /// The shared potion cooldown's start on the `GetTime` clock, while one runs; not saved.
+    potion_cooldown: Option<f64>,
+}
+
+/// The same contents, whatever the change counter says.
+impl PartialEq for Bags {
+    fn eq(&self, other: &Self) -> bool {
+        self.worn == other.worn
+            && self.slots == other.slots
+            && self.potion_cooldown == other.potion_cooldown
+    }
 }
 
 impl Bags {
@@ -86,6 +116,60 @@ impl Bags {
 
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// The potion cooldown's start, if one was started.
+    pub(crate) fn potion_cooldown(&self) -> Option<f64> {
+        self.potion_cooldown
+    }
+
+    /// Start the potion cooldown at `now` (`GetTime`), so the bag slots show its sweep.
+    pub(crate) fn start_potion_cooldown(&mut self, now: f64) {
+        self.potion_cooldown = Some(now);
+        self.touch();
+    }
+
+    /// The bags as the profile saves them: worn bags and every occupied slot.
+    pub(crate) fn to_save(&self) -> InventorySave {
+        InventorySave {
+            bags: self.worn,
+            items: self
+                .slots
+                .iter()
+                .map(|(&(bag, slot), s)| SlotSave {
+                    bag,
+                    slot,
+                    item: s.item,
+                    count: s.count,
+                })
+                .collect(),
+        }
+    }
+
+    /// From the profile. An unknown item, a slot past its bag's size, an overfull stack and a
+    /// second item in one slot are skipped with a warning; they never fail the load.
+    pub(crate) fn from_save(save: &InventorySave) -> Self {
+        let mut bags = Self::with_worn(save.bags);
+        for s in &save.items {
+            let fits = items::template(s.item).is_some()
+                && s.slot >= 1
+                && s.slot <= bags.size(s.bag)
+                && s.count >= 1
+                && s.count <= Self::max_stack(s.item)
+                && bags.get(s.bag, s.slot).is_none();
+            if fits {
+                bags.slots.insert(
+                    (s.bag, s.slot),
+                    Stack {
+                        item: s.item,
+                        count: s.count,
+                    },
+                );
+            } else {
+                warn!("survivors: the saved bags hold {s:?}, which this build skips");
+            }
+        }
+        bags
     }
 
     /// The worn bag entry in container `bag` (1-4), 0 when empty or out of range.
@@ -546,6 +630,33 @@ mod tests {
         b.add(LINEN_BAG, 1);
         b.move_item((0, 1), (1, 2), None).unwrap();
         assert_eq!(at(&b, 1, 2), Some((LINEN_BAG, 1)));
+    }
+
+    #[test]
+    fn survivors_bags_save_round_trips_and_skips_what_does_not_fit() {
+        let bags = Bags::test_inventory();
+        let save = bags.to_save();
+        assert_eq!(Bags::from_save(&save), bags);
+        let mut odd = save.clone();
+        odd.items.push(SlotSave {
+            bag: 0,
+            slot: 99,
+            item: COPPER_ORE,
+            count: 1,
+        });
+        odd.items.push(SlotSave {
+            bag: 0,
+            slot: 16,
+            item: 424_242,
+            count: 1,
+        });
+        odd.items.push(SlotSave {
+            bag: 1,
+            slot: 6,
+            item: COPPER_ORE,
+            count: 11,
+        });
+        assert_eq!(Bags::from_save(&odd), bags, "the bad rows are skipped");
     }
 
     #[test]

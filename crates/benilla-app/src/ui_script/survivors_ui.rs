@@ -37,6 +37,8 @@ pub(super) const ROWS: &[&str] = &[
     "Cooldown.xml",
     "ItemButtonTemplate.xml",
     "ContainerFrame.xml",
+    // The gathers' casting bar (`SPELLCAST_START` and the rest).
+    "CastingBarFrame.xml",
 ];
 
 /// The layer files survivors loads, from `assets/ui`: `OpenBackpack` over every bag.
@@ -101,6 +103,9 @@ end
 -- reaches the survivors menu.
 function SurvivorsUi_Escape()
     if StaticPopup_EscapePressed and StaticPopup_EscapePressed() then return 1 end
+    if SurvivorsSkills_Shown and GameTooltip:IsShown() then
+        GameTooltip:Hide() SurvivorsSkills_Shown = nil return 1
+    end
     if StackSplitFrame and StackSplitFrame:IsShown() then StackSplitFrame:Hide() return 1 end
     if CloseMenus and CloseMenus() then return 1 end
     if CloseAllWindows and CloseAllWindows() then return 1 end
@@ -226,6 +231,7 @@ mod tests {
             "StaticPopup1",
             "StackSplitFrame",
             "UIErrorsFrame",
+            "CastingBarFrame",
         ] {
             assert!(
                 s.eval::<bool>(&format!("return {frame} ~= nil")).unwrap(),
@@ -349,9 +355,37 @@ mod tests {
                 "UI_ERROR_MESSAGE",
                 vec![ScriptValue::Str("Inventory is full.".into())],
             ),
+            (
+                "UI_INFO_MESSAGE",
+                vec![ScriptValue::Str("You receive loot.".into())],
+            ),
+            (
+                "SPELLCAST_START",
+                vec![ScriptValue::Str("Mining".into()), ScriptValue::Int(1500)],
+            ),
+            ("SPELLCAST_DELAYED", vec![ScriptValue::Int(250)]),
         ] {
             s.fire_event(event, args);
         }
+        assert!(
+            s.eval::<bool>("return CastingBarFrame:IsShown() == 1")
+                .unwrap(),
+            "a gather's casting bar shows"
+        );
+        s.fire_event("SPELLCAST_STOP", vec![]);
+        // K's skills readout is the stock tooltip, and Esc hides it before anything else.
+        s.run(&crate::survivors::professions::frames::skills_readout(
+            &crate::survivors::professions::skills::Skills::default(),
+        ))
+        .unwrap();
+        assert!(s.eval::<bool>("return GameTooltip:IsShown() == 1").unwrap());
+        assert_eq!(
+            s.eval::<String>("return GameTooltipTextLeft3:GetText()")
+                .unwrap(),
+            "Mining"
+        );
+        assert!(bags.escape(&mut s), "Esc hid the readout");
+        assert!(!s.eval::<bool>("return GameTooltip:IsShown() == 1").unwrap());
 
         // Esc: the bags close first, then there is nothing left to close.
         assert!(bags.escape(&mut s), "Esc closed the bags");

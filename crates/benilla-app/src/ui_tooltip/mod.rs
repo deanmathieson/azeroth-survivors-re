@@ -27,7 +27,11 @@ impl Plugin for UiTooltipPlugin {
         app.add_systems(
             Update,
             (
-                drive_mouseover_tooltip.in_set(UnitFeed),
+                // Survivors' foes are no server's units: a hover there would open an empty
+                // plate, so the world hover stays off under its FrameXML opt-in.
+                drive_mouseover_tooltip
+                    .in_set(UnitFeed)
+                    .run_if(crate::run_mode::stock_ui_owns),
                 // After the trainer and quest feeds, so a list that lands this frame is hoverable
                 // in its tick; outside `UnitFeed`, which the trainer feed follows, so it takes that
                 // set's gate.

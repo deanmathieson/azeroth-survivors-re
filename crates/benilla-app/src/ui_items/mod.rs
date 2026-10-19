@@ -973,12 +973,10 @@ impl Plugin for UiItemsPlugin {
     }
 }
 
-/// Run condition: the bag queues are the server's, which is every run but survivors' FrameXML
-/// opt-in ([`crate::run_mode::SurvivorsUi`]), where a local drain owns each and a stock one would
-/// empty it into a connection that does not exist.
-fn stock_drains(survivors: Option<Res<crate::run_mode::SurvivorsUi>>) -> bool {
-    survivors.is_none()
-}
+// The bag queues are the server's, which is every run but survivors' FrameXML opt-in
+// (`run_mode::SurvivorsUi`), where a local drain owns each and a stock one would empty it into a
+// connection that does not exist.
+use crate::run_mode::stock_ui_owns as stock_drains;
 
 #[cfg(test)]
 mod tests {

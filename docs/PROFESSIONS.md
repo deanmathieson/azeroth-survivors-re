@@ -617,6 +617,40 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
 - **a co-op loopback test** (on the suite's UDP pattern): two players finish the same vein, each gets their own yield, the node depletes, and a third harvest is refused;
 - **screenshot, at both sizes:** Copper mined mid-fight with the casting bar above the XP bar; the skills pane; the fishing loot window at camp; the merchant with the bags open.
 
+**Progress (2026-10-19): the gathering half is built; the economy half is not.**
+
+- **Built:**
+  - profile v5, with `[inventory]` and `[professions.skills]`;
+  - the gathered materials' templates;
+  - nodes per band, whose displays and `Lock.dbc` ranks are checked by a data test;
+  - gathering while fighting, with the real gather spell's kits, the stock `CastingBarFrame` (now a curated row), pushback and the walk-off interrupt;
+  - shared co-op nodes: the replicated `NetNode`, `GatherAction` with `Yield`, and the loopback test;
+  - skinning on beast kills;
+  - fishing pools on water, found through the world's liquid query;
+  - the camp bobber's catch landing in the bags;
+  - skill-ups on vmangos's bands;
+  - the potion, drunk with a right-click;
+  - K's skills readout.
+
+  The co-op protocol is now 16.
+- **Deviations:**
+  - **Skills on the wire:** the client's rank rides on `GatherAction`, rather than in `Hello` plus `SkillsChanged`.
+  - **Creature type:** `Foe` gained no `skin` field. Beasts are recognised by name, and a great beast, elite or boss is skinned outright, with no corpse left to work.
+  - **Trainers:** without them, every hero starts each gathering line at 1/300.
+  - **The skills pane:** K shows the stock `GameTooltip` as a readout, because `SkillFrame` needs `CharacterFrame`, which is far outside the curated load.
+  - **Camp fishing:** the fish goes straight to the bags, not through `LootFrame`.
+  - **Silver, Gold and Dark Iron:** no vein, since no verified display.
+  - **The Stranglekelp, Briarthorn and Earthroot herbs:** left out.
+- **Still to do in P1:**
+  - the tracking blips;
+  - Smelting;
+  - the P profession book;
+  - trainers;
+  - the merchant;
+  - banked run gold;
+  - the purse;
+  - the screenshot check.
+
 ### P2. Alchemy, Cooking, First Aid, Enchanting, and the satchel
 
 **Build:**
