@@ -1,29 +1,45 @@
-//! The four gathering skills (docs/PROFESSIONS.md, 4.6): their 1.12 `SkillLine.dbc` ids, the
-//! player's ranks, and the skill-up rule, whose bands are vmangos's `UpdateGatherSkill`
-//! (`SkillGainChance`): against a node's requirement R, orange below R+25 always gains, yellow to
-//! R+50 three times in four, green to R+100 one in four, grey never.
+//! The professions' skills (docs/PROFESSIONS.md, 4.6, 5): the four gathering lines and P2's four
+//! crafting ones, their 1.12 `SkillLine.dbc` ids, the player's ranks and learned recipes, and the
+//! skill-up rule. A gather's bands are vmangos's `UpdateGatherSkill` (`SkillGainChance`): against
+//! a node's requirement R, orange below R+25 always gains, yellow to R+50 three times in four,
+//! green to R+100 one in four, grey never.
 //!
-//! Every hero knows all four lines from rank 1 at Apprentice (cap 75); the camp's trainer sells
-//! the higher ranks ([`TrainerRank`]), each a real 1.12 rank spell whose `SPELL_EFFECT_SKILL`
-//! (118) names the line and the step. Smelting, a Mining recipe, rises on the crafting bands
-//! ([`craft_gain_chance`]).
+//! Every hero knows every line from rank 1 at Apprentice (cap 75); the camp's trainer sells the
+//! higher ranks ([`TrainerRank`]), each a real 1.12 rank spell whose `SPELL_EFFECT_SKILL` (118)
+//! names the line and the step. A craft rises on its recipe's bands ([`craft_gain_chance`]). The
+//! recipes a hero learned beyond its skill's (bought from the trainer, read off a dropped recipe)
+//! are kept here too ([`Skills::learn`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-/// A gathering skill line: `SkillLine.dbc` 186 Mining, 182 Herbalism, 393 Skinning, 356 Fishing.
+/// A profession's skill line: `SkillLine.dbc` 186 Mining, 182 Herbalism, 393 Skinning, 356
+/// Fishing, 171 Alchemy, 185 Cooking, 129 First Aid, 333 Enchanting. A new line goes on the end:
+/// a [`super::gather::YieldMsg`] carries one on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) enum Line {
     Mining,
     Herbalism,
     Skinning,
     Fishing,
+    Alchemy,
+    Cooking,
+    FirstAid,
+    Enchanting,
 }
 
 impl Line {
-    pub(crate) const ALL: [Line; 4] =
-        [Line::Mining, Line::Herbalism, Line::Skinning, Line::Fishing];
+    pub(crate) const ALL: [Line; 8] = [
+        Line::Mining,
+        Line::Herbalism,
+        Line::Skinning,
+        Line::Fishing,
+        Line::Alchemy,
+        Line::Cooking,
+        Line::FirstAid,
+        Line::Enchanting,
+    ];
 
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -31,6 +47,10 @@ impl Line {
             Line::Herbalism => "Herbalism",
             Line::Skinning => "Skinning",
             Line::Fishing => "Fishing",
+            Line::Alchemy => "Alchemy",
+            Line::Cooking => "Cooking",
+            Line::FirstAid => "First Aid",
+            Line::Enchanting => "Enchanting",
         }
     }
 
@@ -41,53 +61,58 @@ impl Line {
             Line::Herbalism => "herbalism",
             Line::Skinning => "skinning",
             Line::Fishing => "fishing",
+            Line::Alchemy => "alchemy",
+            Line::Cooking => "cooking",
+            Line::FirstAid => "first_aid",
+            Line::Enchanting => "enchanting",
         }
     }
 
     /// The gather spell its casting bar and visuals come from: Mining 2575, Herb Gathering 2366,
-    /// Skinning 8613, Fishing 7620.
+    /// Skinning 8613, Fishing 7620. A crafting line's is its Apprentice rank spell.
     pub(crate) const fn spell(self) -> u32 {
-        match self {
-            Line::Mining => 2575,
-            Line::Herbalism => 2366,
-            Line::Skinning => 8613,
-            Line::Fishing => 7620,
-        }
+        self.rank_spells()[0]
     }
 
-    /// The spell's name, as the casting bar shows it.
+    /// The spell's name, as the casting bar and the trainer show it.
     pub(crate) const fn spell_name(self) -> &'static str {
         match self {
-            Line::Mining => "Mining",
             Line::Herbalism => "Herb Gathering",
-            Line::Skinning => "Skinning",
-            Line::Fishing => "Fishing",
+            other => other.name(),
         }
     }
 
-    /// Fishing is a secondary skill; the other three are professions.
+    /// Fishing, Cooking and First Aid are secondary skills; the others are professions.
     pub(crate) const fn secondary(self) -> bool {
-        matches!(self, Line::Fishing)
+        matches!(self, Line::Fishing | Line::Cooking | Line::FirstAid)
     }
 
-    /// `SkillLine.dbc`'s id: Mining 186, Herbalism 182, Skinning 393, Fishing 356.
+    /// `SkillLine.dbc`'s id.
     pub(crate) const fn skill_line(self) -> u32 {
         match self {
             Line::Mining => 186,
             Line::Herbalism => 182,
             Line::Skinning => 393,
             Line::Fishing => 356,
+            Line::Alchemy => 171,
+            Line::Cooking => 185,
+            Line::FirstAid => 129,
+            Line::Enchanting => 333,
         }
     }
 
-    /// The rank spells, Apprentice to Artisan: the trainer's services. The Apprentice one is the
-    /// gather spell itself.
+    /// The rank spells, Apprentice to Artisan: the trainer's services. A gathering line's
+    /// Apprentice one is the gather spell itself.
     pub(crate) const fn rank_spells(self) -> [u32; 4] {
         match self {
             Line::Mining => [2575, 2576, 3564, 10248],
             Line::Herbalism => [2366, 2368, 3570, 11993],
             Line::Skinning => [8613, 8617, 8618, 10768],
             Line::Fishing => [7620, 7731, 7732, 18248],
+            Line::Alchemy => [2259, 3101, 3464, 11611],
+            Line::Cooking => [2550, 3102, 3413, 18260],
+            Line::FirstAid => [3273, 3274, 7924, 10846],
+            Line::Enchanting => [7411, 7412, 7413, 13920],
         }
     }
 
@@ -98,6 +123,10 @@ impl Line {
             Line::Herbalism => "Interface\\Icons\\Spell_Nature_NatureTouchGrow",
             Line::Skinning => "Interface\\Icons\\INV_Misc_Pelt_Wolf_01",
             Line::Fishing => "Interface\\Icons\\Trade_Fishing",
+            Line::Alchemy => "Interface\\Icons\\Trade_Alchemy",
+            Line::Cooking => "Interface\\Icons\\INV_Misc_Food_15",
+            Line::FirstAid => "Interface\\Icons\\Spell_Holy_SealOfSacrifice",
+            Line::Enchanting => "Interface\\Icons\\Trade_Engraving",
         }
     }
 }
@@ -234,15 +263,42 @@ impl Rank {
     }
 }
 
-/// The player's gathering skills.
+/// The player's profession skills, and the recipes learned beyond them.
 #[derive(bevy::prelude::Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Skills {
     ranks: BTreeMap<Line, Rank>,
+    /// Recipe spells learned from the trainer or a recipe item: `[professions] recipes`.
+    learned: BTreeSet<u32>,
     /// Bumped on every change, the save's gate.
     generation: u64,
 }
 
 impl Skills {
+    /// Whether recipe `spell` was learned from the trainer or a recipe item.
+    pub(crate) fn learned(&self, spell: u32) -> bool {
+        self.learned.contains(&spell)
+    }
+
+    /// Learn recipe `spell`; false when it was known already.
+    pub(crate) fn learn(&mut self, spell: u32) -> bool {
+        let new = self.learned.insert(spell);
+        if new {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        new
+    }
+
+    /// The learned recipes, for the save.
+    pub(crate) fn learned_recipes(&self) -> Vec<u32> {
+        self.learned.iter().copied().collect()
+    }
+
+    /// The saved recipes back; the caller drops the ones this build does not know.
+    pub(crate) fn with_learned(mut self, spells: impl IntoIterator<Item = u32>) -> Self {
+        self.learned.extend(spells);
+        self
+    }
+
     pub(crate) fn rank(&self, line: Line) -> Rank {
         self.ranks.get(&line).copied().unwrap_or_default()
     }
@@ -384,6 +440,7 @@ mod tests {
         s.gathered(Line::Fishing, 1, 0);
         let mut save = s.to_save();
         assert_eq!(save["fishing"].rank, 2);
+        save.insert("tailoring".into(), Rank { rank: 9, max: 75 });
         save.insert("cooking".into(), Rank { rank: 9, max: 75 });
         save.insert(
             "skinning".into(),
@@ -395,6 +452,12 @@ mod tests {
         save.insert("mining".into(), Rank { rank: 80, max: 100 });
         let back = Skills::from_save(&save);
         assert_eq!(back.rank(Line::Fishing).rank, 2);
+        assert_eq!(
+            back.rank(Line::Cooking).rank,
+            9,
+            "a crafting line reads back"
+        );
+        assert!(!back.to_save().contains_key("tailoring"), "not a line yet");
         assert_eq!(back.rank(Line::Skinning).rank, MAX_RANK, "clamped");
         assert_eq!(
             back.rank(Line::Mining),
@@ -462,8 +525,9 @@ mod tests {
                     continue;
                 };
                 let skill = s.effects.iter().position(|&e| e == 118);
+                // Cooking's Apprentice subtext carries a trailing space in the client.
                 let ok = s.name == line.spell_name()
-                    && s.rank.as_deref() == Some(TRAINER_RANKS[step].name)
+                    && s.rank.as_deref().map(str::trim_end) == Some(TRAINER_RANKS[step].name)
                     && s.icon
                         .as_deref()
                         .is_some_and(|i| i.eq_ignore_ascii_case(line.icon()))

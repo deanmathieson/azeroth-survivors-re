@@ -132,14 +132,12 @@ fn show_error(script: &mut UiScript, e: BagError) {
 
 /// The bags as the stock container snapshots, keyed by container id.
 pub(super) fn snapshot(bags: &Bags) -> HashMap<i64, ContainerState> {
-    // The potion cooldown's sweep, `(start ms on GetTime, duration ms, enabled)`.
-    let cooldown = bags.potion_cooldown().map(|start| {
-        (
-            (start * 1000.0) as i64,
-            (super::effects::POTION_COOLDOWN * 1000.0) as u32,
-            true,
-        )
-    });
+    // A cooldown's sweep, `(start ms on GetTime, duration ms, enabled)`, on its items' slots.
+    let cooldown = |item: u32| {
+        let cat = super::effects::consumable(item)?.kind.category()?;
+        bags.cooldown(cat)
+            .map(|start| ((start * 1000.0) as i64, (cat.secs() * 1000.0) as u32, true))
+    };
     bags.containers()
         .map(|bag| {
             let name = if bag == BACKPACK {
@@ -161,7 +159,7 @@ pub(super) fn snapshot(bags: &Bags) -> HashMap<i64, ContainerState> {
                             link: Some(items::link(def)),
                             // A Bind on Pickup item in the bags is already bound.
                             already_bound: def.bonding == 1,
-                            cooldown: cooldown.filter(|_| def.entry == items::MINOR_HEALING_POTION),
+                            cooldown: cooldown(def.entry),
                             ..Default::default()
                         },
                     ))

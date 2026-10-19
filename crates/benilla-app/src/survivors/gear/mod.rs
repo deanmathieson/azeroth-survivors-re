@@ -48,7 +48,7 @@ pub(super) use loot::{GroupDrops, WonLoot};
 pub(super) use outfit::{wear, Dresser};
 pub(super) use raid::{gear_for, raid_piece, set_of, tier_set, RaidVault, SULFURAS};
 pub(super) use save::GearSave;
-pub(in crate::survivors) use store::{class_gear, raid_vault, GearRead};
+pub(in crate::survivors) use store::{class_gear, raid_vault, GearRead, GearStore};
 pub(super) use ui::{GearAction, GearView, ItemIcon};
 pub(super) use view::{
     boss_rows, clock, percent, progress, rarity_label, sources, summed, zone_rows, zones_dropping,
@@ -152,7 +152,10 @@ fn apply_gear(selection: Res<Selection>, gear: store::GearRead, mut parts: ResMu
         return;
     }
     let want = selection.class.map_or_else(Bonuses::default, |c| {
-        worn_bonuses(&gear.get(c).equipped_ids())
+        let worn = gear.get(c);
+        let mut total = worn_bonuses(&worn.equipped_ids());
+        total.merge(&worn.enchant_bonuses());
+        total
     });
     if parts.gear != want {
         parts.gear = want;

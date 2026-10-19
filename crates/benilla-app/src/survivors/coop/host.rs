@@ -459,20 +459,34 @@ pub(super) fn gather_actions(
     }
 }
 
-/// A client drank from its own bags: its hero takes the effect here, where it lives.
+/// A client used an item from its own bags (already consumed there, its cooldown started there):
+/// its hero takes the effect here, where it lives, and a meal eaten at camp feeds every hero.
 pub(super) fn use_items(
+    mut commands: Commands,
     mut msgs: MessageReader<FromClient<UseItem>>,
-    mut heroes: Query<(&Owner, &mut HeroState), With<party::Remote>>,
+    run: Res<Run>,
+    camp: Res<Camp>,
+    mut heroes: Query<(Entity, Option<&Owner>, &mut HeroState)>,
+    mut fx: super::super::units::Fx,
 ) {
     for msg in msgs.read() {
-        if msg.message.item != professions::items::MINOR_HEALING_POTION {
+        let Some(c) = professions::effects::consumable(msg.message.item) else {
             continue;
-        }
-        if let Some((_, mut hero)) = heroes
-            .iter_mut()
-            .find(|(owner, _)| owns(**owner, msg.client_id))
-        {
-            professions::effects::drink(&mut hero);
+        };
+        let Some(user) = heroes
+            .iter()
+            .find(|(_, owner, _)| owner.is_some_and(|o| owns(*o, msg.client_id)))
+            .map(|(e, ..)| e)
+        else {
+            continue;
+        };
+        let party = professions::effects::feeds_party(c, camp.active(&run));
+        for (entity, _, mut hero) in &mut heroes {
+            if entity == user {
+                professions::effects::take_effect(&mut commands, &mut fx, entity, &mut hero, c);
+            } else if party {
+                professions::effects::feed(&mut fx, entity, &mut hero, c);
+            }
         }
     }
 }

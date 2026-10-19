@@ -986,7 +986,7 @@ fn send_hand(
     }
 }
 
-/// This player's finished gathers and drunk potions go to the host, which rolls the yields and
+/// This player's finished gathers and used items go to the host, which rolls the yields and
 /// owns the hero.
 pub(super) fn send_gathers(
     outbox: Option<ResMut<super::super::professions::gather::GatherOutbox>>,

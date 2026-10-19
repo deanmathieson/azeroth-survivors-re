@@ -788,6 +788,9 @@ pub(super) enum Act {
     Replace(usize),
     /// Gold instead of a piece.
     Gold,
+    /// Take the offer's rarest piece apart into Enchanting's materials instead of a piece
+    /// (docs/PROFESSIONS.md, 5.2).
+    Disenchant,
     /// Back from choosing a slot to replace.
     Back,
 }
@@ -799,6 +802,19 @@ pub(super) enum Done {
     Took(&'static Piece, Option<&'static Piece>),
     /// Gold instead, this much, into the party's purse.
     Gold(u32),
+    /// The offer's rarest piece disenchanted: its materials go into the bags.
+    Disenchanted(&'static Piece),
+}
+
+/// The piece a Disenchant takes apart: the offer's rarest.
+pub(super) fn to_disenchant(offer: &JewelOffer) -> Option<&'static Piece> {
+    offer.pieces.iter().copied().max_by_key(|p| p.rarity as u8)
+}
+
+/// A piece's rarity as a 1.12 item quality (2 Uncommon to 5 Legendary), which a disenchant's
+/// yield follows.
+pub(super) fn quality(piece: &Piece) -> u32 {
+    piece.rarity as u32 + 1
 }
 
 /// What taking gold instead pays: [`GOLD_COINS`] coins at what a coin is worth now under the
@@ -844,6 +860,12 @@ pub(super) fn act(
             run.gold += gold;
             Some(Done::Gold(gold))
         }
+        Act::Disenchant => {
+            if offer.replacing.is_some() {
+                return None;
+            }
+            to_disenchant(offer).map(Done::Disenchanted)
+        }
         Act::Back => {
             offer.replacing = None;
             None
@@ -864,6 +886,7 @@ pub(super) fn close(
             Done::Took(piece, Some(old)) => format!("{} replaces {}", piece.name, old.name),
             Done::Took(piece, None) => format!("Equipped {}", piece.name),
             Done::Gold(gold) => format!("Took the gold: +{gold} gold"),
+            Done::Disenchanted(piece) => format!("Disenchanted {}", piece.name),
         },
         2.5,
     ));
@@ -1464,6 +1487,35 @@ mod tests {
         );
         assert_eq!(hero.jewelry.picks, 0);
         assert!(offer.pieces().is_empty());
+    }
+
+    /// Disenchant takes the offer's rarest piece apart, wears nothing and pays no gold.
+    #[test]
+    fn disenchant_takes_the_rarest_piece_apart() {
+        let mut rng = Rng(17);
+        let mut run = Run::default();
+        let mut hero = HeroState::default();
+        hero.jewelry.picks = 1;
+        let pieces: Vec<&'static Piece> = pieces().iter().take(40).collect();
+        let rarest = pieces
+            .iter()
+            .copied()
+            .max_by_key(|p| p.rarity as u8)
+            .unwrap();
+        let mut offer = JewelOffer {
+            pool: pool(None),
+            pieces: pieces.clone(),
+            replacing: None,
+        };
+        let done = act(Act::Disenchant, &mut hero, &mut run, &mut offer).unwrap();
+        assert_eq!(done, Done::Disenchanted(rarest));
+        assert_eq!(run.gold, 0);
+        assert!(quality(rarest) >= 2, "jewelry is Uncommon or better");
+        assert_eq!(
+            close(done, &mut hero, &mut run, &mut offer, &mut rng),
+            Some(Phase::Playing)
+        );
+        assert!(run.banner.as_ref().unwrap().0.starts_with("Disenchanted"));
     }
 
     #[test]

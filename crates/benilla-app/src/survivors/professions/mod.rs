@@ -12,6 +12,11 @@
 //!   `ClassTrainerFrame` sells the gathering ranks, and Smelting's `TradeSkillFrame` turns ore into
 //!   bars ([`stations`], [`recipes`]); Find Minerals and Find Herbs mark the minimap
 //!   ([`tracking`]).
+//! - **P2:** Alchemy, Cooking, First Aid and Enchanting ([`recipes`]): their books at camp in the
+//!   stock `TradeSkillFrame` and `CraftFrame` ([`stations`]); potions, elixirs, flasks, food and
+//!   bandages used from the bags or the satchel bar on 4-6 ([`effects`], [`satchel`]); meat and
+//!   cloth off kills, rare recipes and reagents off bosses ([`gather`]); disenchanting
+//!   ([`disenchant`]); and enchants on the worn gear (`gear::GearSave::enchants`).
 //!
 //! - **Opt-in:** this plugin inserts [`crate::run_mode::SurvivorsUi`] beside `CaptureMode`, so the
 //!   world entry loads the curated interface; the stock net drains stand down under it.
@@ -22,6 +27,7 @@
 //!   bag and hovers the first item once a run is playing; with `WOW_SURVIVORS_SHOTS=<dir>` it also
 //!   saves `<dir>/bags.png`.
 
+pub(crate) mod disenchant;
 pub(crate) mod econ;
 pub(crate) mod effects;
 pub(crate) mod frames;
@@ -30,6 +36,7 @@ pub(crate) mod inventory;
 pub(crate) mod items;
 pub(crate) mod nodes;
 pub(crate) mod recipes;
+pub(crate) mod satchel;
 pub(crate) mod save;
 pub(crate) mod skills;
 pub(crate) mod stations;
@@ -90,7 +97,8 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<econ::GoldTally>()
         .init_resource::<econ::Shop>()
         .init_resource::<stations::CampDesk>()
-        .init_resource::<stations::Smelter>()
+        .init_resource::<stations::Crafter>()
+        .init_resource::<satchel::Satchel>()
         .init_resource::<tracking::Tracking>()
         .insert_resource(frames::OpenBagsAid {
             done: !open_bags,
@@ -124,6 +132,7 @@ pub(super) fn plugin(app: &mut App) {
             (
                 stations::run_stations,
                 effects::use_items,
+                satchel::satchel_input,
                 frames::sync_bags,
                 frames::open_bags_aid,
             )
@@ -138,7 +147,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                (gather::spawn_nodes, gather::skin_kills)
+                (gather::spawn_nodes, gather::kill_yields)
                     .run_if(super::party::simulates)
                     .run_if(super::strip::world_runs)
                     .run_if(world_shown),
@@ -152,6 +161,14 @@ pub(super) fn plugin(app: &mut App) {
                 .chain()
                 .after(WorldStage::Input)
                 .after(super::enemies::drop_loot),
+        )
+        // The satchel bar on the HUD, and the bandages running where the run is simulated.
+        .add_systems(
+            Update,
+            (
+                (satchel::build_satchel, satchel::tick_satchel).chain(),
+                effects::tick_bandages.run_if(super::party::simulates),
+            ),
         )
         // A click on a bag is the bag's, never the HUD's under it.
         .add_systems(

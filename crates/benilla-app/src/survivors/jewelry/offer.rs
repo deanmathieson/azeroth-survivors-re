@@ -159,6 +159,10 @@ pub(super) fn jewel_input(
     mut profile: Option<ResMut<Profile>>,
     auto: Option<Res<Auto>>,
     mut settle: Local<f32>,
+    (selection, mut inbox): (
+        Res<super::super::Selection>,
+        Option<ResMut<super::super::professions::gather::YieldInbox>>,
+    ),
 ) {
     if *phase.get() != Phase::Jewelry {
         return;
@@ -184,6 +188,12 @@ pub(super) fn jewel_input(
         return;
     };
     log_taken(done, profile.as_mut(), auto.as_deref());
+    if let (Done::Disenchanted(piece), Some(inbox)) = (done, inbox.as_mut()) {
+        use super::super::professions::{disenchant, nodes};
+        let band = nodes::band_of(selection.stage_def().name);
+        let y = disenchant::yield_for(super::quality(piece), band, &mut rng);
+        inbox.0.push(y);
+    }
     if let Some(phase) = close(done, &mut me, &mut run, &mut offer, &mut rng) {
         next.set(phase);
     }
@@ -261,6 +271,7 @@ pub(super) fn refresh_offer(
     local: Query<&HeroState, With<LocalHero>>,
     run: Res<Run>,
     font: Option<Res<HudFont>>,
+    professions: Option<Res<super::super::professions::gather::YieldInbox>>,
     mut roots: Query<&mut Node, With<JewelRoot>>,
     rows: Query<Entity, With<JewelRow>>,
     tools: Query<Entity, With<JewelTools>>,
@@ -352,8 +363,16 @@ pub(super) fn refresh_offer(
                 }
             });
             let gold = gold_instead(&run, me);
+            // With the professions on, the rarest piece can be disenchanted instead (5.2).
+            let disenchant = professions
+                .as_ref()
+                .and(super::to_disenchant(&offer))
+                .map(|p| format!("Disenchant {} instead", p.name));
             commands.entity(tools).with_children(|t| {
                 tool(t, f, format!("Take gold instead: +{gold} gold"), Act::Gold);
+                if let Some(label) = disenchant {
+                    tool(t, f, label, Act::Disenchant);
+                }
             });
             let keys = match offer.pieces().len() {
                 1 => "1",

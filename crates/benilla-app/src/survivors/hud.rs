@@ -651,6 +651,14 @@ pub(super) fn setup_hud(
                             ..default()
                         },
                     ));
+                    // The professions' satchel bar, keys 4-6, filled by its own systems.
+                    col.spawn((
+                        super::professions::satchel::SatchelRow,
+                        Node {
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        },
+                    ));
                 });
                 // The clock, with the level and the kill count on one line under it.
                 row.spawn(Node {

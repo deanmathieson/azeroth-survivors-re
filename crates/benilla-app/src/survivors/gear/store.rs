@@ -138,19 +138,19 @@ impl GearRead<'_> {
 
 /// Read and write access to every class's gear.
 #[derive(SystemParam)]
-pub(super) struct GearStore<'w> {
+pub(in crate::survivors) struct GearStore<'w> {
     profile: Option<ResMut<'w, Profile>>,
     shadow: Option<ResMut<'w, Shadow>>,
 }
 
 impl GearStore<'_> {
-    pub(super) fn get(&self, class: usize) -> &GearSave {
+    pub(in crate::survivors) fn get(&self, class: usize) -> &GearSave {
         gear_of(self.profile.as_deref(), self.shadow.as_deref(), class)
     }
 
     /// Change class `class`'s gear with `f`. On the profile the change is queued for saving; in
     /// a shadow it stays in memory. `None`, and `f` unrun, for an unknown class.
-    pub(super) fn edit<R>(
+    pub(in crate::survivors) fn edit<R>(
         &mut self,
         class: usize,
         f: impl FnOnce(&mut GearSave) -> R,

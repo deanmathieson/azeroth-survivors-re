@@ -843,6 +843,14 @@ pub(crate) fn timed_buff(hero: &mut HeroState, key: u32, secs: f32, bonuses: &'s
     run::burst(hero, key, secs, bonuses);
 }
 
+/// The timed buff under `key` replaced by `bonuses` for `secs`: whatever ran under the key ends
+/// first, so a different buff of the same kind (another elixir, another meal) takes its place
+/// rather than refreshing it.
+pub(crate) fn replace_buff(hero: &mut HeroState, key: u32, secs: f32, bonuses: &'static [Bonus]) {
+    run::end_burst(hero, key);
+    run::burst(hero, key, secs, bonuses);
+}
+
 /// The seconds left on the buff under `key`, if it runs.
 #[cfg(test)]
 pub(crate) fn buff_left(hero: &HeroState, key: u32) -> Option<f32> {

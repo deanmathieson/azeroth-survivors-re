@@ -421,8 +421,9 @@ pub(in crate::survivors) struct GatherAction {
     pub(in crate::survivors) rank: u16,
 }
 
-/// The client drank an item from its own bags (already consumed there): the host applies it to
-/// the client's hero. P1 sends the Minor Healing Potion.
+/// The client used an item from its own bags (already consumed there, its cooldown started
+/// there): the host applies it to the client's hero, and a meal eaten at camp to every hero
+/// ([`super::super::professions::effects`]). Any consumable since protocol 21.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::survivors) struct UseItem {
     pub(in crate::survivors) item: u32,

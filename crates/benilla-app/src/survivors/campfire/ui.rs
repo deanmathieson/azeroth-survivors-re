@@ -4,7 +4,8 @@
 //!
 //! Under the FrameXML opt-in ([`crate::run_mode::SurvivorsUi`]) the goblin's goods are the stock
 //! `MerchantFrame`'s (`professions::stations`), so this window becomes his Services beside it, and
-//! the ready check gains the Train and Smelt buttons that open the stock trainer and Smelting.
+//! the ready check gains the Train button that opens the stock trainer and the Smelt, Alchemy,
+//! Cook, First Aid and Enchant buttons that open the crafting books.
 
 use bevy::prelude::*;
 
@@ -60,9 +61,9 @@ enum CampButton {
     Ready,
     Roll,
     CloseMerchant,
-    /// The stock trainer and Smelting windows, under the FrameXML opt-in.
+    /// The stock trainer and the crafting books' windows, under the FrameXML opt-in.
     Train,
-    Smelt,
+    Book(crate::survivors::professions::skills::Line),
 }
 #[derive(Component)]
 struct CampRoot;
@@ -362,27 +363,39 @@ fn build(
                 1.0,
             );
             if stock {
-                root.spawn(Node {
-                    column_gap: px(8.0),
-                    ..default()
-                })
-                .with_children(|row| {
-                    for (button, text) in
-                        [(CampButton::Train, "Train"), (CampButton::Smelt, "Smelt")]
-                    {
-                        glue_button(
-                            row,
-                            &glue,
-                            f,
-                            button,
-                            text,
-                            92.0,
-                            26.0,
-                            GlueBtnKind::Dialog,
-                            1.0,
-                        );
-                    }
-                });
+                use crate::survivors::professions::skills::Line;
+                for buttons in [
+                    [
+                        (CampButton::Train, "Train"),
+                        (CampButton::Book(Line::Mining), "Smelt"),
+                        (CampButton::Book(Line::Alchemy), "Alchemy"),
+                    ],
+                    [
+                        (CampButton::Book(Line::Cooking), "Cook"),
+                        (CampButton::Book(Line::FirstAid), "First Aid"),
+                        (CampButton::Book(Line::Enchanting), "Enchant"),
+                    ],
+                ] {
+                    root.spawn(Node {
+                        column_gap: px(8.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (button, text) in buttons {
+                            glue_button(
+                                row,
+                                &glue,
+                                f,
+                                button,
+                                text,
+                                92.0,
+                                26.0,
+                                GlueBtnKind::Dialog,
+                                1.0,
+                            );
+                        }
+                    });
+                }
             }
             root.spawn((RollText, label(f, "", 12.0, SYSTEM)));
             root.spawn(Node {
@@ -398,7 +411,8 @@ fn build(
         });
 }
 
-/// Ready and the roll go out as the local player's asks; Train and Smelt toggle their windows.
+/// Ready and the roll go out as the local player's asks; Train and the books toggle their
+/// windows.
 fn camp_clicks(
     clicks: Res<GlueClicks>,
     buttons: Query<(Entity, &CampButton, Option<&GlueDisabled>)>,
@@ -423,9 +437,9 @@ fn camp_clicks(
                     desk.trainer = !desk.trainer;
                 }
             }
-            CampButton::Smelt => {
+            CampButton::Book(line) => {
                 if let Some(desk) = desk.as_mut() {
-                    desk.smelting = !desk.smelting;
+                    desk.toggle(*line);
                 }
             }
         }
@@ -586,7 +600,7 @@ fn refresh_camp(
         let want = match button {
             CampButton::Ready => camp.ready.contains(&me),
             CampButton::Roll => camp.has_rolled(me),
-            CampButton::CloseMerchant | CampButton::Train | CampButton::Smelt => false,
+            CampButton::CloseMerchant | CampButton::Train | CampButton::Book(_) => false,
         };
         if disabled.0 != want {
             disabled.0 = want;

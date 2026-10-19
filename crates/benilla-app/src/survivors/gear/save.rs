@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::super::bonus::Bonuses;
+use super::super::professions::recipes::{self, Enchant};
 use super::looks::HeroLooks;
 use super::{item, Item, Slot};
 
@@ -20,6 +22,10 @@ pub(in crate::survivors) struct GearSave {
     /// The class hero's name and features ([`super::looks`]); a save from before them reads as no
     /// name and the class trainer's features.
     pub looks: HeroLooks,
+    /// Each enchanted piece's enchant: an [`Item::id`] (as a string, TOML's keys) to its
+    /// `SpellItemEnchantment` id ([`Enchant`]). A piece or an enchant this build does not know
+    /// adds nothing.
+    pub enchants: BTreeMap<String, u32>,
 }
 
 /// What collecting a piece came to.
@@ -43,7 +49,33 @@ impl GearSave {
         collected: BTreeSet::new(),
         equipped: BTreeMap::new(),
         looks: HeroLooks::EMPTY,
+        enchants: BTreeMap::new(),
     };
+
+    /// The enchant on piece `id`, if it has one this build knows.
+    pub fn enchant_of(&self, id: u16) -> Option<&'static Enchant> {
+        self.enchants
+            .get(&id.to_string())
+            .and_then(|&e| recipes::enchant_by_id(e))
+    }
+
+    /// Put enchant `enchant` (a `SpellItemEnchantment` id) on piece `id`, over any it had.
+    pub fn enchant(&mut self, id: u16, enchant: u32) {
+        self.enchants.insert(id.to_string(), enchant);
+    }
+
+    /// What the worn pieces' enchants grant, each where its piece is worn in its own slot.
+    pub fn enchant_bonuses(&self) -> Bonuses {
+        let mut total = Bonuses::default();
+        for id in self.equipped_ids() {
+            if let Some(e) = self.enchant_of(id) {
+                if item(id).is_some_and(|i| i.slot == e.slot) {
+                    total.add_all(e.bonuses);
+                }
+            }
+        }
+        total
+    }
 
     pub fn has(&self, id: u16) -> bool {
         self.collected.contains(&id)
@@ -101,6 +133,39 @@ mod tests {
         let text = toml::to_string_pretty(&gear).unwrap();
         assert!(text.contains("main_hand"), "{text}");
         assert_eq!(toml::from_str::<GearSave>(&text).unwrap(), gear);
+    }
+
+    /// An enchant joins the worn piece's bonuses, survives a save, and adds nothing on a piece in
+    /// another slot or off.
+    #[test]
+    fn enchants_join_the_worn_bonuses_and_save() {
+        use super::super::super::bonus::StatKey;
+        let chest = piece(0, Slot::Chest, Rarity::Rare).unwrap();
+        let mut gear = GearSave::default();
+        gear.collect(chest);
+        assert_eq!(gear.enchant_bonuses(), Bonuses::default());
+        // Enchant Chest - Major Health.
+        let major = recipes::recipe(20026).and_then(|r| r.enchant).unwrap();
+        gear.enchant(chest.id, major.id);
+        assert!(gear.enchant_bonuses().get(StatKey::MaxHealth) > 0.0);
+        let text = toml::to_string_pretty(&gear).unwrap();
+        assert!(text.contains("[enchants]"), "{text}");
+        let back: GearSave = toml::from_str(&text).unwrap();
+        assert_eq!(back, gear);
+        assert_eq!(back.enchant_of(chest.id), Some(major));
+        // A wrist enchant on the chest does nothing; an unknown one neither.
+        let wrist = recipes::recipe(7418).and_then(|r| r.enchant).unwrap();
+        gear.enchant(chest.id, wrist.id);
+        assert_eq!(gear.enchant_bonuses(), Bonuses::default());
+        gear.enchant(chest.id, 999_999);
+        assert_eq!(gear.enchant_of(chest.id), None);
+        // Off, it adds nothing.
+        gear.enchant(chest.id, major.id);
+        gear.equipped.clear();
+        assert_eq!(gear.enchant_bonuses(), Bonuses::default());
+        // A save from before enchants reads as none.
+        let old: GearSave = toml::from_str("collected = [108]").unwrap();
+        assert!(old.enchants.is_empty());
     }
 
     #[test]

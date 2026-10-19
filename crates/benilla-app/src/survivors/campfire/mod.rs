@@ -64,7 +64,7 @@ pub(super) const BUFF_SECS: f32 = 120.0;
 /// The timed buffs' keys in the mechanics toolkit, far above any granted mechanic's.
 const MONGOOSE_KEY: u32 = 0xCA4F_0001;
 const FORTITUDE_KEY: u32 = 0xCA4F_0002;
-const WELL_FED_KEY: u32 = 0xCA4F_0003;
+pub(in crate::survivors) const WELL_FED_KEY: u32 = 0xCA4F_0003;
 /// Elixir of the Mongoose (+25 Agility, +2% crit): crit and a little speed.
 pub(super) const MONGOOSE: &[Bonus] = &[
     Bonus::new(StatKey::CritChance, 0.04),

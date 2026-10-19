@@ -79,6 +79,11 @@ pub(crate) const ADDONS: &[(&str, &str)] = &[
         "Blizzard_TradeSkillUI",
         r"Interface\AddOns\Blizzard_TradeSkillUI\Blizzard_TradeSkillUI.xml",
     ),
+    // Enchanting's craft window (P2).
+    (
+        "Blizzard_CraftUI",
+        r"Interface\AddOns\Blizzard_CraftUI\Blizzard_CraftUI.xml",
+    ),
 ];
 
 /// Run after `UIParent.xml`. Every callee is a plain global write that a real definition would
@@ -106,6 +111,7 @@ NUM_BANKBAGSLOTS = NUM_BANKBAGSLOTS or 6
 -- have nothing to load: no `LoadAddOn`, whose failure would raise the stock message box.
 function ClassTrainerFrame_LoadUI() end
 function TradeSkillFrame_LoadUI() end
+function CraftFrame_LoadUI() end
 
 -- Frames the bag and window code indexes unguarded, hidden: the bag bar's buttons (the windows
 -- light them), the chat box (shift-click links into it when shown), the bank (the column layout
@@ -291,6 +297,7 @@ mod tests {
             "MerchantFrame",
             "ClassTrainerFrame",
             "TradeSkillFrame",
+            "CraftFrame",
         ] {
             assert!(
                 s.eval::<bool>(&format!("return {frame} ~= nil")).unwrap(),
@@ -554,7 +561,7 @@ mod tests {
         assert!(!w.desk.trainer, "its close closes the desk's");
 
         // Smelting: two Copper Bars, the casting bar up while they cast.
-        w.desk.smelting = true;
+        w.desk.toggle(skills::Line::Mining);
         w.frame(&mut s, true, 0.016);
         sync(&mut s, &mut w);
         assert!(lua_true(&s, "TradeSkillFrame:IsVisible()"));
@@ -578,10 +585,47 @@ mod tests {
         }
         assert_eq!(w.bags.count(items::COPPER_BAR), bars + 2);
 
-        // The camp ends: Smelting closes.
+        // Alchemy in the same window: a Minor Healing Potion from the test bags' herbs.
+        w.bags.add(items::EMPTY_VIAL, 1);
+        w.desk.toggle(skills::Line::Alchemy);
+        w.frame(&mut s, true, 0.016);
+        sync(&mut s, &mut w);
+        assert!(lua_true(&s, "TradeSkillFrame:IsVisible()"));
+        let potions = w.bags.count(items::MINOR_HEALING_POTION);
+        s.run(
+            "for i = 1, GetNumTradeSkills() do \
+               if GetTradeSkillInfo(i) == 'Minor Healing Potion' then DoTradeSkill(i, 1) end \
+             end",
+        )
+        .unwrap();
+        w.frame(&mut s, true, 0.016);
+        w.frame(&mut s, true, 3.0);
+        sync(&mut s, &mut w);
+        assert_eq!(w.bags.count(items::MINOR_HEALING_POTION), potions + 1);
+
+        // Enchanting's craft window, with a bracer worn: Minor Health goes on it.
+        w.gear.wear_everything();
+        w.desk.toggle(skills::Line::Enchanting);
+        w.frame(&mut s, true, 0.016);
+        sync(&mut s, &mut w);
+        assert!(lua_true(&s, "not TradeSkillFrame:IsVisible()"));
+        assert!(lua_true(&s, "CraftFrame:IsVisible()"));
+        s.run(
+            "for i = 1, GetNumCrafts() do \
+               if GetCraftInfo(i) == 'Enchant Bracer - Minor Health' then DoCraft(i) end \
+             end",
+        )
+        .unwrap();
+        w.frame(&mut s, true, 0.016);
+        w.frame(&mut s, true, 5.0);
+        sync(&mut s, &mut w);
+        assert_eq!(w.gear.enchants(), 1, "the bracer is enchanted");
+
+        // The camp ends: the craft window closes.
         w.frame(&mut s, false, 0.016);
         sync(&mut s, &mut w);
         assert!(lua_true(&s, "not TradeSkillFrame:IsVisible()"));
+        assert!(lua_true(&s, "not CraftFrame:IsVisible()"));
         assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     }
 

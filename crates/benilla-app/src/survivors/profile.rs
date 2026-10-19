@@ -26,9 +26,11 @@ use super::{data, Run, Selection};
 /// opens a version 3 save read-only. 4: the codex and Faire sections, which a version 3 build
 /// would drop, so it opens a version 4 save read-only. 5: the bags, the purse, the gathering skills
 /// and the tracking ([`super::professions::save`]), which a version 4 build would drop, so it opens
-/// a version 5 save read-only. Each version only adds fields, so an older save loads as it is and
-/// is written back as this version.
-pub(super) const PROFILE_VERSION: u32 = 5;
+/// a version 5 save read-only. 6: the learned recipes and the satchel bar
+/// ([`super::professions::save`]) and each piece's enchant (`GearSave::enchants`), which a version
+/// 5 build would drop, so it opens a version 6 save read-only. Each version only adds fields, so
+/// an older save loads as it is and is written back as this version.
+pub(super) const PROFILE_VERSION: u32 = 6;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
 
@@ -566,8 +568,7 @@ mod tests {
     use super::*;
 
     /// A version 4 save (no bags, no skills) loads as it is, empty-handed, and its next write is
-    /// version 5; a version 5 save's bags and skills round-trip; a version 6 save is left
-    /// read-only.
+    /// this version; the bags and skills round-trip; a newer save is left read-only.
     #[test]
     fn survivors_profile_v4_migrates_to_v5_and_v5_round_trips() {
         let v4 = "version = 4\n\n[account]\nruns = 3\n";
@@ -575,7 +576,7 @@ mod tests {
         assert!(loaded.corrupt_text.is_none());
         let p = loaded.profile;
         assert!(p.writable);
-        assert_eq!(p.version, 5, "written back as version 5");
+        assert_eq!(p.version, PROFILE_VERSION, "written back as this version");
         assert_eq!(p.account.runs, 3);
         assert_eq!(p.inventory, InventorySave::default());
         assert!(p.professions.skills.is_empty());
@@ -600,11 +601,43 @@ mod tests {
             bags
         );
 
-        let v6 = text.replacen("version = 5", "version = 6", 1);
+        let newer = text.replacen(
+            &format!("version = {PROFILE_VERSION}"),
+            &format!("version = {}", PROFILE_VERSION + 1),
+            1,
+        );
         assert!(
-            !load_text(&v6).profile.writable,
+            !load_text(&newer).profile.writable,
             "a newer save stays read-only"
         );
+    }
+
+    /// A version 5 save (P1's: bags, skills, purse; no recipes, satchel or enchants) loads as it
+    /// is and is written back as version 6; P2's recipes, satchel and enchants round-trip.
+    #[test]
+    fn survivors_profile_v5_migrates_to_v6_and_v6_round_trips() {
+        let v5 = "version = 5\n\n[account]\nruns = 7\n\n[purse]\ncopper = 120\n\n\
+                  [professions]\ntracking = \"herbs\"\n\n[professions.skills.mining]\n\
+                  rank = 80\nmax = 150\n\n[classes.mage.gear]\ncollected = [108]\n";
+        let loaded = load_text(v5);
+        assert!(loaded.corrupt_text.is_none());
+        let p = loaded.profile;
+        assert!(p.writable);
+        assert_eq!(p.version, 6, "written back as version 6");
+        assert_eq!((p.account.runs, p.purse.copper), (7, 120));
+        assert_eq!(p.professions.skills["mining"].rank, 80);
+        assert!(p.professions.recipes.is_empty() && p.professions.satchel.is_empty());
+        assert!(p.classes["mage"].gear.enchants.is_empty());
+
+        let mut p6 = p.clone();
+        p6.professions.recipes = vec![17635, 7836];
+        p6.professions.satchel = vec![13446, 0, 14530];
+        p6.classes.get_mut("mage").unwrap().gear.enchant(108, 1900);
+        let text = toml::to_string_pretty(&p6).unwrap();
+        assert!(text.contains("version = 6"), "{text}");
+        assert!(text.contains("recipes = [") && text.contains("satchel = ["));
+        let back = load_text(&text).profile;
+        assert_eq!(back, p6);
     }
 
     #[test]

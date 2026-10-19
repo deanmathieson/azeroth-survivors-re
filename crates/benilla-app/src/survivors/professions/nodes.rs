@@ -1,7 +1,8 @@
 //! What can be gathered where (docs/PROFESSIONS.md, 4.1, 4.4, 4.5): the veins, herbs and fishing
 //! pools as real 1.12 game objects, each with its `GameObjectDisplayInfo.dbc` model and its
-//! `Lock.dbc` lock, which names the skill and the rank it needs; the zone bands; and what a
-//! skinned beast gives.
+//! `Lock.dbc` lock, which names the skill and the rank it needs; the zone bands; what a skinned
+//! beast gives; and P2's kill and catch tables: a beast's meat, a humanoid's cloth, the camp's
+//! cooking fish, and the rare recipes and reagents a boss or an elite drops.
 //!
 //! **Verified** by the data test [`tests::every_node_resolves_in_the_client`]: each display's model
 //! is the node's (its file name), and each lock's skill slot is the node's skill at its rank.
@@ -298,6 +299,24 @@ pub(crate) static NODES: &[NodeDef] = &[
             "bush_blacklotus",
         )
     },
+    // P2: the two herbs the potion ladder needs between Mageroyal and Kingsblood, at the end so
+    // the nodes before keep their ids.
+    herb(
+        "Stranglekelp",
+        700,
+        519,
+        85,
+        STRANGLEKELP,
+        "bush_stranglekelp01",
+    ),
+    herb(
+        "Wild Steelbloom",
+        371,
+        32,
+        115,
+        WILD_STEELBLOOM,
+        "bush_steelbloom01",
+    ),
 ];
 
 /// A zone band (4.1).
@@ -329,8 +348,8 @@ pub(crate) fn band_of(map: &str) -> Band {
 pub(crate) fn band_nodes(band: Band) -> &'static [usize] {
     match band {
         Band::B1 => &[0, 1, 2, 3],
-        Band::B15 => &[0, 4, 5, 6, 7],
-        Band::B30 => &[8, 9, 10, 11, 12, 13, 14, 15, 16],
+        Band::B15 => &[0, 4, 5, 6, 7, 29],
+        Band::B30 => &[8, 9, 10, 11, 12, 13, 14, 15, 16, 30],
         Band::B45 => &[9, 17, 18, 19, 20, 21, 22],
         Band::B55 => &[18, 23, 24, 25, 26, 27, 28, 22],
         Band::Raid => &[],
@@ -431,6 +450,115 @@ pub(crate) fn camp_fish(band: Band) -> (u32, u16) {
     }
 }
 
+/// The band's cooking fish, landed beside [`camp_fish`]'s at camp (P2: Cooking's fish to cook);
+/// none in the raid's lava.
+pub(crate) fn cooking_fish(band: Band) -> Option<u32> {
+    match band {
+        Band::B1 => Some(RAW_BRILLIANT_SMALLFISH),
+        Band::B15 => Some(RAW_SAGEFISH),
+        Band::B30 => Some(RAW_SPOTTED_YELLOWTAIL),
+        Band::B45 => Some(WINTER_SQUID),
+        Band::B55 => Some(RAW_NIGHTFIN_SNAPPER),
+        Band::Raid => None,
+    }
+}
+
+/// A beast's meat by its level, for Cooking: 1.12's by zone level, as remembered.
+pub(crate) fn meat(level: u32) -> u32 {
+    match level {
+        0..=10 => STRINGY_WOLF_MEAT,
+        11..=20 => COYOTE_MEAT,
+        21..=26 => BEAR_MEAT,
+        27..=32 => BIG_BEAR_MEAT,
+        33..=44 => LION_MEAT,
+        45..=49 => RAPTOR_FLESH,
+        50..=54 => RED_WOLF_MEAT,
+        55..=57 => TENDER_WOLF_MEAT,
+        _ => GIANT_EGG,
+    }
+}
+
+/// A humanoid's cloth by its level, for First Aid: Linen to Runecloth, by 1.12's bands.
+pub(crate) fn cloth(level: u32) -> u32 {
+    match level {
+        0..=15 => LINEN_CLOTH,
+        16..=25 => WOOL_CLOTH,
+        26..=35 => SILK_CLOTH,
+        36..=47 => MAGEWEAVE_CLOTH,
+        _ => RUNECLOTH,
+    }
+}
+
+/// Whether a foe is a humanoid, by its name, as [`is_beast`] does: the gnolls, kobolds, quilboar,
+/// centaur, furbolgs, trolls, harpies, murlocs, worgen and the human factions. They drop cloth.
+pub(crate) fn is_humanoid(name: &str) -> bool {
+    const HUMANOIDS: &[&str] = &[
+        "Defias",
+        "Kobold",
+        "Riverpaw",
+        "Redridge",
+        "Rot Hide",
+        "Hogger",
+        "Razormane",
+        "Bristleback",
+        "Kolkar",
+        "Burning Blade",
+        "Gnarlpine",
+        "Frostmane",
+        "Gurubashi",
+        "Hakkari",
+        "Blackrock",
+        "Bloodsail",
+        "Venture Co.",
+        "Palemane",
+        "Harpy",
+        "Witchwing",
+        "Scarlet",
+        "Shadowsworn",
+        "Twilight",
+        "Cultist",
+        "Necromancer",
+        "Farmer",
+        "Noble",
+        "Murloc",
+        "Nightbane",
+        "Narg",
+        "Thuros",
+        "Snagglespear",
+    ];
+    HUMANOIDS.iter().any(|h| name.contains(h))
+}
+
+/// What a boss or an elite may drop beside its loot (5.1's rare recipe drops, and two rare
+/// reagents): `(item, percent)` per hero, by band. Authored.
+pub(crate) fn rare_drops(band: Band) -> &'static [(u32, u32)] {
+    match band {
+        Band::B1 => &[],
+        Band::B15 => &[(RECIPE_SAVORY_DEVIATE_DELIGHT, 15)],
+        Band::B30 => &[(RECIPE_SAVORY_DEVIATE_DELIGHT, 10)],
+        Band::B45 => &[
+            (ESSENCE_OF_FIRE, 20),
+            (RECIPE_FLASK_OF_THE_TITANS, 4),
+            (RECIPE_FLASK_OF_SUPREME_POWER, 4),
+        ],
+        Band::B55 => &[
+            (RIGHTEOUS_ORB, 25),
+            (RECIPE_FLASK_OF_THE_TITANS, 5),
+            (RECIPE_FLASK_OF_SUPREME_POWER, 5),
+            (RECIPE_FLASK_OF_DISTILLED_WISDOM, 5),
+            (FORMULA_ENCHANT_WEAPON_CRUSADER, 5),
+        ],
+        Band::Raid => &[
+            (ESSENCE_OF_FIRE, 30),
+            (RIGHTEOUS_ORB, 15),
+            (RECIPE_FLASK_OF_THE_TITANS, 8),
+            (RECIPE_FLASK_OF_SUPREME_POWER, 8),
+            (RECIPE_FLASK_OF_DISTILLED_WISDOM, 8),
+            (FORMULA_ENCHANT_WEAPON_CRUSADER, 8),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,6 +593,38 @@ mod tests {
         assert!(super::super::items::template(item(60)).is_some());
         assert!(is_beast("Hecklefang Hyena") && is_beast("Core Hound"));
         assert!(!is_beast("Razormane Quilboar") && !is_beast("Felhound"));
+        assert!(is_humanoid("Razormane Quilboar") && is_humanoid("Defias Thug"));
+        assert!(!is_humanoid("Hecklefang Hyena") && !is_humanoid("Felhound"));
+        for level in [1, 12, 22, 30, 40, 47, 52, 56, 60] {
+            assert!(super::super::items::template(meat(level)).is_some());
+            assert!(super::super::items::template(cloth(level)).is_some());
+        }
+        for band in [
+            Band::B1,
+            Band::B15,
+            Band::B30,
+            Band::B45,
+            Band::B55,
+            Band::Raid,
+        ] {
+            if let Some(fish) = cooking_fish(band) {
+                assert!(super::super::items::template(fish).is_some());
+            }
+            for &(item, pct) in rare_drops(band) {
+                assert!(super::super::items::template(item).is_some());
+                assert!((1..=50).contains(&pct));
+            }
+        }
+        // A foe is a beast, a humanoid, or neither, never both.
+        for name in [
+            "Gurubashi Bat Rider",
+            "Bloodsail Sea Dog",
+            "Redridge Mongrel",
+            "Razzashi Raptor",
+            "Frostmane Snowstrider",
+        ] {
+            assert!(!(is_beast(name) && is_humanoid(name)), "{name}");
+        }
     }
 
     /// The nodes are real: each display's model is the node's, and each lock's skill slot is the

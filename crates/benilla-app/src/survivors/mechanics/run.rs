@@ -1104,6 +1104,21 @@ pub(crate) fn arm(hero: &mut HeroState, instant: bool, armed: Armed) {
     }
 }
 
+/// The burst under `uid` ended at once, its bonuses off `hero`; whether one ran.
+pub(crate) fn end_burst(hero: &mut HeroState, uid: u32) -> bool {
+    let Some(i) = hero.mechanics.bursts.iter().position(|b| b.uid == uid) else {
+        return false;
+    };
+    let ended = hero.mechanics.bursts.remove(i);
+    for b in ended.bonuses {
+        hero.bonuses.add(&Bonus {
+            value: -b.value,
+            ..*b
+        });
+    }
+    true
+}
+
 /// A burst's bonuses on `hero` for `duration`: refreshed if mechanic `uid`'s is running already.
 pub(crate) fn burst(hero: &mut HeroState, uid: u32, duration: f32, bonuses: &'static [Bonus]) {
     if let Some(running) = hero.mechanics.bursts.iter_mut().find(|b| b.uid == uid) {

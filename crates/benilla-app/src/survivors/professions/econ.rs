@@ -22,7 +22,10 @@ use super::super::hud::{NoteKind, ResultsNotes, MAX_NOTES};
 use super::super::profile::RunEnded;
 use super::super::Run;
 use super::inventory::{BagError, Bags, Stack};
-use super::items::{self, ItemDef, COAL, EMPTY_VIAL, LINEN_BAG};
+use super::items::{
+    self, ItemDef, COAL, CRYSTAL_VIAL, EMPTY_VIAL, HOT_SPICES, LEADED_VIAL, LINEN_BAG, MILD_SPICES,
+    REFRESHING_SPRING_WATER, SOOTHING_SPICES,
+};
 
 /// A run's gold piece, in the purse's copper: a silver.
 pub(crate) const COPPER_PER_RUN_GOLD: u64 = 100;
@@ -31,9 +34,20 @@ pub(crate) const BANK_PERCENT: u64 = 25;
 /// The buyback list's rows, as 1.12's.
 pub(crate) const BUYBACK_SLOTS: usize = 12;
 
-/// What the goblin sells, `(item, price in copper)`: Smelt Steel's Coal, the potion recipes' Empty
-/// Vial and a Linen Bag. The prices are ours.
-pub(crate) static GOBLIN_WARES: &[(u32, u32)] = &[(COAL, 500), (EMPTY_VIAL, 4), (LINEN_BAG, 400)];
+/// What the goblin sells, `(item, price in copper)`: Smelt Steel's Coal, the potion recipes' three
+/// vials, a Linen Bag, and Cooking's spices and water. New wares go on the end, so the rows before
+/// keep their places. The prices are ours.
+pub(crate) static GOBLIN_WARES: &[(u32, u32)] = &[
+    (COAL, 500),
+    (EMPTY_VIAL, 4),
+    (LINEN_BAG, 400),
+    (LEADED_VIAL, 40),
+    (CRYSTAL_VIAL, 200),
+    (MILD_SPICES, 10),
+    (HOT_SPICES, 40),
+    (SOOTHING_SPICES, 100),
+    (REFRESHING_SPRING_WATER, 5),
+];
 
 /// The profile's gold, in copper.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
@@ -418,7 +432,7 @@ mod tests {
             buyback(&mut bags, &mut purse, &mut shop, 5),
             Err(ShopError::NotFound)
         );
-        assert_eq!(buy(&mut bags, &mut purse, 9, 1), Err(ShopError::NotFound));
+        assert_eq!(buy(&mut bags, &mut purse, 99, 1), Err(ShopError::NotFound));
         buy_entry(&mut bags, &mut purse, EMPTY_VIAL).unwrap();
         assert_eq!(bags.count(EMPTY_VIAL), 1);
     }

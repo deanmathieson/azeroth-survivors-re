@@ -1178,6 +1178,98 @@ fn a_raid_telegraph_a_fear_and_a_yell_reach_the_client_over_loopback() {
     assert!(v.x > 0.0 && v.z.abs() < 1e-4, "{v}");
 }
 
+/// Items used over the loopback (docs/PROFESSIONS.md, 5.2, 7): a client's potion heals its own
+/// hero on the host and no one else; a meal it eats at camp feeds every hero, Well Fed; out of
+/// camp the same meal feeds only itself.
+#[test]
+fn a_clients_meal_at_camp_feeds_the_party_and_a_potion_only_itself() {
+    use super::super::campfire::Camp;
+    use super::super::professions::effects::UseOutbox;
+    use super::super::professions::items;
+
+    let mut host_app = app();
+    let mut client_app = app();
+    host_app
+        .init_resource::<Camp>()
+        .init_resource::<crate::creature_anim::PlaySeq>()
+        .add_message::<crate::creature_anim::CastEvent>()
+        .add_message::<crate::creature_anim::SpellGoTargets>()
+        .add_message::<crate::creature_anim::SwingMessage>()
+        .add_message::<crate::combat_text::CombatTextSpawn>()
+        .add_systems(PreUpdate, host::use_items.after(ServerSystems::Receive));
+    client_app
+        .init_resource::<super::super::professions::gather::GatherOutbox>()
+        .init_resource::<UseOutbox>()
+        .add_systems(
+            PostUpdate,
+            super::client::send_gathers.before(ClientSystems::Send),
+        );
+    let channels = host_app.world().resource::<RepliconChannels>();
+    let (server, transport, port) = net::host(channels, 0).expect("binds the loopback");
+    host_app.insert_resource(server).insert_resource(transport);
+    let to = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let channels = client_app.world().resource::<RepliconChannels>();
+    let (client, transport) = net::join(channels, to).expect("binds a client socket");
+    client_app
+        .insert_resource(client)
+        .insert_resource(transport);
+    pump(&mut host_app, &mut client_app, |h, c| {
+        *c.world().resource::<State<ClientState>>() == ClientState::Connected
+            && h.world_mut()
+                .query::<&AuthorizedClient>()
+                .iter(h.world())
+                .count()
+                == 1
+    });
+    let peer = host_app
+        .world_mut()
+        .query_filtered::<Entity, With<ConnectedClient>>()
+        .single(host_app.world())
+        .unwrap();
+    let world = host_app.world_mut();
+    let mine = world.spawn(hero_of(0, 0)).id();
+    let theirs = world
+        .spawn((hero_of(1, 3), host::Owner(peer), party::Remote))
+        .id();
+    let max_hp = |app: &App, e: Entity| app.world().get::<HeroState>(e).unwrap().stats().max_hp;
+    let (my_max, their_max) = (max_hp(&host_app, mine), max_hp(&host_app, theirs));
+    for e in [mine, theirs] {
+        host_app.world_mut().get_mut::<HeroState>(e).unwrap().hp = 1.0;
+    }
+    let send = |client_app: &mut App, item: u32| {
+        client_app
+            .world_mut()
+            .resource_mut::<UseOutbox>()
+            .0
+            .push(item);
+    };
+
+    // A potion: the client's hero heals, the host's does not.
+    send(&mut client_app, items::MINOR_HEALING_POTION);
+    pump(&mut host_app, &mut client_app, |h, _| {
+        h.world().get::<HeroState>(theirs).unwrap().hp > 1.0
+    });
+    assert!((host_app.world().get::<HeroState>(mine).unwrap().hp - 1.0).abs() < 1e-5);
+
+    // A meal out of camp: Well Fed on the client's hero only.
+    send(&mut client_app, items::MONSTER_OMELET);
+    pump(&mut host_app, &mut client_app, |h, _| {
+        max_hp(h, theirs) > their_max
+    });
+    assert_eq!(max_hp(&host_app, mine), my_max, "no camp, no sharing");
+
+    // The same meal at camp: every hero is fed, once each.
+    host_app.world_mut().resource_mut::<Run>().breather = 30.0;
+    send(&mut client_app, items::MONSTER_OMELET);
+    pump(&mut host_app, &mut client_app, |h, _| {
+        max_hp(h, mine) > my_max
+    });
+    assert!(
+        (max_hp(&host_app, theirs) - their_max - (max_hp(&host_app, mine) - my_max)).abs() < 1e-3,
+        "one Well Fed each, not two"
+    );
+}
+
 /// Shared party nodes over the loopback (docs/PROFESSIONS.md, 4.3): the host's player and a
 /// client's both finish the same Copper Vein and each gets their own yield, the client's sent to
 /// it alone; the vein is then depleted, and the client's repeat is refused.

@@ -20,7 +20,12 @@
 //!   hero gives that hero leather [`SKIN_CHANCE`]% of the time, an elite, a boss or a great beast
 //!   always. P1 skins the kill outright: no corpse is left standing to work.
 //! - **Camp fishing** ([`camp_catch`]): the existing bobber's catch also lands the band's fish in
-//!   the bags and rolls Fishing.
+//!   the bags and rolls Fishing, and (P2) the band's cooking fish beside it.
+//! - **Kills** (P2, [`kill_yields`], host or alone): beside the skinning, a beast within
+//!   [`SKIN_RANGE`] yd of a hero may give that hero its meat and a humanoid its cloth
+//!   ([`KILL_DROP_CHANCE`]%, a boss or an elite always), and a boss or an elite may drop a rare
+//!   recipe or reagent ([`nodes::rare_drops`]). None of these raises a skill
+//!   ([`NO_SKILL_UP`]).
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -53,6 +58,10 @@ const MAX_PUSHBACKS: u8 = 3;
 /// Skinning's reach and a horde beast's odds.
 pub(crate) const SKIN_RANGE: f32 = 30.0;
 pub(crate) const SKIN_CHANCE: usize = 3;
+/// A horde kill's odds of meat (a beast) or cloth (a humanoid) for each hero in reach.
+pub(crate) const KILL_DROP_CHANCE: usize = 6;
+/// A [`YieldMsg`]'s requirement that rolls no skill-up: loot, not a gather.
+pub(crate) const NO_SKILL_UP: u16 = u16::MAX;
 
 /// A gatherable node or pool in a run. Replicated, so every machine sees it and its depletion.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -454,6 +463,10 @@ pub(crate) enum CastLine {
     SkillUp(Line, u16),
     /// A trainer rank bought: the line and the step.
     Learned(Line, usize),
+    /// A recipe learned, by its name: "You have learned how to create a new item: …".
+    LearnedRecipe(&'static str),
+    /// An enchant put on the worn gear, by its `SpellItemEnchantment` name.
+    Enchanted(&'static str),
     Full,
     NotReady,
     /// A refusal: the `GlobalStrings.lua` key and the words if the key is missing.
@@ -496,44 +509,93 @@ pub(crate) fn apply_yield(
     }
 }
 
-/// Host or alone: a beast's kill skinned for every hero in reach.
-pub(super) fn skin_kills(
+/// What one kill gives one hero in reach of it: a beast's skin (a skill-up roll) and its meat, a
+/// humanoid's cloth, and a boss's or an elite's rare drops, each rolled on its odds.
+pub(in crate::survivors) fn kill_rolls(
+    kill: &Loot,
+    band: nodes::Band,
+    rng: &mut Rng,
+) -> Vec<YieldMsg> {
+    let mut out = Vec::new();
+    let sure = kill.boss || kill.elite || kill.def.big;
+    let level = kill.def.level;
+    // One roll: a horde kill on its odds, 1-3 sure from a boss, an elite or a great beast.
+    let mut roll = |line: Line, req: u16, item: u32, chance: usize| {
+        if sure || rng.index(100) < chance {
+            let count = if sure { 1 + rng.index(3) as u16 } else { 1 };
+            out.push(YieldMsg {
+                line,
+                req,
+                items: vec![(item, count)],
+            });
+        }
+    };
+    if nodes::is_beast(kill.def.name) {
+        let (skin, req) = nodes::skin(level);
+        roll(Line::Skinning, req, skin, SKIN_CHANCE);
+        roll(
+            Line::Cooking,
+            NO_SKILL_UP,
+            nodes::meat(level),
+            KILL_DROP_CHANCE,
+        );
+    }
+    if nodes::is_humanoid(kill.def.name) {
+        roll(
+            Line::FirstAid,
+            NO_SKILL_UP,
+            nodes::cloth(level),
+            KILL_DROP_CHANCE,
+        );
+    }
+    if kill.boss || kill.elite {
+        let items: Vec<(u32, u16)> = nodes::rare_drops(band)
+            .iter()
+            // An elite drops a fifth as often as a boss.
+            .filter(|&&(_, pct)| rng.index(100) < if kill.boss { pct } else { pct / 5 } as usize)
+            .map(|&(item, _)| (item, 1))
+            .collect();
+        if !items.is_empty() {
+            out.push(YieldMsg {
+                line: Line::Enchanting,
+                req: NO_SKILL_UP,
+                items,
+            });
+        }
+    }
+    out
+}
+
+/// Host or alone: every kill's yields for every hero in reach, into this player's bags or to the
+/// player's machine.
+pub(super) fn kill_yields(
     mut kills: MessageReader<Loot>,
     role: Res<NetRole>,
+    selection: Res<Selection>,
     mut rng: ResMut<Rng>,
     heroes: Query<(&Transform, &HeroState)>,
     mut inbox: ResMut<YieldInbox>,
     mut remote: ResMut<RemoteYields>,
 ) {
+    let band = nodes::band_of(selection.stage_def().name);
     for kill in kills.read() {
-        if !nodes::is_beast(kill.def.name) {
-            continue;
-        }
-        let sure = kill.boss || kill.elite || kill.def.big;
-        let (item, req) = nodes::skin(kill.def.level);
         for (t, hero) in &heroes {
             if units::flat(t.translation - kill.pos).length() > SKIN_RANGE {
                 continue;
             }
-            if !sure && rng.index(100) >= SKIN_CHANCE {
-                continue;
-            }
-            let count = if sure { 1 + rng.index(3) as u16 } else { 1 };
-            let y = YieldMsg {
-                line: Line::Skinning,
-                req,
-                items: vec![(item, count)],
-            };
-            if hero.player == party::LOCAL_PLAYER {
-                inbox.0.push(y);
-            } else if *role == NetRole::Host {
-                remote.0.push((hero.player, y));
+            for y in kill_rolls(kill, band, &mut rng) {
+                if hero.player == party::LOCAL_PLAYER {
+                    inbox.0.push(y);
+                } else if *role == NetRole::Host {
+                    remote.0.push((hero.player, y));
+                }
             }
         }
     }
 }
 
-/// Every machine: the camp bobber's catch for this player also lands the band's fish.
+/// Every machine: the camp bobber's catch for this player also lands the band's fish, and (P2)
+/// its cooking fish.
 pub(super) fn camp_catch(
     camp: Res<Camp>,
     selection: Res<Selection>,
@@ -542,11 +604,16 @@ pub(super) fn camp_catch(
 ) {
     let caught = camp.fished.contains(&party::LOCAL_PLAYER);
     if caught && !*was {
-        let (fish, req) = nodes::camp_fish(nodes::band_of(selection.stage_def().name));
+        let band = nodes::band_of(selection.stage_def().name);
+        let (fish, req) = nodes::camp_fish(band);
+        let mut items = vec![(fish, 1)];
+        if let Some(cook) = nodes::cooking_fish(band).filter(|&c| c != fish) {
+            items.push((cook, 1));
+        }
         inbox.0.push(YieldMsg {
             line: Line::Fishing,
             req,
-            items: vec![(fish, 1)],
+            items,
         });
     }
     *was = caught;
@@ -676,6 +743,19 @@ pub(crate) fn announce(script: &mut UiScript, line: &CastLine) {
             );
             script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
         }
+        CastLine::LearnedRecipe(name) => {
+            let text = format(
+                script,
+                "ERR_LEARN_RECIPE_S",
+                &lua_str(name),
+                format!("You have learned how to create a new item: {name}."),
+            );
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
+        CastLine::Enchanted(name) => {
+            let text = format!("{name} is on your gear: it takes hold from your next run.");
+            script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
+        }
         CastLine::SkillUp(l, rank) => {
             let text = format(
                 script,
@@ -790,6 +870,64 @@ mod tests {
         }
         let pool = pick_node(band, &skills, true, &mut rng).unwrap();
         assert_eq!(NODES[pool].kind, Kind::Pool);
+    }
+
+    /// A boss beast always gives its skin and meat, a humanoid its cloth now and then, and loot
+    /// never raises a skill.
+    #[test]
+    fn survivors_gather_kills_give_skins_meat_cloth_and_drops() {
+        use super::super::super::data::EnemyDef;
+        static WOLF: EnemyDef = EnemyDef {
+            name: "Mangy Wolf",
+            display: 0,
+            hp: 1.0,
+            speed: 1.0,
+            damage: 1.0,
+            scale: 1.0,
+            xp: 1,
+            level: 5,
+            big: false,
+        };
+        static THUG: EnemyDef = EnemyDef {
+            name: "Defias Thug",
+            level: 18,
+            ..WOLF
+        };
+        let kill = |def: &'static EnemyDef, boss: bool| Loot {
+            pos: Vec3::ZERO,
+            xp: 1,
+            boss,
+            elite: false,
+            def,
+        };
+        let mut rng = Rng(7);
+        let got = kill_rolls(&kill(&WOLF, true), nodes::Band::B55, &mut rng);
+        assert!(got
+            .iter()
+            .any(|y| y.line == Line::Skinning && y.items[0].0 == items::RUINED_LEATHER_SCRAPS));
+        assert!(got.iter().any(|y| y.line == Line::Cooking
+            && y.items[0].0 == items::STRINGY_WOLF_MEAT
+            && y.req == NO_SKILL_UP));
+        let mut cloth = 0;
+        for _ in 0..400 {
+            for y in kill_rolls(&kill(&THUG, false), nodes::Band::B1, &mut rng) {
+                assert_eq!((y.line, y.items[0].0), (Line::FirstAid, items::WOOL_CLOTH));
+                cloth += 1;
+            }
+        }
+        assert!((8..=48).contains(&cloth), "about 6% of 400: {cloth}");
+        // Loot rolls no skill-up.
+        let mut bags = Bags::default();
+        let mut skills = Skills::default();
+        let mut lines = Vec::new();
+        let meat = YieldMsg {
+            line: Line::Cooking,
+            req: NO_SKILL_UP,
+            items: vec![(items::STRINGY_WOLF_MEAT, 1)],
+        };
+        apply_yield(&meat, &mut bags, &mut skills, &mut Rng(1), &mut lines);
+        assert_eq!(bags.count(items::STRINGY_WOLF_MEAT), 1);
+        assert_eq!(skills.rank(Line::Cooking).rank, 1);
     }
 
     /// The lines reach the stock UI in GlobalStrings' words.

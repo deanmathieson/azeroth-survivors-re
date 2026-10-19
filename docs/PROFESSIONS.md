@@ -1,6 +1,6 @@
 # Professions and the WoW inventory
 
-Status: P0 (the bags spike) and most of P1 (gathering, skills, the purse, the camp's merchant, trainer and Smelting, tracking) are built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
+Status: P0 (the bags spike), most of P1 (gathering, skills, the purse, the camp's merchant, trainer and Smelting, tracking) and most of P2 (Alchemy, Cooking, First Aid, Enchanting and the satchel bar) are built; the rest is design. This covers a full WoW-style inventory and all twelve 1.12 professions for survivors: Mining, Herbalism, Skinning, Fishing, Alchemy, Cooking, First Aid, Enchanting, Blacksmithing, Leatherworking, Tailoring and Engineering.
 
 Ground rules, as for the rest of the fork:
 
@@ -683,6 +683,52 @@ Every phase that touches the UI also gets a **screenshot check at 1920x1080 and 
 - an enchant changes the worn bonuses and survives a save;
 - co-op: served food reaches each ally within 15 yd, and no one else;
 - **screenshot:** the Alchemy window at camp (recipe colours, reagent counts, the bags); the Enchanting window beside the Armory highlight; the satchel bar mid-run with a cooldown sweeping; a potion tooltip.
+
+**Progress (2026-10-19): built and green; the screenshots, the Armory highlight and the home crafting are not.**
+
+- **Built, the lines and the books** (`skills.rs`, `recipes.rs`, `items.rs`):
+  - Alchemy (171), Cooking (185), First Aid (129) and Enchanting (333) are skill lines beside the four gathering ones: every hero starts an Apprentice at 1, and the trainer sells Journeyman, Expert and Artisan on their real rank spells.
+  - **Curated books:** Alchemy 32 recipes (Minor Healing Potion to the three flasks), Cooking 16 (Brilliant Smallfish to Nightfin Soup), First Aid 10 (Linen to Heavy Runecloth Bandage) and Enchanting 41 (Minor Health on a bracer to Crusader). Each is a real tradeskill spell. `every_recipe_resolves_in_the_client` checks every one against `Spell.dbc`, `SkillLineAbility`, `SpellCastTimes`, `SpellFocusObject` and `SpellItemEnchantment`: its name, reagents, product and count (or its enchant's row and name), line, trivial bands, focus and cast. Its Disenchant and Smelting openers are checked too.
+  - **111 new item templates:** two herbs, the Leaded and Crystal vials, the potions, elixirs and flasks, meat, fish, spices, dishes, cloth, bandages, 22 dusts, essences and shards, two rare reagents and five recipe items. Each display and icon is checked (`displays_and_icons_exist_in_the_client`); all but the recipe items and the two drops are vouched for by a recipe's `Spell.dbc` row.
+  - **Two more herb nodes,** needed by the potion ladder between Mageroyal and Kingsblood: Stranglekelp (lock 519, 85) in the 15-30 band and Wild Steelbloom (lock 32, 115) in the 30-45 band. Their displays and locks are checked by `every_node_resolves_in_the_client`.
+  - **Learning** (`Learn`): a recipe is known at its skill, bought from the trainer for gold, or read off a recipe item (right-click). Recipe items drop off bosses and elites by band (Savory Deviate Delight, the three flasks and Crusader). Learned recipes save as `[professions] recipes`.
+- **Built, the windows** (`stations.rs`, the camp's buttons):
+  - Smelt, Alchemy, Cook and First Aid open the stock `TradeSkillFrame`, one book at a time. Enchant opens the stock `CraftFrame`: `Blizzard_CraftUI` now loads with the curated interface, and the engine test drives Smelting, a potion and an enchant through the real files with no Lua error.
+  - A cast takes the recipe's own time under the casting bar, takes its reagents, makes its product and rolls its line on its bands. Create All repeats.
+  - The trainer is one "Profession Trainer" for all eight lines: ranks, then the recipes it sells.
+  - The goblin also sells the Leaded and Crystal vials, the three spices and Refreshing Spring Water.
+  - **The curated load** with `Blizzard_CraftUI` added: 155 ms against 475 ms for the whole interface (the Mac, one run, measured as in P0).
+- **Built, the effects** (`effects.rs`; numbers ours, `survivors_effects_the_power_budget` holds them to 6.1):
+  - **Potions:** heal 15-40% of max health, or give a short buff (mana potions shorten cooldowns, Mighty Rage +25% damage, Greater Stoneshield, Free Action, Mighty Troll's Blood), all under one shared 60 s cooldown.
+  - **Elixirs and flasks:** last the run. One elixir and one flask at a time; a second replaces the first.
+  - **Food:** Well Fed for 15 min, one meal at a time (the camp fish shares its slot). Eaten at camp, it feeds the whole party.
+  - **Bandages:** heal 20-60% over 6 s. Each hit takes a second off what is left, and Recently Bandaged keeps the next off for 60 s, apart from the potion cooldown.
+  - Elixirs, flasks and food are taken at camp or in a run's first 30 s. Every tooltip's green `Use:` line is written from these numbers.
+  - The real use spells' visuals play on the drinker (Healing Potion, Restore Mana, Elixir of the Giants, Flask of the Titans, Food, First Aid), checked by `consumable_spells_resolve_in_the_client`.
+- **Built, the satchel bar** (`satchel.rs`): three slots on keys 4, 5 and 6, under the toy bar. Drop an item from the stock bags on a slot to fill it; shift-click empties it. Each slot shows the item's icon, its count across the bags and its cooldown's seconds. It uses from the bags, under the same cooldowns, and saves as `[professions] satchel`.
+- **Built, the supply:** beasts give their meat and humanoids their cloth (6% for each hero in reach; sure from a boss, an elite or a great beast). The camp's catch adds the band's cooking fish. Bosses (and, a fifth as often, elites) drop the rare recipes, Essence of Fire and Righteous Orbs by band. Loot rolls no skill-up.
+- **Built, Enchanting:**
+  - **Disenchant** (`disenchant.rs`): with the Enchanting window open, a right-click on an Uncommon or better armour or weapon breaks it into 1.12's table (dust 75%, an essence 20%, a shard 5%; a Rare gives a shard, an Epic one or two of the best), by band. In a solo run, the jewelry choice offers "Disenchant … instead" for the offer's rarest piece.
+  - **Enchants:** stored per piece as `GearSave::enchants` (piece id → `SpellItemEnchantment` id). They join the worn bonuses (`MetaParts::gear`) and show as the Armory tooltip's green line, e.g. "Crusader (+5% damage, +1 health per second)". The best of each slot comes to about +15% output, as 6.1 budgets.
+- **Co-op:** `UseItem` now carries any consumable. The host applies it to the client's hero, and a meal at camp to every hero (the loopback test `a_clients_meal_at_camp_feeds_the_party_and_a_potion_only_itself`). Bandages tick on the host. The protocol is now **21**: `Line` grew, and `UseItem` means more.
+- **Profile version 6:** recipes, the satchel and enchants, which a version 5 build would drop. A version 5 save loads unchanged (`survivors_profile_v5_migrates_to_v6_and_v6_round_trips`).
+- **Deviations:**
+  - **Enchant targets:** an enchant goes on the piece the picked class wears in its slot, with no item pick and no Armory highlight. The engine's `needs_item_target` is left off. It takes hold from the next run, since a run's hero is built at its start.
+  - **No Runed rods:** no tools are required.
+  - **The camp's fire** stands in for the Cooking Fire and the flasks' Alchemy Lab, as it does for the Forge.
+  - **Serve the party:** one meal at camp feeds every hero, wherever they stand, with no `Gift` per serving and no 3 s seated eat. Well Fed lasts 1.12's 15 minutes rather than until the next camp.
+  - **One elixir at a time,** not two (the brief's cap). Mana potions shorten cooldowns, since survivors has no mana.
+  - **The satchel:** the cooldown is a seconds count, not the `SweepUiMaterial` sweep. Nothing is applied on entry; elixirs and flasks may be taken in a run's first 30 s instead.
+  - **Recipes from memory:** the skill each is learned at and the recipe items' entries (Recipe: Flask of the Titans 13519 and so on). Fiery Weapon is sold by the trainer, not dropped.
+  - **Trainers:** Expert Cooking and Expert First Aid come from the trainer, not 1.12's books.
+  - **Disenchant in co-op:** the hand strip's jewelry choice has no Disenchant yet. Bag disenchanting is at camp, with the Enchanting window open.
+  - **Saved under `[professions]`:** the satchel is `[professions] satchel`, not a `[satchel]` section.
+  - **The home screen:** no crafting there yet; every book is at camp.
+- **Still to do in P2:**
+  - the screenshot check (the Alchemy and Enchanting windows at camp, the satchel mid-run, a potion tooltip);
+  - the Armory highlight for enchant targets;
+  - Disenchant on the co-op jewelry hand;
+  - crafting at home.
 
 ### P3. Blacksmithing, Leatherworking, Tailoring, Engineering, and crafted gear
 

@@ -550,11 +550,19 @@ pub(super) fn item_icon(p: &mut ChildSpawnerCommands, icon: &'static str, size: 
     ));
 }
 
-/// A piece's hover box: rarity and slot, what it grants, and whether the class has it. The worn
-/// line is the useful 1.12-style comparison when the same slot already has an item.
+/// A piece's hover box: rarity and slot, its enchant as 1.12's green line under it, what it
+/// grants, and whether the class has it. The worn line is the useful 1.12-style comparison when
+/// the same slot already has an item.
 pub(in crate::survivors) fn item_tip(piece: &Item, gear: &GearSave) -> ArmoryTip {
     let (status, color) = status(gear.has(piece.id), gear.wears(piece.id));
+    let enchant = gear.enchant_of(piece.id).map(|e| {
+        (
+            crate::survivors::professions::recipes::enchant_line(e),
+            TIP_GREEN,
+        )
+    });
     let lines = std::iter::once((kind_line(piece), piece.rarity.color()))
+        .chain(enchant)
         .chain(
             piece
                 .bonuses
@@ -680,5 +688,26 @@ mod tests {
         assert_eq!(tip.title, hovered.name);
         assert!(tip.lines.iter().any(|(line, _)| line.contains(worn.name)));
         assert!(tip.lines.iter().any(|(line, _)| line.starts_with("Equip:")));
+    }
+
+    /// An enchanted piece shows its enchant as the green line under its kind, as 1.12 does.
+    #[test]
+    fn item_tip_shows_the_enchant_in_green() {
+        let weapon = piece(0, Slot::MainHand, Rarity::Rare).unwrap();
+        let mut gear = GearSave::default();
+        gear.collect(weapon);
+        assert_eq!(
+            item_tip(weapon, &gear).lines.len(),
+            weapon.bonuses.len() + 2
+        );
+        gear.enchant(weapon.id, 1900);
+        let tip = item_tip(weapon, &gear);
+        assert_eq!(
+            tip.lines[1],
+            (
+                "Crusader (+5% damage, +1 health per second)".to_string(),
+                TIP_GREEN
+            )
+        );
     }
 }

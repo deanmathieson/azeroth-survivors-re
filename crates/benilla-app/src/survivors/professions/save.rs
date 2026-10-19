@@ -1,7 +1,9 @@
 //! The professions' half of the profile (docs/PROFESSIONS.md, 8): the bags (`[inventory]`), the
-//! purse (`[purse]`), and the skills and the tracking (`[professions]`), new in profile version 5.
-//! Read once after the profile loads; written back through [`Profile::mark_dirty`] whenever any
-//! changes, so the profile's one writer saves them with everything else.
+//! purse (`[purse]`), and the skills, the tracking, the learned recipes and the satchel bar
+//! (`[professions]`). Read once after the profile loads; written back through
+//! [`Profile::mark_dirty`] whenever any changes, so the profile's one writer saves them with
+//! everything else. The bags, purse, skills and tracking are new in profile version 5; the recipes
+//! and the satchel in version 6.
 
 use std::collections::BTreeMap;
 
@@ -12,16 +14,21 @@ use serde::{Deserialize, Serialize};
 use super::super::profile::Profile;
 use super::econ::{Purse, PurseSave};
 use super::inventory::Bags;
+use super::recipes;
+use super::satchel::Satchel;
 use super::skills::{Rank, Skills};
 use super::tracking::Tracking;
 
-/// `[professions]`: the skills by slug, and the tracking in force (`minerals`, `herbs`, or empty).
-/// Recipes, specialisations and cooldowns come with the phases that use them.
+/// `[professions]`: the skills by slug, the tracking in force (`minerals`, `herbs`, or empty), the
+/// recipe spells learned beyond the skills' own, and the satchel bar's items (0 an empty slot).
+/// Specialisations and cooldowns come with the phases that use them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct ProfessionsSave {
     pub(crate) skills: BTreeMap<String, Rank>,
     pub(crate) tracking: String,
+    pub(crate) recipes: Vec<u32>,
+    pub(crate) satchel: Vec<u32>,
 }
 
 /// `WOW_SURVIVORS_BAGS=test`: the bags are the test inventory, and nothing is saved.
@@ -35,9 +42,11 @@ pub(super) struct Saved<'w> {
     skills: ResMut<'w, Skills>,
     purse: ResMut<'w, Purse>,
     tracking: ResMut<'w, Tracking>,
+    satchel: ResMut<'w, Satchel>,
 }
 
-/// `PostStartup`: the bags, purse, skills and tracking out of the profile.
+/// `PostStartup`: the bags, purse, skills, recipes, tracking and satchel out of the profile. A
+/// recipe this build does not know is dropped.
 pub(super) fn load_saved(profile: Option<Res<Profile>>, shadow: Res<Shadow>, mut saved: Saved) {
     let Some(profile) = profile else {
         return;
@@ -45,23 +54,35 @@ pub(super) fn load_saved(profile: Option<Res<Profile>>, shadow: Res<Shadow>, mut
     if !shadow.0 {
         *saved.bags = Bags::from_save(&profile.inventory);
     }
-    *saved.skills = Skills::from_save(&profile.professions.skills);
+    let known = profile
+        .professions
+        .recipes
+        .iter()
+        .copied()
+        .filter(|&s| recipes::recipe(s).is_some());
+    *saved.skills = Skills::from_save(&profile.professions.skills).with_learned(known);
     *saved.purse = Purse::with(profile.purse.copper);
     *saved.tracking = Tracking::from_slug(&profile.professions.tracking);
+    *saved.satchel = Satchel::from_save(&profile.professions.satchel);
 }
+
+/// What [`save_changes`] compares: the bags', skills', purse's and satchel's change counters, and
+/// the tracking.
+type Seen = (u64, u64, u64, Tracking, u64);
 
 /// `Update`: a change to any of them goes into the profile and queues its save.
 pub(super) fn save_changes(
     profile: Option<ResMut<Profile>>,
     shadow: Res<Shadow>,
     saved: Saved,
-    mut seen: Local<Option<(u64, u64, u64, Tracking)>>,
+    mut seen: Local<Option<Seen>>,
 ) {
     let now = (
         saved.bags.generation(),
         saved.skills.generation(),
         saved.purse.generation(),
         *saved.tracking,
+        saved.satchel.generation(),
     );
     let Some(was) = seen.replace(now) else {
         // The first frame: what was just read is what is saved.
@@ -75,7 +96,9 @@ pub(super) fn save_changes(
     }
     profile.inventory = saved.bags.to_save();
     profile.professions.skills = saved.skills.to_save();
+    profile.professions.recipes = saved.skills.learned_recipes();
     profile.professions.tracking = saved.tracking.slug().to_string();
+    profile.professions.satchel = saved.satchel.to_save();
     profile.purse = PurseSave {
         copper: saved.purse.copper(),
     };

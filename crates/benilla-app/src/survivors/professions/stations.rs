@@ -1,17 +1,20 @@
-//! The camp's stock windows (docs/PROFESSIONS.md, 2.1, 5.4): the goblin's `MerchantFrame`, the
-//! gathering trainer's `ClassTrainerFrame` and Smelting's `TradeSkillFrame`, each pushed from the
-//! local [`Bags`], [`Purse`] and [`Skills`], each drained here (the stock net drains stand down
-//! under [`crate::run_mode::SurvivorsUi`]). Everything is this player's own, so nothing goes on the
-//! wire.
+//! The camp's stock windows (docs/PROFESSIONS.md, 2.1, 5.1, 5.4): the goblin's `MerchantFrame`, the
+//! trainer's `ClassTrainerFrame`, the crafting books' `TradeSkillFrame` and Enchanting's
+//! `CraftFrame`, each pushed from the local [`Bags`], [`Purse`] and [`Skills`], each drained here
+//! (the stock net drains stand down under [`crate::run_mode::SurvivorsUi`]). Everything is this
+//! player's own, so nothing goes on the wire.
 //!
 //! - **The merchant** opens with the goblin's own window (a click on him, `campfire`), beside it:
 //!   his goods for the purse, any bag item sold for its `sell_price` (a right-click on a bag slot,
 //!   or a drop on the window), and the buyback tab. Closing either window closes both.
-//! - **The trainer** and **Smelting** open from the camp's Train and Smelt buttons. The trainer
-//!   sells Journeyman, Expert and Artisan on each gathering line; Smelting casts for 3 s at the
-//!   camp's fire, the stock casting bar showing it, takes the ore and makes the bar, and rolls
-//!   Mining on the recipe's bands. Create All repeats while the ore lasts.
-//! - All three close as the camp ends or a modal survivors screen opens.
+//! - **The trainer** opens from the camp's Train button. It sells Journeyman, Expert and Artisan
+//!   on every line, and the recipes its books teach for gold ([`recipes::Learn::Trainer`]).
+//! - **The books** open from the camp's Smelt, Alchemy, Cook, First Aid and Enchant buttons, one at
+//!   a time ([`CampDesk::book`]). A recipe casts for its own time at the camp's fire (the stock
+//!   casting bar showing it), takes its reagents, makes its product and rolls its line on its
+//!   bands; Create All repeats while the reagents last. An enchant goes on the piece the picked
+//!   class wears in its slot ([`GearHook`]).
+//! - All of them close as the camp ends or a modal survivors screen opens.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -22,11 +25,12 @@ use benilla_ui::script::{
 };
 
 use super::super::campfire::{Camp, MerchantWindow};
-use super::super::{Phase, Rng, Run};
+use super::super::gear::{GearStore, Slot};
+use super::super::{Phase, Rng, Run, Selection};
 use super::econ::{self, Purse, Shop, ShopError, Wallet};
 use super::gather::{CastLine, UiLines};
 use super::inventory::Bags;
-use super::recipes::{self, SMELT_SECS};
+use super::recipes::{self, Enchant, Learn, Recipe};
 use super::skills::{Line, Skills, TrainError, TRAINER_RANKS};
 use crate::ui_script::VmMemo;
 
@@ -34,28 +38,48 @@ use crate::ui_script::VmMemo;
 const TRAINER_TYPE_TRADESKILL: u32 = 2;
 /// The names the windows' titles read off the `npc` unit.
 const MERCHANT_NAME: &str = "Goblin Merchant";
-const TRAINER_NAME: &str = "Gathering Trainer";
+const TRAINER_NAME: &str = "Profession Trainer";
 const TRAINER_GREETING: &str =
-    "Ore, herbs, hides and fish: show me what you have gathered, and I will teach you to gather more.";
+    "Gather it, brew it, cook it, bind it or enchant it: show me what you can do, and I will teach you more.";
 
-/// The camp's Train and Smelt buttons ask for their windows here; each press toggles.
+/// The camp's Train and book buttons ask for their windows here; each press toggles.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CampDesk {
     pub(crate) trainer: bool,
-    pub(crate) smelting: bool,
+    /// The open book: Enchanting's is the craft window, the others the tradeskill window.
+    pub(crate) book: Option<Line>,
 }
 
-/// A Smelting cast in progress, and the Create All repeats left after it.
+impl CampDesk {
+    /// A book button: opens `line`'s book in place of any other, or closes it.
+    pub(crate) fn toggle(&mut self, line: Line) {
+        self.book = if self.book == Some(line) {
+            None
+        } else {
+            Some(line)
+        };
+    }
+}
+
+/// A recipe cast in progress, and the Create All repeats left after it.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct Smelter {
+pub(crate) struct Crafter {
     current: Option<(u32, f32)>,
     repeat: u32,
 }
 
-impl Smelter {
+impl Crafter {
     pub(crate) fn busy(&self) -> bool {
         self.current.is_some()
     }
+}
+
+/// What an enchant reaches: the gear the picked class wears.
+pub(in crate::survivors) trait GearHook {
+    /// Whether a piece is worn in `slot`.
+    fn wears(&self, slot: Slot) -> bool;
+    /// Put `e` on the piece worn in its slot, over whatever enchant it had.
+    fn enchant(&mut self, e: &'static Enchant);
 }
 
 /// What this VM was last shown, so a window opens, updates and closes once each.
@@ -63,7 +87,8 @@ impl Smelter {
 pub(crate) struct Shown {
     merchant: Option<(u64, u64)>,
     trainer: Option<(u64, u64)>,
-    smelting: Option<(u64, u64, u32)>,
+    book: Option<(Line, u64, u64, u32)>,
+    craft: Option<(u64, u64)>,
 }
 
 /// One frame's inputs, borrowed from the app or a test.
@@ -77,9 +102,10 @@ pub(crate) struct Frame<'a> {
     pub(crate) purse: &'a mut Purse,
     pub(crate) shop: &'a mut Shop,
     pub(crate) skills: &'a mut Skills,
-    pub(crate) smelter: &'a mut Smelter,
+    pub(crate) crafter: &'a mut Crafter,
     pub(crate) rng: &'a mut Rng,
     pub(crate) lines: &'a mut Vec<CastLine>,
+    pub(in crate::survivors) gear: &'a mut dyn GearHook,
     pub(crate) dt: f32,
 }
 
@@ -90,24 +116,48 @@ pub(super) struct Where<'w> {
     run: Res<'w, Run>,
     camp: Res<'w, Camp>,
     time: Res<'w, Time>,
+    selection: Res<'w, Selection>,
 }
 
 /// The crafting half's state.
 #[derive(SystemParam)]
 pub(super) struct Craft<'w> {
     skills: ResMut<'w, Skills>,
-    smelter: ResMut<'w, Smelter>,
+    crafter: ResMut<'w, Crafter>,
     rng: ResMut<'w, Rng>,
     ui: ResMut<'w, UiLines>,
 }
 
-/// `Update`, after the input pass and before the bag push: the three windows' intents, casts and
+/// The picked class's gear, as an enchant reaches it.
+struct WornGear<'a, 'w> {
+    store: &'a mut GearStore<'w>,
+    class: Option<usize>,
+}
+
+impl GearHook for WornGear<'_, '_> {
+    fn wears(&self, slot: Slot) -> bool {
+        self.class
+            .is_some_and(|c| self.store.get(c).worn(slot).is_some())
+    }
+
+    fn enchant(&mut self, e: &'static Enchant) {
+        let Some(class) = self.class else {
+            return;
+        };
+        let Some(piece) = self.store.get(class).worn(e.slot).map(|p| p.id) else {
+            return;
+        };
+        self.store.edit(class, |g| g.enchant(piece, e.id));
+    }
+}
+
+/// `Update`, after the input pass and before the bag push: the windows' intents, casts and
 /// pushes.
 pub(super) fn run_stations(
     script: Option<NonSendMut<UiScript>>,
     at: Where,
     window: Option<ResMut<MerchantWindow>>,
-    mut desk: ResMut<CampDesk>,
+    (mut desk, mut store): (ResMut<CampDesk>, GearStore),
     mut wallet: Wallet,
     mut craft: Craft,
     mut memo: Local<VmMemo<Shown>>,
@@ -120,10 +170,14 @@ pub(super) fn run_stations(
     let mut merchant_open = window.as_ref().is_some_and(|w| w.open);
     let Craft {
         skills,
-        smelter,
+        crafter,
         rng,
         ui,
     } = &mut craft;
+    let mut gear = WornGear {
+        store: &mut store,
+        class: at.selection.class,
+    };
     drive(
         &mut script,
         shown,
@@ -135,9 +189,10 @@ pub(super) fn run_stations(
             purse: &mut wallet.purse,
             shop: &mut wallet.shop,
             skills,
-            smelter,
+            crafter,
             rng,
             lines: &mut ui.0,
+            gear: &mut gear,
             dt: at.time.delta_secs(),
         },
     );
@@ -148,7 +203,7 @@ pub(super) fn run_stations(
     }
 }
 
-/// One frame of the three windows.
+/// One frame of the windows.
 pub(crate) fn drive(script: &mut UiScript, shown: &mut Shown, f: Frame) {
     let Frame {
         at_camp,
@@ -158,9 +213,10 @@ pub(crate) fn drive(script: &mut UiScript, shown: &mut Shown, f: Frame) {
         purse,
         shop,
         skills,
-        smelter,
+        crafter,
         rng,
         lines,
+        gear,
         dt,
     } = f;
     if !at_camp {
@@ -187,14 +243,18 @@ pub(crate) fn drive(script: &mut UiScript, shown: &mut Shown, f: Frame) {
         skills,
         lines,
     );
-    let ctx = Smelting {
+    let mut ctx = Crafting {
         bags,
         skills,
-        smelter,
+        crafter,
         rng,
         lines,
+        gear,
     };
-    smelting_window(script, &mut shown.smelting, at_camp, desk, ctx, dt);
+    ctx.drain(script, shown.book.is_some(), shown.craft.is_some());
+    ctx.tick(at_camp, dt);
+    book_window(script, &mut shown.book, at_camp, desk, &ctx);
+    craft_window(script, &mut shown.craft, at_camp, desk, &ctx);
 }
 
 /// A refusal as the stock error line.
@@ -293,44 +353,80 @@ fn seat_npc(script: &mut UiScript, name: &str) {
     );
 }
 
-/// The trainer's list: Apprentice to Artisan on each gathering line, grouped by line. A known rank
-/// is "used", the next one "available" once the skill reaches it, the rest "unavailable".
+/// A trainer service's category: known is "used", what the player can take now "available", the
+/// rest "unavailable".
+fn category(known: bool, ready: bool) -> TrainerServiceCategory {
+    if known {
+        TrainerServiceCategory::Used
+    } else if ready {
+        TrainerServiceCategory::Available
+    } else {
+        TrainerServiceCategory::Unavailable
+    }
+}
+
+/// The trainer's list, grouped by line: Apprentice to Artisan on each, then the recipes the line's
+/// book teaches for gold. A known rank is "used", the next one "available" once the skill reaches
+/// it, the rest "unavailable"; a recipe is "available" at its skill.
 pub(crate) fn trainer_state(skills: &Skills) -> TrainerState {
     let mut services = Vec::new();
     for line in Line::ALL {
         let r = skills.rank(line);
+        let service = |spell: u32, name: String, subtext: String, cost: u32| TrainerService {
+            spell_id: spell,
+            name: Some(name),
+            subtext: Some(subtext),
+            texture: Some(line.icon().to_string()),
+            description: String::new(),
+            cost,
+            prof_first_rank: false,
+            category: TrainerServiceCategory::Unavailable,
+            level_req: 0,
+            skill_req: None,
+            ability_reqs: Vec::new(),
+            is_trade_skill: true,
+            group_key: line.skill_line(),
+            group_name: line.name().to_string(),
+            tooltip: TrainerTooltip::Spell {
+                spell_id: spell,
+                alt_caster: false,
+            },
+        };
         for (step, &spell) in line.rank_spells().iter().enumerate() {
             let rank = TRAINER_RANKS[step];
-            let category = if step <= r.step() {
-                TrainerServiceCategory::Used
-            } else if skills.can_train(line, step).is_ok() {
-                TrainerServiceCategory::Available
-            } else {
-                TrainerServiceCategory::Unavailable
-            };
             services.push(TrainerService {
-                spell_id: spell,
-                name: Some(line.spell_name().to_string()),
-                subtext: Some(rank.name.to_string()),
-                texture: Some(line.icon().to_string()),
                 description: format!("Allows {} to reach {} skill.", line.name(), rank.cap),
-                cost: rank.cost,
-                prof_first_rank: false,
-                category,
-                level_req: 0,
+                category: category(step <= r.step(), skills.can_train(line, step).is_ok()),
                 skill_req: (rank.needs > 0).then(|| TrainerSkillReq {
                     name: line.name().to_string(),
                     rank: u32::from(rank.needs),
                     met: r.rank >= rank.needs,
                 }),
-                ability_reqs: Vec::new(),
-                is_trade_skill: true,
-                group_key: line.skill_line(),
-                group_name: line.name().to_string(),
-                tooltip: TrainerTooltip::Spell {
-                    spell_id: spell,
-                    alt_caster: false,
-                },
+                ..service(
+                    spell,
+                    line.spell_name().to_string(),
+                    rank.name.to_string(),
+                    rank.cost,
+                )
+            });
+        }
+        for rec in recipes::book(line) {
+            let Learn::Trainer(cost) = rec.learn else {
+                continue;
+            };
+            let product = super::items::template(rec.product);
+            services.push(TrainerService {
+                texture: product
+                    .map(super::items::icon_path)
+                    .or_else(|| Some(recipes::ENCHANT_ICON.to_string())),
+                description: format!("Teaches you how to make {}.", rec.name),
+                category: category(recipes::known(rec, skills), recipes::learnable(rec, skills)),
+                skill_req: Some(TrainerSkillReq {
+                    name: line.name().to_string(),
+                    rank: u32::from(rec.req),
+                    met: r.rank >= rec.req,
+                }),
+                ..service(rec.spell, rec.name.to_string(), String::new(), cost)
             });
         }
     }
@@ -342,12 +438,37 @@ pub(crate) fn trainer_state(skills: &Skills) -> TrainerState {
     }
 }
 
-/// One `BuyTrainerService`: the rank spell's line and step, paid from the purse.
+/// What a `BuyTrainerService` bought.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Trained {
+    /// A rank: the line and the step.
+    Rank(Line, usize),
+    /// A recipe.
+    Recipe(&'static Recipe),
+}
+
+/// One `BuyTrainerService`: a rank spell's line and step, or a recipe, paid from the purse.
 pub(crate) fn train(
     skills: &mut Skills,
     purse: &mut Purse,
     spell: u32,
-) -> Result<(Line, usize), TrainError> {
+) -> Result<Trained, TrainError> {
+    if let Some(rec) = recipes::recipe(spell) {
+        let Learn::Trainer(cost) = rec.learn else {
+            return Err(TrainError::NotNext);
+        };
+        if recipes::known(rec, skills) {
+            return Err(TrainError::NotNext);
+        }
+        if !recipes::learnable(rec, skills) {
+            return Err(TrainError::LowSkill);
+        }
+        if !purse.spend(u64::from(cost)) {
+            return Err(TrainError::NoMoney);
+        }
+        skills.learn(rec.spell);
+        return Ok(Trained::Recipe(rec));
+    }
     let (line, step) = Line::ALL
         .iter()
         .find_map(|&l| {
@@ -362,10 +483,10 @@ pub(crate) fn train(
         return Err(TrainError::NoMoney);
     }
     skills.train(line, step)?;
-    Ok((line, step))
+    Ok(Trained::Rank(line, step))
 }
 
-/// The gathering trainer's `ClassTrainerFrame`.
+/// The trainer's `ClassTrainerFrame`.
 fn trainer_window(
     script: &mut UiScript,
     shown: &mut Option<(u64, u64)>,
@@ -382,7 +503,8 @@ fn trainer_window(
     if shown.is_some() {
         for spell in buys {
             match train(skills, purse, spell) {
-                Ok((line, step)) => lines.push(CastLine::Learned(line, step)),
+                Ok(Trained::Rank(line, step)) => lines.push(CastLine::Learned(line, step)),
+                Ok(Trained::Recipe(rec)) => lines.push(CastLine::LearnedRecipe(rec.name)),
                 Err(TrainError::NoMoney) => refuse(lines, ShopError::NoMoney),
                 Err(e) => debug!("survivors: trainer refused {spell}: {e:?}"),
             }
@@ -420,117 +542,191 @@ fn trainer_window(
     }
 }
 
-/// What a Smelting cast reads and writes.
-struct Smelting<'a> {
+/// What a recipe cast reads and writes.
+struct Crafting<'a> {
     bags: &'a mut Bags,
     skills: &'a mut Skills,
-    smelter: &'a mut Smelter,
+    crafter: &'a mut Crafter,
     rng: &'a mut Rng,
     lines: &'a mut Vec<CastLine>,
+    gear: &'a mut dyn GearHook,
 }
 
-impl Smelting<'_> {
-    /// Start a cast of `spell`, if it is known and the bags can feed it.
+impl Crafting<'_> {
+    /// This frame's `DoTradeSkill`s and `DoCraft`s, each a cast if its window is up and no cast
+    /// runs.
+    fn drain(&mut self, script: &mut UiScript, book_open: bool, craft_open: bool) {
+        for (spell, count) in script.take_trade_skill_dos() {
+            if book_open && !self.crafter.busy() && self.start(spell) {
+                self.crafter.repeat = count.saturating_sub(1);
+            }
+        }
+        for spell in script.take_craft_dos() {
+            if craft_open && !self.crafter.busy() {
+                self.start(spell);
+            }
+        }
+    }
+
+    /// Start a cast of `spell`, if it is known, the bags can feed it and, for an enchant, a piece
+    /// is worn to take it.
     fn start(&mut self, spell: u32) -> bool {
         let Some(r) = recipes::recipe(spell) else {
             return false;
         };
-        if !recipes::known(r, self.skills.rank(Line::Mining).rank)
-            || recipes::available(self.bags, r) == 0
-        {
+        if !recipes::known(r, self.skills) || recipes::available(self.bags, r) == 0 {
             return false;
         }
-        self.smelter.current = Some((spell, SMELT_SECS));
-        self.lines.push(CastLine::Cast(r.name, SMELT_SECS));
+        if let Some(e) = r.enchant {
+            if !self.gear.wears(e.slot) {
+                self.lines.push(CastLine::Refused(
+                    "SPELL_FAILED_EQUIPPED_ITEM",
+                    "You must wear a piece in that slot to enchant it.",
+                ));
+                return false;
+            }
+        }
+        self.crafter.current = Some((spell, r.cast_secs()));
+        self.lines.push(CastLine::Cast(r.name, r.cast_secs()));
         true
     }
 
-    /// The cast's clock: an interrupt off the camp, the bar on the finish, then the next repeat.
+    /// The cast's clock: an interrupt off the camp, the product (or the enchant) on the finish,
+    /// then the next repeat.
     fn tick(&mut self, at_camp: bool, dt: f32) {
-        let Some((spell, left)) = self.smelter.current else {
+        let Some((spell, left)) = self.crafter.current else {
             return;
         };
         if !at_camp {
-            self.smelter.current = None;
-            self.smelter.repeat = 0;
+            self.crafter.current = None;
+            self.crafter.repeat = 0;
             self.lines.push(CastLine::Interrupted);
             return;
         }
         let left = left - dt;
         if left > 0.0 {
-            self.smelter.current = Some((spell, left));
+            self.crafter.current = Some((spell, left));
             return;
         }
-        self.smelter.current = None;
+        self.crafter.current = None;
         self.lines.push(CastLine::Stop);
         let Some(r) = recipes::recipe(spell) else {
             return;
         };
-        match recipes::smelt_once(self.bags, r) {
+        match recipes::craft_once(self.bags, r) {
             Ok(()) => {
-                self.lines.push(CastLine::Created(r.product, r.made));
+                match r.enchant {
+                    Some(e) => {
+                        self.gear.enchant(e);
+                        self.lines.push(CastLine::Enchanted(e.name));
+                    }
+                    None => self.lines.push(CastLine::Created(r.product, r.made)),
+                }
                 let roll = self.rng.index(100) as u32;
-                if let Some(rank) =
-                    self.skills
-                        .crafted(Line::Mining, r.trivial.0, r.trivial.1, roll)
-                {
-                    self.lines.push(CastLine::SkillUp(Line::Mining, rank));
+                if let Some(rank) = self.skills.crafted(r.line, r.trivial.0, r.trivial.1, roll) {
+                    self.lines.push(CastLine::SkillUp(r.line, rank));
                 }
             }
             Err(e) => {
-                self.smelter.repeat = 0;
+                self.crafter.repeat = 0;
                 refuse(self.lines, ShopError::Bags(e));
                 return;
             }
         }
-        if self.smelter.repeat > 0 {
-            self.smelter.repeat -= 1;
+        if self.crafter.repeat > 0 {
+            self.crafter.repeat -= 1;
             if !self.start(spell) {
-                self.smelter.repeat = 0;
+                self.crafter.repeat = 0;
             }
         }
     }
 }
 
-/// Smelting's `TradeSkillFrame`.
-fn smelting_window(
+/// The open book's `TradeSkillFrame`: Smelting, Alchemy, Cooking or First Aid.
+fn book_window(
     script: &mut UiScript,
-    shown: &mut Option<(u64, u64, u32)>,
+    shown: &mut Option<(Line, u64, u64, u32)>,
     at_camp: bool,
     desk: &mut CampDesk,
-    mut s: Smelting,
-    dt: f32,
+    s: &Crafting,
 ) {
-    if script.take_trade_skill_close() {
-        desk.smelting = false;
+    if script.take_trade_skill_close() && desk.book != Some(Line::Enchanting) {
+        desk.book = None;
     }
-    for (spell, count) in script.take_trade_skill_dos() {
-        if shown.is_some() && !s.smelter.busy() && s.start(spell) {
-            s.smelter.repeat = count.saturating_sub(1);
-        }
-    }
-    s.tick(at_camp, dt);
     let touched = script.take_trade_skill_touched();
-    let want = desk.smelting && at_camp;
-    let key = (s.bags.generation(), s.skills.generation(), s.smelter.repeat);
-    let state = || recipes::trade_skill_state(s.bags, s.skills, s.smelter.repeat);
+    let want = desk
+        .book
+        .filter(|&l| at_camp && l != Line::Enchanting && !recipes::book(l).is_empty());
+    let state = |line: Line| recipes::trade_skill_state(s.bags, s.skills, line, s.crafter.repeat);
     match (*shown, want) {
-        (None, true) => {
-            script.set_trade_skill(Some(state()));
+        (None, Some(line)) => {
+            script.set_trade_skill(Some(state(line)));
             script.fire_event("TRADE_SKILL_SHOW", vec![]);
-            *shown = Some(key);
         }
-        (Some(was), true) if was != key => {
-            script.set_trade_skill(Some(state()));
+        (Some((was, ..)), Some(line)) if was != line => {
+            // Another book: the window shows it in place of the last.
+            script.set_trade_skill(Some(state(line)));
+            script.fire_event("TRADE_SKILL_SHOW", vec![]);
+        }
+        (Some(key), Some(line)) if key != book_key(line, s) => {
+            script.set_trade_skill(Some(state(line)));
             script.fire_event("TRADE_SKILL_UPDATE", vec![]);
-            *shown = Some(key);
         }
-        (Some(_), true) if touched => script.fire_event("TRADE_SKILL_UPDATE", vec![]),
-        (Some(_), false) => {
+        (Some(_), Some(_)) if touched => script.fire_event("TRADE_SKILL_UPDATE", vec![]),
+        (Some(_), None) => {
             script.set_trade_skill(None);
             script.fire_event("TRADE_SKILL_CLOSE", vec![]);
             let _ = script.take_trade_skill_close();
-            desk.smelting = false;
+            if desk.book != Some(Line::Enchanting) {
+                desk.book = None;
+            }
+        }
+        _ => {}
+    }
+    *shown = want.map(|line| book_key(line, s));
+}
+
+/// What a book's window was last pushed from.
+fn book_key(line: Line, s: &Crafting) -> (Line, u64, u64, u32) {
+    (
+        line,
+        s.bags.generation(),
+        s.skills.generation(),
+        s.crafter.repeat,
+    )
+}
+
+/// Enchanting's `CraftFrame`.
+fn craft_window(
+    script: &mut UiScript,
+    shown: &mut Option<(u64, u64)>,
+    at_camp: bool,
+    desk: &mut CampDesk,
+    s: &Crafting,
+) {
+    if script.take_craft_close() && desk.book == Some(Line::Enchanting) {
+        desk.book = None;
+    }
+    let want = at_camp && desk.book == Some(Line::Enchanting);
+    let key = (s.bags.generation(), s.skills.generation());
+    match (*shown, want) {
+        (None, true) => {
+            script.set_craft(Some(recipes::craft_state(s.bags, s.skills)));
+            script.fire_event("CRAFT_SHOW", vec![]);
+            *shown = Some(key);
+        }
+        (Some(was), true) if was != key => {
+            script.set_craft(Some(recipes::craft_state(s.bags, s.skills)));
+            script.fire_event("CRAFT_UPDATE", vec![]);
+            *shown = Some(key);
+        }
+        (Some(_), false) => {
+            script.set_craft(None);
+            script.fire_event("CRAFT_CLOSE", vec![]);
+            let _ = script.take_craft_close();
+            if desk.book == Some(Line::Enchanting) {
+                desk.book = None;
+            }
             *shown = None;
         }
         _ => {}
@@ -540,8 +736,40 @@ fn smelting_window(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::survivors::professions::items::{COPPER_BAR, COPPER_ORE};
+    use crate::survivors::professions::items::{
+        COPPER_BAR, COPPER_ORE, EMPTY_VIAL, LINEN_BANDAGE, LINEN_CLOTH, MINOR_HEALING_POTION,
+        PEACEBLOOM, SILVERLEAF, STRANGE_DUST,
+    };
     use crate::survivors::professions::skills::Rank;
+
+    /// A picked class's gear for the tests: what is worn, and the enchants put on.
+    #[derive(Default)]
+    pub(crate) struct TestGear {
+        worn: Vec<Slot>,
+        enchanted: Vec<(Slot, u32)>,
+    }
+
+    impl TestGear {
+        /// A piece worn in every slot.
+        pub(crate) fn wear_everything(&mut self) {
+            self.worn = Slot::ALL.to_vec();
+        }
+
+        /// How many enchants went on.
+        pub(crate) fn enchants(&self) -> usize {
+            self.enchanted.len()
+        }
+    }
+
+    impl GearHook for TestGear {
+        fn wears(&self, slot: Slot) -> bool {
+            self.worn.contains(&slot)
+        }
+
+        fn enchant(&mut self, e: &'static Enchant) {
+            self.enchanted.push((e.slot, e.id));
+        }
+    }
 
     /// Everything a frame borrows, owned.
     #[derive(Default)]
@@ -552,9 +780,10 @@ pub(crate) mod tests {
         pub(crate) purse: Purse,
         pub(crate) shop: Shop,
         pub(crate) skills: Skills,
-        pub(crate) smelter: Smelter,
+        pub(crate) crafter: Crafter,
         pub(crate) rng: Rng,
         pub(crate) lines: Vec<CastLine>,
+        pub(crate) gear: TestGear,
         pub(crate) shown: Shown,
     }
 
@@ -571,9 +800,10 @@ pub(crate) mod tests {
                     purse: &mut self.purse,
                     shop: &mut self.shop,
                     skills: &mut self.skills,
-                    smelter: &mut self.smelter,
+                    crafter: &mut self.crafter,
                     rng: &mut self.rng,
                     lines: &mut self.lines,
+                    gear: &mut self.gear,
                     dt,
                 },
             );
@@ -586,7 +816,8 @@ pub(crate) mod tests {
              local f = CreateFrame('Frame') \
              for _, e in ipairs({'MERCHANT_SHOW', 'MERCHANT_UPDATE', 'MERCHANT_CLOSED', \
                'TRAINER_SHOW', 'TRAINER_UPDATE', 'TRAINER_CLOSED', 'TRADE_SKILL_SHOW', \
-               'TRADE_SKILL_UPDATE', 'TRADE_SKILL_CLOSE'}) do f:RegisterEvent(e) end \
+               'TRADE_SKILL_UPDATE', 'TRADE_SKILL_CLOSE', 'CRAFT_SHOW', 'CRAFT_UPDATE', \
+               'CRAFT_CLOSE'}) do f:RegisterEvent(e) end \
              f:SetScript('OnEvent', function() table.insert(SEEN, event) end)",
         )
         .unwrap();
@@ -614,7 +845,10 @@ pub(crate) mod tests {
         w.frame(&mut s, true, 0.016);
         assert_eq!(seen(&s), vec!["MERCHANT_SHOW"]);
         assert!(w.shop.open);
-        assert_eq!(s.eval::<i64>("return GetMerchantNumItems()").unwrap(), 3);
+        assert_eq!(
+            s.eval::<i64>("return GetMerchantNumItems()").unwrap(),
+            econ::GOBLIN_WARES.len() as i64
+        );
         // A cursor sell: the ore goes for 50c.
         s.run("PickupContainerItem(0, 1) PickupMerchantItem(0)")
             .unwrap();
@@ -642,34 +876,40 @@ pub(crate) mod tests {
         assert_eq!(s.eval::<i64>("return GetMerchantNumItems()").unwrap(), 0);
     }
 
-    /// The trainer sells Journeyman once the skill and the purse allow it.
+    /// The trainer sells Journeyman once the skill and the purse allow it, and a recipe at its
+    /// skill.
     #[test]
-    fn survivors_stations_the_trainer_sells_ranks() {
+    fn survivors_stations_the_trainer_sells_ranks_and_recipes() {
         let mut s = UiScript::new().unwrap();
         events(&mut s);
         let mut w = World {
-            skills: Skills::from_save(&std::collections::BTreeMap::from([(
-                "mining".to_string(),
-                Rank { rank: 60, max: 75 },
-            )])),
+            skills: Skills::from_save(&std::collections::BTreeMap::from([
+                ("mining".to_string(), Rank { rank: 60, max: 75 }),
+                ("alchemy".to_string(), Rank { rank: 85, max: 150 }),
+            ])),
             ..Default::default()
         };
         w.desk.trainer = true;
         w.frame(&mut s, true, 0.016);
         assert_eq!(seen(&s), vec!["TRAINER_SHOW"]);
         let state = trainer_state(&w.skills);
-        let journeyman = state
-            .services
-            .iter()
-            .find(|sv| sv.spell_id == 2576)
-            .unwrap();
-        assert_eq!(journeyman.category, TrainerServiceCategory::Available);
-        let herb = state
-            .services
-            .iter()
-            .find(|sv| sv.spell_id == 2368)
-            .unwrap();
-        assert_eq!(herb.category, TrainerServiceCategory::Unavailable);
+        let find = |spell: u32| {
+            state
+                .services
+                .iter()
+                .find(|sv| sv.spell_id == spell)
+                .unwrap()
+                .category
+        };
+        assert_eq!(find(2576), TrainerServiceCategory::Available, "Journeyman");
+        assert_eq!(find(2368), TrainerServiceCategory::Unavailable);
+        assert_eq!(
+            find(3101),
+            TrainerServiceCategory::Used,
+            "Journeyman Alchemy"
+        );
+        assert_eq!(find(7836), TrainerServiceCategory::Available, "at 80");
+        assert_eq!(find(6624), TrainerServiceCategory::Unavailable, "at 150");
         assert_eq!(
             train(&mut w.skills, &mut w.purse, 2576),
             Err(TrainError::NoMoney)
@@ -677,10 +917,25 @@ pub(crate) mod tests {
         w.purse.earn(12_000);
         assert_eq!(
             train(&mut w.skills, &mut w.purse, 2576),
-            Ok((Line::Mining, 1))
+            Ok(Trained::Rank(Line::Mining, 1))
         );
         assert_eq!(w.purse.copper(), 2_000);
         assert_eq!(w.skills.rank(Line::Mining).max, 150);
+        assert!(matches!(
+            train(&mut w.skills, &mut w.purse, 7836),
+            Ok(Trained::Recipe(r)) if r.name == "Blackmouth Oil"
+        ));
+        assert_eq!(w.purse.copper(), 1_600);
+        assert_eq!(
+            train(&mut w.skills, &mut w.purse, 7836),
+            Err(TrainError::NotNext),
+            "known"
+        );
+        assert_eq!(
+            train(&mut w.skills, &mut w.purse, 2330),
+            Err(TrainError::NotNext),
+            "not the trainer's"
+        );
         w.frame(&mut s, true, 0.016);
         assert_eq!(seen(&s), vec!["TRAINER_UPDATE"]);
         w.frame(&mut s, false, 0.016);
@@ -695,7 +950,7 @@ pub(crate) mod tests {
         events(&mut s);
         let mut w = World::default();
         w.bags.add(COPPER_ORE, 2);
-        w.desk.smelting = true;
+        w.desk.toggle(Line::Mining);
         w.frame(&mut s, true, 0.016);
         assert_eq!(seen(&s), vec!["TRADE_SKILL_SHOW"]);
         assert_eq!(
@@ -705,25 +960,114 @@ pub(crate) mod tests {
         );
         s.run("DoTradeSkill(2, 5)").unwrap();
         w.frame(&mut s, true, 0.016);
-        assert!(w.smelter.busy());
-        assert_eq!(w.lines, vec![CastLine::Cast("Smelt Copper", SMELT_SECS)]);
+        assert!(w.crafter.busy());
+        assert_eq!(
+            w.lines,
+            vec![CastLine::Cast("Smelt Copper", recipes::SMELT_SECS)]
+        );
         w.lines.clear();
-        w.frame(&mut s, true, SMELT_SECS);
+        w.frame(&mut s, true, recipes::SMELT_SECS);
         assert_eq!(w.bags.count(COPPER_BAR), 1);
         assert!(w.lines.contains(&CastLine::Created(COPPER_BAR, 1)));
-        assert!(w.smelter.busy(), "the second cast");
-        w.frame(&mut s, true, SMELT_SECS);
+        assert!(w.crafter.busy(), "the second cast");
+        w.frame(&mut s, true, recipes::SMELT_SECS);
         assert_eq!((w.bags.count(COPPER_ORE), w.bags.count(COPPER_BAR)), (0, 2));
-        assert!(!w.smelter.busy(), "out of ore");
+        assert!(!w.crafter.busy(), "out of ore");
         assert!(w.skills.rank(Line::Mining).rank > 1, "orange: always rises");
         // An interrupted cast makes nothing.
         w.bags.add(COPPER_ORE, 1);
         s.run("DoTradeSkill(2, 1)").unwrap();
         w.frame(&mut s, true, 0.016);
-        assert!(w.smelter.busy());
-        w.frame(&mut s, false, SMELT_SECS);
-        assert!(!w.smelter.busy());
+        assert!(w.crafter.busy());
+        w.frame(&mut s, false, recipes::SMELT_SECS);
+        assert!(!w.crafter.busy());
         assert_eq!(w.bags.count(COPPER_ORE), 1);
         assert!(w.lines.contains(&CastLine::Interrupted));
+    }
+
+    /// The Alchemy button shows Alchemy's book in the same window; a potion brews; First Aid's
+    /// bandage too; the camp's end closes it.
+    #[test]
+    fn survivors_stations_alchemy_and_first_aid_books() {
+        let mut s = UiScript::new().unwrap();
+        events(&mut s);
+        let mut w = World::default();
+        w.bags.add(PEACEBLOOM, 1);
+        w.bags.add(SILVERLEAF, 1);
+        w.bags.add(EMPTY_VIAL, 1);
+        w.bags.add(LINEN_CLOTH, 1);
+        w.desk.toggle(Line::Alchemy);
+        w.frame(&mut s, true, 0.016);
+        assert_eq!(seen(&s), vec!["TRADE_SKILL_SHOW"]);
+        let row = s
+            .eval::<i64>(
+                "for i = 1, GetNumTradeSkills() do \
+                   if GetTradeSkillInfo(i) == 'Minor Healing Potion' then return i end \
+                 end return 0",
+            )
+            .unwrap();
+        assert!(row > 0, "Minor Healing Potion is listed");
+        s.run(&format!("DoTradeSkill({row}, 1)")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        w.frame(&mut s, true, 3.0);
+        assert_eq!(w.bags.count(MINOR_HEALING_POTION), 1);
+        assert_eq!(w.skills.rank(Line::Alchemy).rank, 2);
+        seen(&s);
+        // Another book in the same window.
+        w.desk.toggle(Line::FirstAid);
+        w.frame(&mut s, true, 0.016);
+        assert_eq!(seen(&s), vec!["TRADE_SKILL_SHOW"]);
+        let row = s
+            .eval::<i64>(
+                "for i = 1, GetNumTradeSkills() do \
+                   if GetTradeSkillInfo(i) == 'Linen Bandage' then return i end \
+                 end return 0",
+            )
+            .unwrap();
+        s.run(&format!("DoTradeSkill({row}, 1)")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        w.frame(&mut s, true, 3.0);
+        assert_eq!(w.bags.count(LINEN_BANDAGE), 1);
+        seen(&s);
+        w.frame(&mut s, false, 0.016);
+        assert_eq!(seen(&s), vec!["TRADE_SKILL_CLOSE"]);
+        assert_eq!(w.desk.book, None);
+    }
+
+    /// Enchanting's craft window: an enchant needs a piece worn in its slot, takes its dust, and
+    /// goes on that piece.
+    #[test]
+    fn survivors_stations_enchanting_enchants_the_worn_piece() {
+        let mut s = UiScript::new().unwrap();
+        events(&mut s);
+        let mut w = World::default();
+        w.bags.add(STRANGE_DUST, 2);
+        w.desk.toggle(Line::Enchanting);
+        w.frame(&mut s, true, 0.016);
+        assert_eq!(seen(&s), vec!["CRAFT_SHOW"]);
+        let row = s
+            .eval::<i64>(
+                "for i = 1, GetNumCrafts() do \
+                   if GetCraftInfo(i) == 'Enchant Bracer - Minor Health' then return i end \
+                 end return 0",
+            )
+            .unwrap();
+        assert!(row > 0, "listed at 1");
+        s.run(&format!("DoCraft({row})")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        assert!(!w.crafter.busy(), "no bracer worn");
+        assert!(matches!(w.lines.last(), Some(CastLine::Refused(..))));
+        w.gear.worn.push(Slot::Wrist);
+        s.run(&format!("DoCraft({row})")).unwrap();
+        w.frame(&mut s, true, 0.016);
+        assert!(w.crafter.busy());
+        w.frame(&mut s, true, 5.0);
+        assert_eq!(w.gear.enchanted, vec![(Slot::Wrist, 41)]);
+        assert_eq!(w.bags.count(STRANGE_DUST), 1);
+        assert!(w.lines.contains(&CastLine::Enchanted("Health +5")));
+        seen(&s);
+        w.desk.toggle(Line::Enchanting);
+        w.frame(&mut s, true, 0.016);
+        assert_eq!(seen(&s), vec!["CRAFT_CLOSE"]);
     }
 }

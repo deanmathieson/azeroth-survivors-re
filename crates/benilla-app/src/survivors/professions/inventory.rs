@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 
+use super::effects::Category;
 use super::items;
 
 /// The Backpack's container id.
@@ -79,16 +80,15 @@ pub(crate) struct Bags {
     /// Occupied slots by `(container, 1-based slot)`.
     slots: BTreeMap<(i64, u32), Stack>,
     generation: u64,
-    /// The shared potion cooldown's start on the `GetTime` clock, while one runs; not saved.
-    potion_cooldown: Option<f64>,
+    /// Each cooldown's start on the `GetTime` clock ([`super::effects::Category`]: the shared
+    /// potion cooldown, Recently Bandaged), once started; not saved.
+    cooldowns: [Option<f64>; 2],
 }
 
 /// The same contents, whatever the change counter says.
 impl PartialEq for Bags {
     fn eq(&self, other: &Self) -> bool {
-        self.worn == other.worn
-            && self.slots == other.slots
-            && self.potion_cooldown == other.potion_cooldown
+        self.worn == other.worn && self.slots == other.slots && self.cooldowns == other.cooldowns
     }
 }
 
@@ -118,14 +118,20 @@ impl Bags {
         self.generation
     }
 
-    /// The potion cooldown's start, if one was started.
-    pub(crate) fn potion_cooldown(&self) -> Option<f64> {
-        self.potion_cooldown
+    /// When cooldown `cat` last started, if it has.
+    pub(crate) fn cooldown(&self, cat: Category) -> Option<f64> {
+        self.cooldowns[cat as usize]
     }
 
-    /// Start the potion cooldown at `now` (`GetTime`), so the bag slots show its sweep.
-    pub(crate) fn start_potion_cooldown(&mut self, now: f64) {
-        self.potion_cooldown = Some(now);
+    /// Whether cooldown `cat` still runs at `now`.
+    pub(crate) fn cooldown_running(&self, cat: Category, now: f64) -> bool {
+        self.cooldown(cat)
+            .is_some_and(|start| now < start + f64::from(cat.secs()))
+    }
+
+    /// Start cooldown `cat` at `now` (`GetTime`), so the bag slots and the satchel show its sweep.
+    pub(crate) fn start_cooldown(&mut self, cat: Category, now: f64) {
+        self.cooldowns[cat as usize] = Some(now);
         self.touch();
     }
 
