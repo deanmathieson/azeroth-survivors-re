@@ -703,14 +703,19 @@ pub(super) fn place_camera(
             .single()
             .map_or((None, player.pos), |(e, t)| (Some(e), t.translation)),
     };
+    let menu = *phase.get() == Phase::Menu;
+    // On the menu, the wheel over a widget (the zone list scrolls) is not the camera's.
+    let over_ui = menu && turn.2.iter().any(|i| *i != Interaction::None);
     for w in wheel.read() {
+        if over_ui {
+            continue;
+        }
         let notches = match w.unit {
             MouseScrollUnit::Line => w.y,
             MouseScrollUnit::Pixel => w.y * 0.02,
         };
         rig.dist = zoom_notch(rig.dist, notches);
     }
-    let menu = *phase.get() == Phase::Menu;
     if menu {
         let (mouse, motion, ui) = turn;
         let held = mouse.is_some_and(|m| m.pressed(MouseButton::Left))

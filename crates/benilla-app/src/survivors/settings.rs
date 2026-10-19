@@ -156,8 +156,8 @@ fn build(
             &font.0,
             Action::Open,
             "Options",
-            150.0,
-            38.0,
+            super::menu::BAR_BTN_W,
+            super::menu::BAR_BTN_H,
             GlueBtnKind::Small,
             1.0,
         );

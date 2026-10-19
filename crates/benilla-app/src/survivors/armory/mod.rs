@@ -369,8 +369,8 @@ pub(super) fn entry_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Han
         f,
         ArmoryAction::Open,
         "Armory",
-        150.0,
-        38.0,
+        menu::BAR_BTN_W,
+        menu::BAR_BTN_H,
         GlueBtnKind::Small,
         1.0,
     );

@@ -199,7 +199,8 @@ pub(super) fn plugin(app: &mut App) {
 
 // ── The menu's button ───────────────────────────────────────────────────────────────────────────
 
-/// The Darkmoon Faire button and its whereabouts and purse, as one block in the menu action row.
+/// The Darkmoon Faire button and its whereabouts and purse, as one block in the menu's bar: two
+/// small lines under the button, inside the bar.
 #[allow(clippy::type_complexity)]
 fn build_entry(
     mut commands: Commands,
@@ -220,7 +221,7 @@ fn build_entry(
         .insert(EntryBuilt)
         .with_children(|ui| {
             ui.spawn(Node {
-                width: px(150.0),
+                width: px(menu::BAR_BTN_W),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: px(1.0),
@@ -233,8 +234,8 @@ fn build_entry(
                     f,
                     FaireAction::Open,
                     "Darkmoon Faire",
-                    150.0,
-                    38.0,
+                    menu::BAR_BTN_W,
+                    menu::BAR_BTN_H,
                     GlueBtnKind::Small,
                     1.0,
                 );
@@ -246,7 +247,7 @@ fn build_entry(
                         (),
                         GlueText {
                             text: "",
-                            size: 12.0,
+                            size: 11.0,
                             color,
                             wrap: false,
                         },
@@ -263,7 +264,7 @@ fn build_entry(
         });
 }
 
-/// The menu's lines: "The Faire is in Mulgore" and the tickets to spend.
+/// The menu's lines: "In Mulgore" and the tickets to spend.
 #[allow(clippy::type_complexity)]
 fn refresh_entry(
     profile: Option<Res<Profile>>,
@@ -275,7 +276,7 @@ fn refresh_entry(
 ) {
     let Some(profile) = profile else { return };
     let runs = profile.account.runs;
-    let want = format!("The Faire is in {}", tickets::faire_zone(runs));
+    let want = format!("In {}", tickets::faire_zone(runs));
     for mut t in &mut lines.p0() {
         if t.0 != want {
             t.0 = want.clone();
