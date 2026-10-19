@@ -1177,3 +1177,117 @@ fn a_raid_telegraph_a_fear_and_a_yell_reach_the_client_over_loopback() {
     let v = walk.step(&mirror, 0.1).expect("feared");
     assert!(v.x > 0.0 && v.z.abs() < 1e-4, "{v}");
 }
+
+/// Shared party nodes over the loopback (docs/PROFESSIONS.md, 4.3): the host's player and a
+/// client's both finish the same Copper Vein and each gets their own yield, the client's sent to
+/// it alone; the vein is then depleted, and the client's repeat is refused.
+#[test]
+fn two_players_share_a_vein_and_a_third_harvest_is_refused() {
+    use super::super::professions::gather::{harvest, GatherOutbox, NetNode, NodeLife, YieldInbox};
+    use super::super::professions::{effects::UseOutbox, items, skills::Line};
+
+    let mut host_app = app();
+    let mut client_app = app();
+    host_app.add_systems(
+        PreUpdate,
+        host::gather_actions.after(ServerSystems::Receive),
+    );
+    client_app
+        .init_resource::<GatherOutbox>()
+        .init_resource::<UseOutbox>()
+        .init_resource::<YieldInbox>()
+        .add_systems(
+            PreUpdate,
+            super::client::receive_yields.after(ClientSystems::Receive),
+        )
+        .add_systems(
+            PostUpdate,
+            super::client::send_gathers.before(ClientSystems::Send),
+        );
+    let channels = host_app.world().resource::<RepliconChannels>();
+    let (server, transport, port) = net::host(channels, 0).expect("binds the loopback");
+    host_app.insert_resource(server).insert_resource(transport);
+    let to = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let channels = client_app.world().resource::<RepliconChannels>();
+    let (client, transport) = net::join(channels, to).expect("binds a client socket");
+    client_app
+        .insert_resource(client)
+        .insert_resource(transport);
+    pump(&mut host_app, &mut client_app, |h, c| {
+        *c.world().resource::<State<ClientState>>() == ClientState::Connected
+            && h.world_mut()
+                .query::<&AuthorizedClient>()
+                .iter(h.world())
+                .count()
+                == 1
+    });
+    let peer = host_app
+        .world_mut()
+        .query_filtered::<Entity, With<ConnectedClient>>()
+        .single(host_app.world())
+        .unwrap();
+
+    // The host's hero, the client's hero, and a Copper Vein between them.
+    let world = host_app.world_mut();
+    world.spawn(hero_of(0, 0));
+    world.spawn((hero_of(1, 3), host::Owner(peer), party::Remote));
+    let vein = world
+        .spawn((
+            NetNode {
+                id: 1,
+                def: 0,
+                depleted: false,
+            },
+            NodeLife::default(),
+        ))
+        .id();
+
+    // The client finishes its gather first: its own yield comes back to it.
+    client_app
+        .world_mut()
+        .resource_mut::<GatherOutbox>()
+        .0
+        .push((1, 1));
+    pump(&mut host_app, &mut client_app, |_, c| {
+        !c.world().resource::<YieldInbox>().0.is_empty()
+    });
+    let got = client_app.world().resource::<YieldInbox>().0.clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].line, Line::Mining);
+    assert_eq!(got[0].items[0].0, items::COPPER_ORE);
+
+    // The host's own player harvests it too: its own yield, and the vein is spent.
+    let world = host_app.world_mut();
+    let mut rng = Rng(4);
+    let mine = {
+        let mut e = world.entity_mut(vein);
+        let mut life = e.take::<NodeLife>().unwrap();
+        let mut node = *e.get::<NetNode>().unwrap();
+        let y = harvest(&mut node, &mut life, party::LOCAL_PLAYER, 1, 2, &mut rng);
+        e.insert((node, life));
+        y
+    };
+    assert!(mine.is_some(), "the host's player gets their own");
+    assert!(
+        host_app.world().get::<NetNode>(vein).unwrap().depleted,
+        "both players have had it"
+    );
+
+    // A third harvest, the client's repeat, is refused: nothing comes back.
+    client_app
+        .world_mut()
+        .resource_mut::<GatherOutbox>()
+        .0
+        .push((1, 1));
+    for _ in 0..40 {
+        client_app.update();
+        host_app.update();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        client_app.world().resource::<YieldInbox>().0.len(),
+        1,
+        "no second yield"
+    );
+    assert!(client_app.world().resource::<GatherOutbox>().0.is_empty());
+}

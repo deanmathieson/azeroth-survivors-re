@@ -42,7 +42,7 @@ use wire::*;
 pub(super) use ui::closed;
 
 /// The co-op protocol's version: bumped whenever what travels changes.
-pub(super) const PROTOCOL: u32 = 19;
+pub(super) const PROTOCOL: u32 = 20;
 
 /// This build, as the handshake compares it: the protocol, the release and the commit.
 pub(super) fn build_tag(build: Option<&crate::BuildId>) -> String {
@@ -172,6 +172,7 @@ pub(super) fn protocol(app: &mut App) {
         .replicate::<NetBuffs>()
         .replicate::<NetRaid>()
         .replicate::<super::raid::Telegraph>()
+        .replicate::<super::professions::gather::NetNode>()
         .add_client_message::<Hello>(Channel::Ordered)
         .add_client_message::<Cosmetics>(Channel::Ordered)
         .add_client_message::<MoveInput>(Channel::Unreliable)
@@ -179,6 +180,8 @@ pub(super) fn protocol(app: &mut App) {
         .add_client_message::<FocusInput>(Channel::Ordered)
         .add_client_message::<SelfRes>(Channel::Ordered)
         .add_client_message::<CampAction>(Channel::Ordered)
+        .add_client_message::<GatherAction>(Channel::Ordered)
+        .add_client_message::<UseItem>(Channel::Ordered)
         .add_server_message::<Welcome>(Channel::Ordered)
         .add_server_message::<Refused>(Channel::Ordered)
         .make_message_independent::<Refused>()
@@ -188,6 +191,7 @@ pub(super) fn protocol(app: &mut App) {
         .add_server_message::<Hand>(Channel::Ordered)
         .add_server_message::<NetYell>(Channel::Ordered)
         .add_server_message::<NetRoulette>(Channel::Ordered)
+        .add_server_message::<Yield>(Channel::Ordered)
         .add_mapped_server_message::<NetFx>(Channel::Unreliable);
     social::protocol(app);
 }

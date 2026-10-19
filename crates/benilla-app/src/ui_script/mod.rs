@@ -21,6 +21,10 @@ mod layer_tests;
 mod load_log;
 mod manifest;
 
+/// Survivors' curated FrameXML, loaded under [`crate::run_mode::SurvivorsUi`].
+mod survivors_ui;
+pub(crate) use survivors_ui::ADDONS as SURVIVORS_UI_ADDONS;
+
 /// The stock FrameXML this client runs off the player's own patch chain; its header is the rule.
 mod reference_ui;
 

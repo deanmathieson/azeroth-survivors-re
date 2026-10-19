@@ -10,6 +10,9 @@ use super::achievements::AchievementSave;
 use super::faire::FaireSave;
 use super::gear::{GearSave, RaidVault};
 use super::jewelry::CodexSave;
+use super::professions::econ::PurseSave;
+use super::professions::inventory::InventorySave;
+use super::professions::save::ProfessionsSave;
 use super::quests::QuestSave;
 use super::rewards::RewardsSave;
 use super::talents::TalentSave;
@@ -21,9 +24,11 @@ use super::{data, Run, Selection};
 /// read-only instead. 3: the quests section, and the rewards section's unlocked looks and
 /// companion (its XP, skills, name and second look), which a version 2 build would drop, so it
 /// opens a version 3 save read-only. 4: the codex and Faire sections, which a version 3 build
-/// would drop, so it opens a version 4 save read-only. Each version only adds fields, so an older
-/// save loads as it is and is written back as this version.
-pub(super) const PROFILE_VERSION: u32 = 4;
+/// would drop, so it opens a version 4 save read-only. 5: the bags, the purse, the gathering skills
+/// and the tracking ([`super::professions::save`]), which a version 4 build would drop, so it opens
+/// a version 5 save read-only. Each version only adds fields, so an older save loads as it is and
+/// is written back as this version.
+pub(super) const PROFILE_VERSION: u32 = 5;
 /// The profile's single resident in [`crate::local_state`].
 pub(super) const PROFILE_FILE: &str = "survivors-profile.toml";
 
@@ -111,6 +116,16 @@ pub(super) struct Profile {
     /// version bump.
     #[serde(default)]
     pub raid: RaidVault,
+    /// The bags, defined and edited in [`super::professions`].
+    #[serde(default)]
+    pub inventory: InventorySave,
+    /// The gathering skills and the tracking, defined and edited in [`super::professions`].
+    #[serde(default)]
+    pub professions: ProfessionsSave,
+    /// The profile's gold in copper, banked from runs and spent at the camp: defined and edited in
+    /// [`super::professions::econ`].
+    #[serde(default)]
+    pub purse: PurseSave,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -140,6 +155,9 @@ impl Default for Profile {
             faire: FaireSave::default(),
             stable: StableSave::default(),
             raid: RaidVault::default(),
+            inventory: InventorySave::default(),
+            professions: ProfessionsSave::default(),
+            purse: PurseSave::default(),
             writable: true,
             dirty: false,
         }
@@ -546,6 +564,48 @@ fn clean_profile_from_text(text: &str) -> Result<Profile, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A version 4 save (no bags, no skills) loads as it is, empty-handed, and its next write is
+    /// version 5; a version 5 save's bags and skills round-trip; a version 6 save is left
+    /// read-only.
+    #[test]
+    fn survivors_profile_v4_migrates_to_v5_and_v5_round_trips() {
+        let v4 = "version = 4\n\n[account]\nruns = 3\n";
+        let loaded = load_text(v4);
+        assert!(loaded.corrupt_text.is_none());
+        let p = loaded.profile;
+        assert!(p.writable);
+        assert_eq!(p.version, 5, "written back as version 5");
+        assert_eq!(p.account.runs, 3);
+        assert_eq!(p.inventory, InventorySave::default());
+        assert!(p.professions.skills.is_empty());
+        assert_eq!(p.purse.copper, 0, "an empty purse");
+
+        let mut p5 = Profile::default();
+        p5.purse.copper = 152_340;
+        p5.professions.tracking = "herbs".into();
+        let mut bags = super::super::professions::inventory::Bags::test_inventory();
+        bags.add(super::super::professions::items::COPPER_ORE, 3);
+        p5.inventory = bags.to_save();
+        let mut skills = super::super::professions::skills::Skills::default();
+        skills.gathered(super::super::professions::skills::Line::Mining, 1, 0);
+        p5.professions.skills = skills.to_save();
+        let text = toml::to_string_pretty(&p5).unwrap();
+        assert!(text.contains("[inventory]") && text.contains("[professions.skills"));
+        assert!(text.contains("[purse]") && text.contains("copper = 152340"));
+        let back = load_text(&text).profile;
+        assert_eq!(back, p5);
+        assert_eq!(
+            super::super::professions::inventory::Bags::from_save(&back.inventory),
+            bags
+        );
+
+        let v6 = text.replacen("version = 5", "version = 6", 1);
+        assert!(
+            !load_text(&v6).profile.writable,
+            "a newer save stays read-only"
+        );
+    }
 
     #[test]
     fn round_trip() {

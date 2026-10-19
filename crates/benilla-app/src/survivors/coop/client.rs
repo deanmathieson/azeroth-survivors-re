@@ -70,6 +70,7 @@ pub(super) fn plugin(app: &mut App) {
                     play_fx,
                     receive_yells,
                     receive_roulettes,
+                    receive_yields,
                 )
                     .chain()
                     .run_if(joined),
@@ -99,6 +100,7 @@ pub(super) fn plugin(app: &mut App) {
                 send_focus,
                 send_self_res,
                 send_camp,
+                send_gathers,
             )
                 .before(ClientSystems::Send)
                 .run_if(joined),
@@ -981,6 +983,40 @@ fn send_hand(
             decision: WireDecision::of(d),
             seq: seq.0,
         });
+    }
+}
+
+/// This player's finished gathers and drunk potions go to the host, which rolls the yields and
+/// owns the hero.
+pub(super) fn send_gathers(
+    outbox: Option<ResMut<super::super::professions::gather::GatherOutbox>>,
+    uses: Option<ResMut<super::super::professions::effects::UseOutbox>>,
+    mut gathers: MessageWriter<GatherAction>,
+    mut used: MessageWriter<UseItem>,
+) {
+    if let Some(mut outbox) = outbox {
+        for (node, rank) in std::mem::take(&mut outbox.0) {
+            gathers.write(GatherAction { node, rank });
+        }
+    }
+    if let Some(mut uses) = uses {
+        for item in std::mem::take(&mut uses.0) {
+            used.write(UseItem { item });
+        }
+    }
+}
+
+/// The host's yields for this player go into its own bags ([`super::super::professions`]).
+pub(super) fn receive_yields(
+    mut msgs: MessageReader<Yield>,
+    inbox: Option<ResMut<super::super::professions::gather::YieldInbox>>,
+) {
+    let Some(mut inbox) = inbox else {
+        msgs.clear();
+        return;
+    };
+    for m in msgs.read() {
+        inbox.0.push(m.0.clone());
     }
 }
 

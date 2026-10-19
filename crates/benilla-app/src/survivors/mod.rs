@@ -1,8 +1,9 @@
 //! Warcraft Survivors: a top-down survival mode on the benilla world, started by
 //! [`crate::run_survivors`]. There is no server: the hero, the enemies and the spells are local
 //! entities dressed by the same attach, animation and spell-visual systems a streamed unit gets,
-//! on a battleground picked at the menu ([`data::MAPS`]), with the player controller and FrameXML
-//! off ([`crate::run_mode::CaptureMode`]). The local hero walks through the world's collision
+//! on a battleground picked at the menu ([`data::MAPS`]), with the player controller off
+//! ([`crate::run_mode::CaptureMode`]) and only a curated FrameXML, the bags and the item tooltip
+//! ([`professions`]). The local hero walks through the world's collision
 //! ([`body`]) and, by default, under WoW's own camera and controls ([`wowcam`], [`view`]).
 
 mod abilities;
@@ -34,6 +35,7 @@ mod mobility;
 mod moments;
 mod party;
 mod partyui;
+pub(crate) mod professions;
 mod profile;
 mod quests;
 mod racials;
@@ -109,6 +111,7 @@ impl Plugin for SurvivorsPlugin {
             .add_plugins(moments::plugin)
             .add_plugins(roulette::plugin)
             .add_plugins(partyui::plugin)
+            .add_plugins(professions::plugin)
             .init_state::<Phase>()
             .init_resource::<party::NetRole>()
             .init_resource::<Rng>()
@@ -271,6 +274,7 @@ impl Plugin for SurvivorsPlugin {
                     hud::icon_tooltip,
                     hud::hero_plate,
                     minimap::map_buttons,
+                    minimap::tracking_button,
                     minimap::zone_text,
                     minimap::compose,
                 )

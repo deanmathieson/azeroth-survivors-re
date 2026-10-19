@@ -83,7 +83,10 @@ impl Plugin for UiTradeSkillPlugin {
                     // drain after the input pass, so a Create click casts this frame.
                     open_trade_skill.before(feed_trade_skill),
                     feed_trade_skill.in_set(UnitFeed),
-                    drain_trade_skill.after(UiInput),
+                    // Survivors' smelting is local, with its own drain.
+                    drain_trade_skill
+                        .after(UiInput)
+                        .run_if(crate::run_mode::stock_ui_owns),
                 ),
             );
     }

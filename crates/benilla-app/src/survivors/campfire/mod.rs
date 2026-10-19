@@ -34,6 +34,7 @@ use crate::sound::SoundCue;
 
 #[cfg_attr(not(feature = "coop"), allow(unused_imports))]
 pub(in crate::survivors) use props::CampProp;
+pub(in crate::survivors) use ui::MerchantWindow;
 
 /// A camp's length alone, and in a party, in seconds.
 pub(super) const SOLO_SECS: f32 = 30.0;
