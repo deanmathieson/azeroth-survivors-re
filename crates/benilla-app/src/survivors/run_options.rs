@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::data::EnemyDef;
 use super::hud::{HudFont, MenuRoot};
-use super::menu::{MenuBuilt, MenuPrimary};
+use super::menu::{self, MenuBuilt, MenuPrimary};
 use super::{Phase, Run};
 use crate::glue::art::{GlueArt, GOLD, INFO_TEXT};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -445,14 +445,22 @@ fn build_ui(
         .with_children(|ui| menu_button(ui, &art, f));
 }
 
-/// The Run Options button and multiplier, as one block in the menu action row.
+/// The Run Options button and multiplier, beside Enter World in the menu's bar: out of the bar's
+/// flow, so Enter World itself stays centred under the hero.
 fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
     let px = Val::Px;
     ui.spawn(Node {
-        width: px(150.0),
+        width: px(menu::BAR_BTN_W),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
         row_gap: px(1.0),
+        position_type: PositionType::Absolute,
+        left: Val::Percent(100.0),
+        margin: UiRect {
+            left: px(menu::BAR_GAP),
+            top: px(menu::BAR_BTN_DROP),
+            ..default()
+        },
         ..default()
     })
     .with_children(|c| {
@@ -462,8 +470,8 @@ fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             f,
             OptionsAction::Open,
             "Run Options",
-            150.0,
-            38.0,
+            menu::BAR_BTN_W,
+            menu::BAR_BTN_H,
             GlueBtnKind::Small,
             1.0,
         );

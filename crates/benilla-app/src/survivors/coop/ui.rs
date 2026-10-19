@@ -13,7 +13,7 @@ use bevy::ui::FocusPolicy;
 use bevy_replicon::prelude::RepliconChannels;
 
 use super::super::hud::{start_run, HudFont, MenuRoot};
-use super::super::menu::{MenuBuilt, MenuSlot};
+use super::super::menu::{self, MenuBuilt, MenuSlot};
 use super::super::run_options::GREEN;
 use super::super::zones::Unlocks;
 use super::super::{data, HeroState, LocalHero, MetaBonuses, Phase, Run, Selection};
@@ -136,11 +136,11 @@ fn build_ui(
     });
 }
 
-/// The Multiplayer button and link state, as one block in the menu action row.
+/// The Multiplayer button and link state, as one block in the menu's bar.
 fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
     let px = Val::Px;
     ui.spawn(Node {
-        width: px(150.0),
+        width: px(menu::BAR_BTN_W),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
         row_gap: px(1.0),
@@ -153,8 +153,8 @@ fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             f,
             NetAction::Open,
             "Multiplayer",
-            150.0,
-            38.0,
+            menu::BAR_BTN_W,
+            menu::BAR_BTN_H,
             GlueBtnKind::Small,
             1.0,
         );
@@ -165,7 +165,7 @@ fn menu_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
             MenuLink,
             GlueText {
                 text: "",
-                size: 12.0,
+                size: 11.0,
                 color: GREEN,
                 wrap: false,
             },
