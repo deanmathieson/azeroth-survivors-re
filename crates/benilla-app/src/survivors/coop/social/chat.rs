@@ -158,6 +158,10 @@ pub(super) fn spans(line: &Line) -> Vec<(String, Color)> {
             let words = EMOTES.get(usize::from(*i)).map_or("emotes.", |e| e.2);
             vec![(format!("{who} {words}"), EMOTE)]
         }
+        Body::LootRoll { item, pick, value } => vec![
+            (format!("{who} rolls {value} ({}) for ", pick.label()), LOOT),
+            item_span(*item),
+        ],
         Body::Won { item, pick, value } => vec![
             (format!("{who} won: "), LOOT),
             item_span(*item),
@@ -742,6 +746,17 @@ mod tests {
             piece.rarity.color(),
             "the item in its quality colour"
         );
+        let bonereaver = gear::item(2115).unwrap();
+        let rolled = spans(&line(Body::LootRoll {
+            item: bonereaver.id,
+            pick: RollPick::Need,
+            value: 87,
+        }));
+        assert_eq!(
+            rolled.iter().map(|s| s.0.as_str()).collect::<String>(),
+            "[Jaina] rolls 87 (Need) for [Bonereaver's Edge]"
+        );
+        assert_eq!(rolled[1].1, bonereaver.rarity.color());
         assert_eq!(
             text(&line(Body::Pulled {
                 prize: "Swift Zulian Tiger".into(),

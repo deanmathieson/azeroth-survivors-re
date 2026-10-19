@@ -5,8 +5,8 @@ use bevy::prelude::*;
 
 use super::super::armory::ArmoryState;
 use super::super::Selection;
-use super::item;
 use super::store::GearStore;
+use super::{item, usable_by};
 use crate::glue::GlueClicks;
 
 /// An item icon slot: `Interface\Icons\<icon>.blp`, drawn in `tint` once it loads.
@@ -88,7 +88,7 @@ pub(super) fn gear_clicks(
                 return;
             };
             let gear = store.get(class);
-            if piece.class != class || !gear.has(id) || gear.wears(id) {
+            if !usable_by(piece, class) || !gear.has(id) || gear.wears(id) {
                 return;
             }
             store.edit(class, |g| g.equip(piece));

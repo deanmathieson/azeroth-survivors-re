@@ -1174,15 +1174,6 @@ pub(crate) static SON_OF_FLAME: Script = Script {
     ..Script::of(SON_NAME, &[])
 };
 
-/// What the Firelord drops, each rolled on its own as he falls: its 1.12 item id, its name and its
-/// chance. Kept on the results screen; the class gear catalog has no place for them yet.
-pub(crate) static RAGNAROS_LOOT: &[(u32, &str, f32)] = &[
-    (17203, "Sulfuron Ingot", 0.5),
-    (17204, "Eye of Sulfuras", 0.08),
-    (17076, "Bonereaver's Edge", 0.15),
-    (17063, "Band of Accuria", 0.15),
-];
-
 /// Every script, bosses and adds.
 pub(crate) static SCRIPTS: &[&Script] = &[
     &LUCIFRON,

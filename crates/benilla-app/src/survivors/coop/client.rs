@@ -12,7 +12,7 @@ use super::super::campfire::{Camp, CampAsk, CampRequest};
 use super::super::cards::Rarity;
 use super::super::data;
 use super::super::enemies::{self, Enemy};
-use super::super::gear::{wear, Dresser, GearRead, HeroNames, Slot};
+use super::super::gear::{self, wear, Dresser, GearRead, HeroNames, Slot};
 use super::super::hero::Hero;
 use super::super::hud::{Choice, Offer};
 use super::super::party::{self, HandOutbox};
@@ -217,6 +217,13 @@ fn watch_link(
                 pinned_trinket: profile
                     .as_deref()
                     .and_then(|p| p.faire.wardrobe.pinned_trinket.clone()),
+                tier: gear::raid::tier_set(class).map_or(0, |set| set.worn(&saved.equipped_ids())),
+                bound: gear
+                    .vault()
+                    .bound_keys()
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
                 build: super::build_tag(build.as_deref()),
             });
         }

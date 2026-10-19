@@ -1,6 +1,6 @@
 # Raid mode: Molten Core
 
-Status: the boss mechanics library (`survivors/raid/`) and all ten Molten Core bosses are built, each as its own raid stage (map 409): Lucifron, Magmadar, Gehennas, Garr, Shazzrah, Baron Geddon, Sulfuron Harbinger, Golemagg, Majordomo Executus and Ragnaros. Each boss walks out at 6:00 and its kill wins the stage (Majordomo's surrender wins his). Ragnaros's lair opens only once Majordomo's camp is won. The raid shell (segments, lockout, wipes), T1 loot, Need/Greed for raid items and the social layer are still design only. This is the plan for the first raid. The ROADMAP's "Raid night" section points here.
+Status: the boss mechanics library (`survivors/raid/`) and all ten Molten Core bosses are built, each as its own raid stage (map 409): Lucifron, Magmadar, Gehennas, Garr, Shazzrah, Baron Geddon, Sulfuron Harbinger, Golemagg, Majordomo Executus and Ragnaros. Each boss walks out at 6:00 and its kill wins the stage (Majordomo's surrender wins his). Ragnaros's lair opens only once Majordomo's camp is won. Molten Core loot is built too (section 4, "What is built"): each boss drops 2-3 pieces from its own 1.12 list, the nine Tier 1 sets with their 3/5/8 bonuses, named epics, Bound jewelry and the road to Sulfuras, all kept in the profile and shown in the Armory, and rolled for with Need/Greed in co-op. The raid shell (segments, lockout, wipes) and the rest of the social layer are still design only. This is the plan for the first raid. The ROADMAP's "Raid night" section points here.
 
 Ground rules, as for the rest of the fork:
 
@@ -386,14 +386,28 @@ Built so far (`survivors/raid/mod.rs`): ground circles, cones, lines and donuts 
 
 ## 4. Loot
 
+### What is built (first cut of M5)
+
+The code is `gear/raid.rs` (the pieces, the drop tables, the set bonuses and keeping them), with its systems in `gear/loot.rs` and the roll in `coop/social/loot.rs`.
+
+- **The pieces.** 72 Tier 1 pieces (ids 2000-2087), 20 named drops (2100-2119), 7 Bound jewelry (2130-2136), the Eye of Sulfuras and the Sulfuron Ingot (2150, 2151) and Sulfuras (2160): a block of stable save keys of its own, apart from the class catalog's 45 a class. Each records its real 1.12 item id and the classes it is for.
+- **What is checked against the client, and what is not.** Data tests check every display id against `ItemDisplayInfo.dbc` (the row exists and its icon is the piece's, and the icon ships) and every set against `ItemSet.dbc` (its name, its 8 real item ids, its 3/5/8 thresholds). **Not checkable** (the client has no item templates): which T1 id is which slot, the named pieces' and quest items' real ids, and every item-to-display link. The T1 displays were picked by each set's own raid textures (`Plate_RaidWarrior_A_01...`); the named ones by icon and model. Pants of Prophecy have no legs-only row in the client, so they use a robe-skirt row with the chest icon.
+- **A kill's drop** (`raid::roll_kill`): one Tier 1 piece of a slot the boss drops (two for a party of 3 or more), for a class picked from the party's (solo, yours); then one named piece (Ragnaros: three), those the party can use drawn first; then each quest item at its chance. Majordomo's drop falls when he yields. So every kill drops 2-3 pieces, plus the odd quest item.
+- **Solo,** it all goes straight to you: gear into your class's collection (worn if it beats the slot's rarity; a duplicate pays gold), Bound jewelry and quest items into the account's vault. **In co-op** the host puts every piece up for the party's roll.
+- **Kept in the profile.** Gear goes in the class's `gear.collected`, as catalog pieces do. The account's keepsakes are a new `[raid]` section (`RaidVault`: Eyes, Ingots, Bound jewelry, whether Sulfuras is forged). It reads as empty when missing, so **the profile version is not bumped** (it stays 4; the prof-p0 branch's v5 is unaffected). An older build drops the `[raid]` section on its next save.
+- **The Armory.** The Collection tab shows Molten Core under the rarities: the class's Tier 1 set in its slots and the named pieces it may wear, with sources, odds and an Equip button. The left column tallies them and the vault. **The hero model** wears T1: the visible-gear path dresses any worn display id.
+- **Set bonuses** (below) show in the item tooltip and the C panel, green once reached.
+- **Bound jewelry** (rings, trinkets, necklaces) is worn from the start of **every** run, raid or not: the simple version. RAIDS.md's plan (worn in raids, first offer elsewhere) is not built.
+- **Sulfuras, simple version:** with one Eye of Sulfuras and one Sulfuron Ingot in the vault, the forge lights at once. Both are used up, and Sulfuras, Hand of Ragnaros joins the Warrior's, Paladin's and Shaman's collections. Forged once per account. The Ingot drops from Golemagg (25%) and Ragnaros (50%), and the Eye from Ragnaros (10%).
+
 ### Tier 1 sets
 
 All nine T1 sets have 8 pieces. Our gear system already has exactly those 8 armour slots, plus a main hand that T1 doesn't use.
 
-- **Item ids:** item ids are from memory (verify against `item_template`). The sets' ItemSet.dbc rows sit around 201-209 (look them up by name and verify).
+- **Item ids:** each set's 8 ids are checked against its `ItemSet.dbc` row (201-209, found by name). Which id is which slot is still from memory.
 - **Stats and new id block:** T1 pieces get our Epic stat budget and set bonuses, which nothing else in the catalog has yet. They go in a new id block (for example 2000+), as stable keys that are never computed.
 
-| Class | Set | Item ids (verify) | Head | Shoulder | Chest | Wrist | Hands | Waist | Legs | Feet |
+| Class | Set | Item ids (set checked) | Head | Shoulder | Chest | Wrist | Hands | Waist | Legs | Feet |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Warrior | Battlegear of Might | 16861-16868 | Helm of Might | Pauldrons of Might | Breastplate of Might | Bracers of Might | Gauntlets of Might | Belt of Might | Legplates of Might | Sabatons of Might |
 | Paladin | Lawbringer Armor | 16853-16860 | Lawbringer Helm | Lawbringer Spaulders | Lawbringer Chestguard | Lawbringer Bracers | Lawbringer Gauntlets | Lawbringer Belt | Lawbringer Legplates | Lawbringer Boots |
@@ -405,7 +419,7 @@ All nine T1 sets have 8 pieces. Our gear system already has exactly those 8 armo
 | Warlock | Felheart Raiment | 16803-16810 | Felheart Horns | Felheart Shoulder Pads | Felheart Robes | Felheart Bracers | Felheart Gloves | Felheart Belt | Felheart Pants | Felheart Slippers |
 | Druid | Cenarion Raiment | 16828-16836 | Cenarion Helm | Cenarion Spaulders | Cenarion Vestments | Cenarion Bracers | Cenarion Gloves | Cenarion Belt | Cenarion Leggings | Cenarion Boots |
 
-**Which bosses drop which slots** (the 1.12 map, from memory; verify):
+**Which bosses drop which slots** (as built; the 1.12 map from memory):
 
 | Slot | Drops from |
 |---|---|
@@ -413,12 +427,29 @@ All nine T1 sets have 8 pieces. Our gear system already has exactly those 8 armo
 | Shoulder | Baron Geddon, Sulfuron Harbinger |
 | Chest | Golemagg |
 | Legs | Magmadar, Golemagg |
-| Hands, Feet | Lucifron, Gehennas, Shazzrah |
-| Wrist, Waist | trash: each trash segment has a 30% chance of one |
+| Hands | Lucifron, Shazzrah |
+| Feet | Gehennas, Shazzrah |
+| Wrist, Waist | Majordomo's cache. These were trash drops in 1.12; there is no trash loot yet. |
 
 **Smart loot.** A T1 drop rolls its class only from the classes in the party, weighted toward players who still lack that slot. A night with 5 players drops about 18 T1 pieces (2 per tier boss, plus trash), so a group fills its sets over roughly three nights.
 
 ### Set bonuses (3 / 5 / 8)
+
+**As built** (modest on purpose; they apply in every run). The 3 and 5 add to the gear's bonuses (`MetaParts::gear`), which co-op carries to the host. The 8 is a proc from the mechanics library, which the host grants from the Tier 1 piece count each player sends.
+
+| Set | 3 pieces | 5 pieces | 8 pieces |
+|---|---|---|---|
+| Might | +2% damage reduction | +20 max health | A quarter of each melee blow you take is struck back at the attacker (blocked damage reflected) |
+| Lawbringer | +3% Holy damage | +2% crit | Hits: 5% chance to heal you and allies within 15 yd for 25 |
+| Giantstalker | +3% damage | +2% crit | Hits: 6% chance to split into 2 more shots (Multi-Shot) |
+| Nightslayer | +2% crit | +5% crit damage | Below 25% health: heal for 40 (Vanish heals), once a minute |
+| Prophecy | +3% Holy damage | +0.5 health/s | Every 15 s, heal you and allies within 15 yd for 20 |
+| Earthfury | +3% Nature damage | +5% area | A killing blow turned away at 50% health (Reincarnation), once every 10 min |
+| Arcanist | +3% damage | -3% cooldowns | Hits: 2% chance to make every ability ready at once, once every 30 s |
+| Felheart | +3% Shadow damage | +1% lifesteal | Kills: 30% chance of Shadow burns on 3 enemies within 10 yd |
+| Cenarion | +3% Nature damage | +0.5 health/s | Below 50% health: heal you and allies within 20 yd for 30 (Tranquility), once a minute |
+
+The plan this replaced:
 
 The bonuses trigger at 3, 5 and 8 pieces, as T1's did in 1.12. Data tests check the thresholds against ItemSet.dbc. The original texts are paraphrased from memory as the flavour source; the real ones can be read from ItemSet.dbc.
 
@@ -437,6 +468,25 @@ Each bonus is built from mechanics blocks the toolkit already has (`Burst`, `Nov
 | Cenarion | Thorns, Tranquility, Hurricane | Thorns on every hero within 20 yd | Rebirth: +1 battle-resurrection per boss fight | Party below 50% health: Tranquility, a strong area heal over time (60 s cooldown); Hurricane cooldown halved |
 
 ### Notable non-set drops
+
+**As built,** by boss (raid ids in brackets; real ids recorded in `gear/raid.rs`, unverified):
+
+| Boss | Tier 1 | Named (one drawn; Ragnaros three) | Quest items |
+|---|---|---|---|
+| Lucifron | Hands | Choker of Enlightenment (Bound), Flameguard Gauntlets | |
+| Magmadar | Legs | Striker's Mark, Earthshaker, Quick Strike Ring (Bound) | |
+| Gehennas | Feet | Sorcerous Dagger, Wristguards of Stability | |
+| Garr | Head | Brutality Blade, Aurastone Hammer, Gutgore Ripper | |
+| Shazzrah | Hands, Feet | Talisman of Ephemeral Power (Bound), Ring of Spell Power (Bound), Sorcerous Dagger | |
+| Baron Geddon | Shoulder | Seal of the Archmagus (Bound), Salamander Scale Pants | |
+| Sulfuron Harbinger | Shoulder | Shadowstrike, Salamander Scale Pants | |
+| Golemagg | Chest, Legs | Azuresong Mageblade, Staff of Dominance, Blastershot Launcher | Sulfuron Ingot 25% |
+| Majordomo (cache) | Wrist, Waist | Core Hound Tooth, Finkle's Lava Dredger | |
+| Ragnaros | | Bonereaver's Edge, Perdition's Blade, Onslaught Girdle, Spinal Reaper, Crown of Destruction, Band of Accuria (Bound), Choker of the Fire Lord (Bound) | Eye of Sulfuras 10%, Sulfuron Ingot 50% |
+
+Not built: the Bindings of the Windseeker, the Essence of the Firelord, Elementium Ore and the Thunderfury line; the named pieces' special effects (Bonereaver's armour break, Perdition's fire blast), which are plain stats for now.
+
+The plan this came from:
 
 Non-set raid items name which classes can use them, a field the gear system doesn't have yet. Rings, trinkets and necklaces already exist in `jewelry/catalog.rs` as in-run picks (Band of Accuria, Talisman of Ephemeral Power, Choker of the Fire Lord, Quick Strike Ring, Ring of Spell Power). A raid-looted copy is **Bound**:
 
@@ -484,6 +534,10 @@ They are tracked in the Armory's Quests tab with progress per item, and can span
 ---
 
 ## 5. Need / Greed / Pass
+
+**As built:** raid drops go through the co-op loot frame (v0.3.4) unchanged. Need is allowed only for the classes a raid piece names: a Tier 1 piece for its own class, a weapon for its listed classes, Bound jewelry for anyone, and the Eye and the Ingot for the Warrior, Paladin and Shaman. The host rolls the dice. Each roll is told in chat in WoW style ("[Dean] rolls 87 (Need) for [Bonereaver's Edge]", tie re-rolls too), then the winner ("[Dean] won: [Bonereaver's Edge] (Need 87)"). The winner's own machine keeps the piece: in the class it plays if that class may wear it, else in the piece's first class (a Greed win). Solo, nothing is rolled. The chat line and the Tier 1 count and Bound jewelry in the hello changed the wire, so `PROTOCOL` is 19. Pity, sharding and the banner are not built.
+
+The plan:
 
 - **The real roll window:** the 1.12 group-loot frame, with item icon, name in its quality colour, a timer bar, and Need (dice), Greed (coin) and Pass buttons. The timer is 20 s, not 60, and running out passes. Several items stack as several frames, as in 1.12.
 - **Chat lines in the real 1.12 wording**, taken from the client's `GlobalStrings.lua` (for example `LOOT_ROLL_NEED`, `LOOT_ROLL_WON`, `LOOT_ROLL_ALL_PASSED`, `RANDOM_ROLL_RESULT`; verify the names). For example: "Need Roll - 87 for [Lawbringer Helm] by Kaz", then "Kaz won: [Lawbringer Helm]".
@@ -629,3 +683,7 @@ Each milestone can be played on its own, and none starts until the one before pa
 8. **Side-bet limits as written:** 1-10 tickets a bet, at most 50 a night per player.
 9. **Set bonuses apply everywhere**, in raids and normal runs. Gear is meta-progression, so loot matters.
 10. **Heroic comes later,** not in the first version.
+11. **Wrists and belts drop from Majordomo's cache** until trash loot exists (built that way).
+12. **Bound jewelry is worn in every run** in the first cut (simple version of section 4's plan).
+13. **Sulfuras takes one Eye and one Ingot** in the first cut, not 4 Ingots and the Thorium Brotherhood. It is forged for the Warrior, Paladin and Shaman at once. The Druid is left out, unlike the plan above.
+14. **The raid's keepsakes are a `[raid]` profile section with a default,** so no profile version bump. Gear stays in the class records.

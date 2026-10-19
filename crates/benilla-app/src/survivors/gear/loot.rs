@@ -3,6 +3,11 @@
 //! if they beat what the slot wears), and each is announced over the chest and on the run's banner
 //! in its rarity's colour, and on the results screen. A piece already collected pays
 //! [`DUPLICATE_COINS`] coins of gold instead.
+//!
+//! A Molten Core boss beaten ([`Felled`]) drops its raid loot ([`raid::roll_kill`]) the same way,
+//! straight to the player solo or up for the party's roll in co-op; raid jewelry and quest items
+//! go into the account's vault ([`super::RaidVault`]). As a run plays, the hero wears its class's
+//! Tier 1 set bonuses ([`wear_tier`]) and the account's Bound jewelry ([`wear_bound`]).
 
 use std::collections::VecDeque;
 
@@ -12,11 +17,13 @@ use bevy::prelude::*;
 use super::super::data::CLASSES;
 use super::super::hud::{BannerText, NoteKind, ResultsNotes, GOLD_TONE};
 use super::super::party::{NetRole, Remote};
+use super::super::raid::Felled;
 use super::super::treasure::BossRolls;
-use super::super::{treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
+use super::super::{jewelry, treasure, HeroState, LocalHero, Phase, Rng, Run, Selection};
+use super::raid::{self, Kept, RaidKind, RaidPiece};
 use super::save::Collected;
 use super::store::{GearRead, GearStore};
-use super::{drops_for, item, piece, BossDrop, Slot};
+use super::{drops_for, item, piece, BossDrop, Rarity, Slot};
 use crate::combat_text::CombatTextSpawn;
 use crate::net::ObjectStore;
 
@@ -208,11 +215,19 @@ pub(super) fn roll_loot(
 /// announced; one already collected is only announced.
 pub(super) fn grant_won(
     mut won: ResMut<WonLoot>,
+    selection: Res<Selection>,
     mut store: GearStore,
     mut notes: ResMut<ResultsNotes>,
     mut toasts: ResMut<LootToasts>,
 ) {
     for id in std::mem::take(&mut won.0) {
+        // A raid piece goes to the class this player plays when it may wear it.
+        if let Some(p) = raid::raid_piece(id) {
+            let class = selection.class.unwrap_or(p.item.class);
+            let (kept, forged) = store.keep_raid(p, class);
+            announce_raid(p, kept, forged, 0, &mut notes, &mut toasts);
+            continue;
+        }
         let Some(p) = item(id) else { continue };
         let got = if store.get(p.class).has(p.id) {
             Collected::Duplicate
@@ -240,6 +255,148 @@ pub(super) fn grant_won(
             )),
         }
     }
+}
+
+/// A raid piece kept: noted for the results and announced in its colour; a duplicate piece of
+/// gear paid `gold` (0 for none), and the forge lit when `forged`.
+fn announce_raid(
+    p: &RaidPiece,
+    kept: Kept,
+    forged: bool,
+    gold: u32,
+    notes: &mut ResultsNotes,
+    toasts: &mut LootToasts,
+) {
+    let name = p.item.name;
+    let color = p.item.rarity.color();
+    let line = match kept {
+        Kept::Gear { equipped: true, .. } => Some(format!("Loot: {name} (equipped)")),
+        Kept::Gear { .. } => Some(format!("Loot: {name}")),
+        Kept::Bound => Some(format!(
+            "Loot: {name} (Bound: worn from the start of every run)"
+        )),
+        Kept::Counted(n) => Some(format!("Loot: {name} ({n} held)")),
+        Kept::Duplicate => None,
+    };
+    match line {
+        Some(line) => {
+            toasts.queue.push_back((format!("Loot: {name}"), color));
+            notes.push(line, NoteKind::Loot);
+        }
+        None if gold > 0 => toasts
+            .queue
+            .push_back((format!("{name} again: +{gold} gold"), GOLD_TONE)),
+        None => toasts.queue.push_back((
+            format!("{name} again: already in your collection"),
+            GOLD_TONE,
+        )),
+    }
+    if forged {
+        let line = "The Eye and the Ingot are forged: Sulfuras, Hand of Ragnaros!".to_string();
+        toasts
+            .queue
+            .push_back((line.clone(), Rarity::Legendary.color()));
+        notes.push(line, NoteKind::Loot);
+    }
+}
+
+/// Who is in the run, for a co-op host's group roll: its role, every hero, the remote heroes, and
+/// the pieces waiting for a roll.
+type Party<'w, 's> = (
+    Option<Res<'w, NetRole>>,
+    Query<'w, 's, &'static HeroState>,
+    Query<'w, 's, (), With<Remote>>,
+    Option<ResMut<'w, GroupDrops>>,
+);
+
+/// A Molten Core boss beaten drops its loot. On a co-op host with other players in the run every
+/// piece goes up for the party's roll ([`GroupDrops`]), each Tier 1 piece the set of a class picked
+/// from the party's heroes. Solo, it all goes straight to the player: gear into its class's
+/// collection (a duplicate pays gold), raid jewelry and quest items into the account's vault.
+pub(super) fn drop_raid_loot(
+    mut felled: MessageReader<Felled>,
+    mut run: ResMut<Run>,
+    mut rng: ResMut<Rng>,
+    selection: Res<Selection>,
+    local: Query<&HeroState, With<LocalHero>>,
+    mut store: GearStore,
+    mut notes: ResMut<ResultsNotes>,
+    mut toasts: ResMut<LootToasts>,
+    party: Party,
+) {
+    let (role, heroes, remotes, mut group) = party;
+    let co_op = role.is_some_and(|r| *r == NetRole::Host) && !remotes.is_empty();
+    for f in felled.read() {
+        let Some(loot) = raid::loot_for(f.boss) else {
+            continue;
+        };
+        let Ok(me) = local.single() else { continue };
+        if let (true, Some(group)) = (co_op, group.as_deref_mut()) {
+            let classes: Vec<usize> = heroes.iter().map(class_of).collect();
+            for id in raid::roll_kill(loot, &classes, &mut rng) {
+                group.0.push(GroupDrop {
+                    item: id,
+                    chest: Entity::PLACEHOLDER,
+                });
+            }
+            continue;
+        }
+        let class = hero_class(&selection, me);
+        for id in raid::roll_kill(loot, &[class], &mut rng) {
+            let Some(p) = raid::raid_piece(id) else {
+                continue;
+            };
+            let (kept, forged) = store.keep_raid(p, class);
+            let gold = if kept == Kept::Duplicate && p.kind == RaidKind::Gear {
+                let gold = treasure::worth(DUPLICATE_COINS, run.elapsed, me.stats().gold, 0.5);
+                run.gold += gold;
+                gold
+            } else {
+                0
+            };
+            announce_raid(p, kept, forged, gold, &mut notes, &mut toasts);
+        }
+    }
+}
+
+/// The local hero wears its class's Tier 1 set bonuses: the 8-piece's proc or reflect, kept in
+/// step with what the class wears (a new run's fresh hero gets them back at once). The 3- and
+/// 5-piece steps are bonuses, in [`super::super::meta::MetaParts::gear`].
+pub(super) fn wear_tier(
+    selection: Res<Selection>,
+    gear: GearRead,
+    mut heroes: Query<&mut HeroState, With<LocalHero>>,
+) {
+    let Some(class) = selection.class else { return };
+    let Some(set) = raid::tier_set(class) else {
+        return;
+    };
+    let pieces = set.worn(&gear.get(class).equipped_ids());
+    for mut hero in &mut heroes {
+        if !raid::tier_applied(&hero, class, pieces) {
+            raid::apply_tier(&mut hero, class, pieces);
+        }
+    }
+}
+
+/// As play begins, the local hero puts on the account's Bound raid jewelry, once a run.
+pub(super) fn wear_bound(
+    mut run: ResMut<Run>,
+    gear: GearRead,
+    mut heroes: Query<&mut HeroState, With<LocalHero>>,
+) {
+    if run.raid_bound {
+        return;
+    }
+    let Ok(mut hero) = heroes.single_mut() else {
+        return;
+    };
+    for key in gear.vault().bound_keys() {
+        if let Some(piece) = raid::bound_piece(key) {
+            jewelry::put_on(&mut hero, piece);
+        }
+    }
+    run.raid_bound = true;
 }
 
 /// Loot lines take the run's banner in turn, each once it is free, in the piece's rarity colour;
@@ -383,6 +540,109 @@ mod tests {
             }
         }
         assert_eq!(boss_index(0, "Nobody"), None);
+    }
+
+    /// A world for the raid loot systems, the local hero playing class `class`.
+    fn raid_world(class: usize) -> World {
+        let mut world = World::new();
+        world.init_resource::<Messages<Felled>>();
+        world.init_resource::<ResultsNotes>();
+        world.init_resource::<LootToasts>();
+        world.init_resource::<WonLoot>();
+        world.insert_resource(Profile::default());
+        world.insert_resource(Selection {
+            class: Some(class),
+            ..default()
+        });
+        world.insert_resource(Run::default());
+        world.insert_resource(Rng(11));
+        world.spawn((HeroState::default(), LocalHero));
+        world
+    }
+
+    /// Solo, a Molten Core boss's loot goes straight to the player: its Tier 1 piece for the
+    /// player's class, worn; jewelry and quest items into the vault; and once an Eye and an Ingot
+    /// are both in, Sulfuras for the Warrior, Paladin and Shaman.
+    #[test]
+    fn a_raid_boss_drops_straight_to_a_solo_player() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = raid_world(6);
+        world.write_message(Felled { boss: "Lucifron" });
+        // Not a raid boss: nothing.
+        world.write_message(Felled { boss: "Flamewaker" });
+        world.run_system_once(drop_raid_loot).unwrap();
+        let gloves = raid::tier_piece(6, Slot::Hands).unwrap();
+        assert!(class_gear(&world, 6).wears(gloves.item.id));
+        let notes = world.resource::<ResultsNotes>().0.len();
+        assert_eq!(notes, 2, "the gloves and one named piece");
+
+        let mut kills = 0;
+        while !super::super::raid_vault(&world).sulfuras {
+            kills += 1;
+            assert!(kills < 500, "the Eye never dropped");
+            world.write_message(Felled { boss: "Ragnaros" });
+            world.run_system_once(drop_raid_loot).unwrap();
+        }
+        let vault = super::super::raid_vault(&world);
+        assert!(vault.bound_keys().contains(&"band_of_accuria"));
+        for class in raid::SULFURAS_CLASSES {
+            assert!(class_gear(&world, *class).has(raid::SULFURAS), "{class}");
+        }
+        assert!(!class_gear(&world, 6).has(raid::SULFURAS));
+        assert!(world
+            .resource::<ResultsNotes>()
+            .0
+            .iter()
+            .any(|(n, _)| n.contains("Sulfuras, Hand of Ragnaros")));
+    }
+
+    /// A raid piece won at a co-op roll goes to the class the winner plays when it may wear it,
+    /// else to the piece's own first class; jewelry to the account.
+    #[test]
+    fn raid_pieces_won_at_a_roll_go_to_the_right_class() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = raid_world(1);
+        world.resource_mut::<WonLoot>().0 = vec![2115, 2135];
+        world.run_system_once(grant_won).unwrap();
+        assert!(class_gear(&world, 1).has(2115), "the paladin's Bonereaver");
+        assert!(super::super::raid_vault(&world).bound.contains(&2135));
+        world.resource_mut::<Selection>().class = Some(6);
+        world.resource_mut::<WonLoot>().0 = vec![2000];
+        world.run_system_once(grant_won).unwrap();
+        assert!(
+            class_gear(&world, 0).has(2000),
+            "a Greed win of the warrior's helm"
+        );
+        assert!(!class_gear(&world, 6).has(2000));
+    }
+
+    /// The local hero wears its class's set: Might's reflect at 8 pieces.
+    #[test]
+    fn the_hero_wears_its_tier_set() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = raid_world(0);
+        let hero = |world: &mut World| {
+            world
+                .query_filtered::<&HeroState, With<LocalHero>>()
+                .single(world)
+                .unwrap()
+                .reflect
+        };
+        world.run_system_once(wear_tier).unwrap();
+        assert_eq!(hero(&mut world), 0.0);
+        {
+            let mut profile = world.resource_mut::<Profile>();
+            let gear = &mut profile
+                .classes
+                .entry(super::super::super::profile::slug(CLASSES[0].name))
+                .or_default()
+                .gear;
+            for p in raid::tier_set(0).unwrap().pieces() {
+                gear.collect(&p.item);
+            }
+        }
+        world.run_system_once(wear_tier).unwrap();
+        assert_eq!(hero(&mut world), 0.25);
     }
 
     /// A boss chest through the systems: new pieces are collected, worn, noted and announced in

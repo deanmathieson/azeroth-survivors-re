@@ -585,6 +585,8 @@ pub(super) struct Run {
     pub slow: bool,
     /// The local account's run-start trinket has been applied for this run.
     pub pinned_trinket: bool,
+    /// The account's Bound raid jewelry has been put on for this run ([`gear`]).
+    pub raid_bound: bool,
     /// Micro-events announced so far ([`enemies::spawn_enemies`]): each sounds the raid warning.
     pub events: u32,
 }
@@ -618,6 +620,7 @@ impl Default for Run {
             breather: 0.0,
             slow: false,
             pinned_trinket: false,
+            raid_bound: false,
             events: 0,
         }
     }

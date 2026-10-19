@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::achievements::AchievementSave;
 use super::faire::FaireSave;
-use super::gear::GearSave;
+use super::gear::{GearSave, RaidVault};
 use super::jewelry::CodexSave;
 use super::quests::QuestSave;
 use super::rewards::RewardsSave;
@@ -106,6 +106,11 @@ pub(super) struct Profile {
     /// The Stable's equipped cosmetics.
     #[serde(default)]
     pub stable: StableSave,
+    /// Molten Core's keepsakes for the whole account (the Eye of Sulfuras, Sulfuron Ingots, Bound
+    /// jewelry), defined in [`super::gear`]. A save without it reads as empty, so it needs no
+    /// version bump.
+    #[serde(default)]
+    pub raid: RaidVault,
     #[serde(skip, default = "default_writable")]
     writable: bool,
     /// Unsaved changes: [`save_if_dirty`] writes them once and clears this.
@@ -134,6 +139,7 @@ impl Default for Profile {
             codex: CodexSave::default(),
             faire: FaireSave::default(),
             stable: StableSave::default(),
+            raid: RaidVault::default(),
             writable: true,
             dirty: false,
         }
@@ -659,6 +665,47 @@ mod tests {
         assert_eq!(again.profile, profile);
         // A reload ahead of recording a run upgrades it the same way.
         assert_eq!(clean_profile_from_text(sections).unwrap(), profile);
+    }
+
+    /// Molten Core's section is new without a version bump: a version 4 save without it reads as
+    /// an empty vault, and one with it (and raid ids in a class's gear) keeps it all.
+    #[test]
+    fn raid_section_reads_without_a_bump_and_round_trips() {
+        let v4 = "version = 4
+
+[account]
+runs = 2
+
+[classes.warrior]
+runs = 2
+";
+        let loaded = load_text(v4);
+        assert!(loaded.corrupt_text.is_none() && loaded.profile.writable);
+        assert_eq!(loaded.profile.raid, RaidVault::default());
+
+        let with = "version = 4
+
+[classes.warrior.gear]
+collected = [2000, 2115]
+
+                    [classes.warrior.gear.equipped]
+head = 2000
+main_hand = 2115
+
+                    [raid]
+eyes = 1
+ingots = 2
+bound = [2135]
+";
+        let loaded = load_text(with);
+        assert!(loaded.corrupt_text.is_none());
+        let mut profile = loaded.profile;
+        assert_eq!((profile.raid.eyes, profile.raid.ingots), (1, 2));
+        assert_eq!(profile.raid.bound_keys(), ["band_of_accuria"]);
+        let warrior = &profile.classes["warrior"].gear;
+        assert_eq!(warrior.equipped_ids(), vec![2000, 2115]);
+        let text = saved(&mut profile);
+        assert_eq!(load_text(&text).profile, profile);
     }
 
     #[test]

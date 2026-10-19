@@ -2,10 +2,12 @@
 //! chest drops up for the party's roll ([`gear::GroupDrops`]) instead of keeping it, and every
 //! player gets 1.12's group-loot frame for it: the item's icon and name in its quality colour, the
 //! timer bar, and the Need (dice), Greed (coins) and Pass buttons. Need is only for a piece the
-//! player's class can wear. After [`ROLL_SECS`], or once everyone has chosen, the host rolls 1 to
-//! 100 for each Need (else each Greed), rolls ties again, and tells everyone "[Name] won: [Item]
-//! (Need 87)"; the winner's own machine keeps the piece in its own profile ([`gear::WonLoot`]).
-//! Solo, a chest is auto-looted as it always was.
+//! player's class can wear; a Molten Core piece names its classes ([`gear::raid`]). After
+//! [`ROLL_SECS`], or once everyone has chosen, the host rolls 1 to 100 for each Need (else each
+//! Greed), rolls ties again, and tells everyone each roll ("[Name] rolls 87 (Need) for [Item]")
+//! and then "[Name] won: [Item] (Need 87)"; the winner's own machine keeps the piece in its own
+//! profile ([`gear::WonLoot`]). Solo, a chest is auto-looted as it always was, and a raid boss's
+//! loot goes straight to the player.
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
@@ -137,8 +139,12 @@ fn can_use_weapon(class: usize, weapon: Weapon) -> bool {
 }
 
 /// Whether `hero` may Need `item`: every class can use lighter armour, and weapons follow the
-/// 1.12 class weapon skills. Greed and Pass deliberately do not consult this rule.
+/// 1.12 class weapon skills; a raid piece is for the classes it names (a Tier 1 piece for its own
+/// class alone). Greed and Pass deliberately do not consult this rule.
 pub(super) fn may_need(item: u16, hero: usize) -> bool {
+    if let Some(raid) = gear::raid_piece(item) {
+        return raid.classes.contains(&hero);
+    }
     let Some(item) = gear::item(item) else {
         return false;
     };
@@ -214,8 +220,13 @@ impl GroupRoll {
     }
 
     /// The winner: Need beats Greed; within that, the highest of `d100`'s rolls, ties rolled again
-    /// among the tied. `None` when everyone passed (or let the time run out).
-    pub(super) fn settle(&self, mut d100: impl FnMut() -> u32) -> Option<Win> {
+    /// among the tied, each roll told to `told` as it is made. `None` when everyone passed (or let
+    /// the time run out).
+    pub(super) fn settle(
+        &self,
+        mut d100: impl FnMut() -> u32,
+        mut told: impl FnMut(Win),
+    ) -> Option<Win> {
         let tier = [RollPick::Need, RollPick::Greed]
             .into_iter()
             .find(|&p| self.seats.iter().any(|s| s.pick == Some(p)))?;
@@ -227,6 +238,13 @@ impl GroupRoll {
             .collect();
         loop {
             let rolls: Vec<(u8, u32)> = contenders.iter().map(|&p| (p, d100())).collect();
+            for &(player, value) in &rolls {
+                told(Win {
+                    player,
+                    pick: tier,
+                    value,
+                });
+            }
             let best = rolls.iter().map(|r| r.1).max()?;
             let top: Vec<u8> = rolls.iter().filter(|r| r.1 == best).map(|r| r.0).collect();
             if let [player] = top[..] {
@@ -344,7 +362,20 @@ fn host_rolls(
     host.rolls.retain(|r| !r.decided());
     for r in done {
         out.write(to_all(Heard::RollEnd { id: r.id }));
-        let win = r.settle(|| rng.index(100) as u32 + 1);
+        let mut rolls = Vec::new();
+        let win = r.settle(|| rng.index(100) as u32 + 1, |w| rolls.push(w));
+        // Every roll, as the 1.12 loot frame tells them, then the winner.
+        for roll in rolls {
+            out.write(to_all(Heard::Line(Line {
+                player: roll.player,
+                name: name_of(&session, roll.player),
+                body: Body::LootRoll {
+                    item: r.item,
+                    pick: roll.pick,
+                    value: roll.value,
+                },
+            })));
+        }
         let Some(win) = win else {
             out.write(to_all(Heard::Line(Line {
                 player: 0,
@@ -728,13 +759,50 @@ mod tests {
         assert!(r.decided());
         // Both are eligible Need rolls, so the higher die wins.
         assert_eq!(
-            r.settle(dice(&[3, 4])),
+            r.settle(dice(&[3, 4]), |_| {}),
             Some(Win {
                 player: 1,
                 pick: RollPick::Need,
                 value: 4
             })
         );
+    }
+
+    #[test]
+    fn raid_pieces_are_needed_by_their_classes_alone() {
+        // Helm of Might (2000) is the warrior's alone, though a paladin wears plate.
+        assert!(may_need(2000, WARRIOR));
+        assert!(!may_need(2000, 1));
+        // Bonereaver's Edge (2115) names the warrior, paladin and hunter.
+        assert!(may_need(2115, 1) && may_need(2115, 2));
+        assert!(!may_need(2115, ROGUE));
+        // The Eye of Sulfuras (2150) is for the classes Sulfuras is for; jewelry for anyone.
+        assert!(may_need(2150, 5) && !may_need(2150, MAGE));
+        assert!(may_need(2135, MAGE) && may_need(2135, PRIEST));
+        let mut r = GroupRoll::new(1, 2000, &[(0, WARRIOR), (1, 1)]);
+        assert!(!r.choose(1, RollPick::Need), "not the paladin's set");
+        assert!(r.choose(1, RollPick::Greed));
+    }
+
+    #[test]
+    fn every_roll_is_told_ties_too() {
+        let mut r = GroupRoll::new(1, 700, &[(0, MAGE), (1, MAGE), (2, PRIEST)]);
+        r.choose(0, RollPick::Need);
+        r.choose(1, RollPick::Need);
+        r.choose(2, RollPick::Greed);
+        let mut told = Vec::new();
+        let win = r.settle(dice(&[50, 50, 30, 70]), |w| told.push(w));
+        let need = |player, value| Win {
+            player,
+            pick: RollPick::Need,
+            value,
+        };
+        // The greed never rolls under a need; the tie rolls again, and that is told too.
+        assert_eq!(
+            told,
+            vec![need(0, 50), need(1, 50), need(0, 30), need(1, 70)]
+        );
+        assert_eq!(win, Some(need(1, 70)));
     }
 
     #[test]
@@ -745,7 +813,7 @@ mod tests {
         }
         // 50, 50 and 20: the two fifties roll again, 30 against 70.
         assert_eq!(
-            r.settle(dice(&[50, 50, 20, 30, 70])),
+            r.settle(dice(&[50, 50, 20, 30, 70]), |_| {}),
             Some(Win {
                 player: 1,
                 pick: RollPick::Need,
@@ -756,7 +824,7 @@ mod tests {
         let mut g = GroupRoll::new(2, 700, &[(0, PRIEST), (1, PRIEST)]);
         g.choose(0, RollPick::Greed);
         g.choose(1, RollPick::Greed);
-        assert_eq!(g.settle(dice(&[99, 12])).map(|w| w.player), Some(0));
+        assert_eq!(g.settle(dice(&[99, 12]), |_| {}).map(|w| w.player), Some(0));
     }
 
     #[test]
@@ -769,7 +837,7 @@ mod tests {
         assert!(r.decided(), "the time is up");
         // The mage never chose: the priest's greed takes it.
         assert_eq!(
-            r.settle(dice(&[40])).map(|w| (w.player, w.pick)),
+            r.settle(dice(&[40]), |_| {}).map(|w| (w.player, w.pick)),
             Some((1, RollPick::Greed))
         );
     }
@@ -780,11 +848,11 @@ mod tests {
         r.choose(0, RollPick::Pass);
         r.choose(1, RollPick::Pass);
         assert!(r.decided());
-        assert_eq!(r.settle(dice(&[1])), None);
+        assert_eq!(r.settle(dice(&[1]), |_| {}), None);
         // Nobody choosing at all is everyone passing.
         let mut idle = GroupRoll::new(2, 700, &[(0, MAGE)]);
         idle.tick(ROLL_SECS);
-        assert_eq!(idle.settle(dice(&[1])), None);
+        assert_eq!(idle.settle(dice(&[1]), |_| {}), None);
     }
 
     #[test]

@@ -14,6 +14,10 @@
 //! piece over its class trainer's outfit ([`outfit`]), with the name and features the class keeps
 //! beside its gear ([`looks`]), picked in the Character tab's Appearance panel ([`looks_ui`]).
 //!
+//! Molten Core adds its own pieces apart from the catalog ([`raid`]): each class's Tier 1 set with
+//! its 3/5/8-piece bonuses, the bosses' named drops, Bound jewelry and the road to Sulfuras. A
+//! class keeps them in the same collection; the account keeps the jewelry and quest items.
+//!
 //! `WOW_SURVIVORS_GEAR=all|<n>` collects every piece of each class, or its first `n` in catalog
 //! order (Common first), and wears the best of them, in memory only: nothing of it is saved.
 
@@ -24,6 +28,7 @@ pub(super) mod looks_create;
 mod looks_ui;
 mod loot;
 mod outfit;
+pub(super) mod raid;
 mod save;
 mod store;
 mod ui;
@@ -41,8 +46,9 @@ pub(super) use looks_ui::{hero_name, looks_panel, saved_body, HeroNameText, Hero
 #[cfg_attr(not(feature = "coop"), allow(unused_imports))]
 pub(super) use loot::{GroupDrops, WonLoot};
 pub(super) use outfit::{wear, Dresser};
+pub(super) use raid::{gear_for, raid_piece, set_of, tier_set, RaidVault, SULFURAS};
 pub(super) use save::GearSave;
-pub(in crate::survivors) use store::{class_gear, GearRead};
+pub(in crate::survivors) use store::{class_gear, raid_vault, GearRead};
 pub(super) use ui::{GearAction, GearView, ItemIcon};
 pub(super) use view::{
     boss_rows, clock, percent, progress, rarity_label, sources, summed, zone_rows, zones_dropping,
@@ -96,11 +102,16 @@ pub(super) fn plugin(app: &mut App) {
             (
                 loot::show_toasts.after(hud::refresh_hud),
                 loot::grant_won.before(loot::show_toasts),
+                loot::drop_raid_loot
+                    .before(loot::show_toasts)
+                    .run_if(super::party::simulates),
+                loot::wear_tier,
                 ui::gear_clicks,
                 ui::fill_item_icons,
             ),
         )
         .add_systems(OnEnter(Phase::Menu), loot::clear_toasts)
+        .add_systems(OnEnter(Phase::Playing), loot::wear_bound)
         // The chests the run's end opened roll ahead of its record, so their gold is in it.
         .add_systems(
             OnEnter(Phase::GameOver),
@@ -141,7 +152,7 @@ fn apply_gear(selection: Res<Selection>, gear: store::GearRead, mut parts: ResMu
         return;
     }
     let want = selection.class.map_or_else(Bonuses::default, |c| {
-        bonuses_of(&gear.get(c).equipped_ids())
+        worn_bonuses(&gear.get(c).equipped_ids())
     });
     if parts.gear != want {
         parts.gear = want;
@@ -249,12 +260,21 @@ pub(super) fn items_for(class: usize) -> &'static [Item] {
     catalog::CLASS_ITEMS.get(class).copied().unwrap_or(&[])
 }
 
-/// The piece with id `id`, from any class.
+/// The piece with id `id`, from any class's catalog or the raid's ([`raid`]).
 pub(super) fn item(id: u16) -> Option<&'static Item> {
     catalog::CLASS_ITEMS
         .iter()
         .flat_map(|items| items.iter())
         .find(|i| i.id == id)
+        .or_else(|| raid::raid_piece(id).map(|p| &p.item))
+}
+
+/// Whether class `class` may wear `piece`: its own catalog's, or a raid piece listing it.
+pub(super) fn usable_by(piece: &Item, class: usize) -> bool {
+    match raid::raid_piece(piece.id) {
+        Some(p) => p.kind == raid::RaidKind::Gear && p.classes.contains(&class),
+        None => piece.class == class,
+    }
 }
 
 /// The piece a drop resolves to: class `class`'s for `slot` at `rarity`.
@@ -268,6 +288,14 @@ pub(super) fn piece(class: usize, slot: Slot, rarity: Rarity) -> Option<&'static
 /// `map` drops; `None` past either end.
 pub(super) fn drops_for(map: usize, boss: usize) -> Option<&'static BossDrop> {
     drops::ZONES.get(map)?.bosses.get(boss)
+}
+
+/// What the pieces `ids` grant worn together: their own bonuses ([`bonuses_of`]) and the Tier 1
+/// set steps they reach ([`raid::set_stats`]).
+pub(super) fn worn_bonuses(ids: &[u16]) -> Bonuses {
+    let mut total = bonuses_of(ids);
+    total.merge(&raid::set_stats(ids));
+    total
 }
 
 /// The summed bonuses of the pieces `ids`; an unknown id adds nothing.

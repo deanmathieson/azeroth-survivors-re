@@ -47,7 +47,6 @@ use super::abilities::Hit;
 use super::bonus::School;
 use super::enemies::{self, Enemy, Rank};
 use super::hero::{self, Hero, HERO_RADIUS};
-use super::hud::{NoteKind, ResultsNotes};
 use super::party;
 use super::run_options::RunOptions;
 use super::units::{self, flat, yaw_toward, Fx, Marks, COLOR_HURT};
@@ -123,6 +122,7 @@ pub(crate) const MELEE_RING: f32 = 14.0;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<Yelled>()
+        .add_message::<Felled>()
         .add_systems(
             Update,
             (
@@ -1587,6 +1587,14 @@ pub(crate) fn inferno_beats(
 // Yells
 // ---------------------------------------------------------------------------------------------
 
+/// A scripted foe was beaten: slain, or (Majordomo) yielded. Its loot drops from it
+/// ([`super::gear`]).
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Felled {
+    /// Its script's name.
+    pub boss: &'static str,
+}
+
 /// A boss said something: every machine shows it and sounds its kit.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub(crate) struct Yelled {
@@ -1777,6 +1785,7 @@ fn run_bosses(
     mut fx: Fx,
     mut yells: MessageWriter<Yelled>,
     mut hits: MessageWriter<Hit>,
+    mut felled: MessageWriter<Felled>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -1861,6 +1870,7 @@ fn run_bosses(
         }
         if let Some(line) = ties.submitted {
             yells.write(Yelled::of(&line, name));
+            felled.write(Felled { boss: name });
             run.final_boss = true;
         }
 
@@ -2747,8 +2757,8 @@ pub(crate) fn undying_heal(hp: f32, max_hp: f32) -> Option<f32> {
     (hp < max_hp * UNDYING_FLOOR).then_some(max_hp)
 }
 
-/// What a scripted foe's fall sets off: its death cry, an eruption where it fell, and a stack of its
-/// master's enrage.
+/// What a scripted foe's fall sets off: its death cry, its loot ([`Felled`]), an eruption where it
+/// fell, and a stack of its master's enrage.
 #[allow(clippy::type_complexity)]
 fn on_deaths(
     mut commands: Commands,
@@ -2756,8 +2766,7 @@ fn on_deaths(
     mut kills: MessageReader<enemies::Loot>,
     mut masters: Query<(Entity, &mut Enemy, &mut Marks), (With<RaidBoss>, Without<Hero>)>,
     mut yells: MessageWriter<Yelled>,
-    mut rng: ResMut<Rng>,
-    mut notes: Option<ResMut<ResultsNotes>>,
+    mut felled: MessageWriter<Felled>,
     mut fx: Fx,
 ) {
     let now = run.elapsed;
@@ -2768,19 +2777,7 @@ fn on_deaths(
         if let Some(y) = &script.death {
             yells.write(Yelled::of(y, script.name));
         }
-        // The Firelord's hoard, rolled as he falls and kept on the results screen.
-        if script.name == bosses::RAGNAROS.name {
-            for (item, name, chance) in bosses::RAGNAROS_LOOT {
-                if rng.f32() < *chance {
-                    if let Some(notes) = notes.as_mut() {
-                        notes.push(
-                            format!("Ragnaros dropped [{name}] ({item})"),
-                            NoteKind::Loot,
-                        );
-                    }
-                }
-            }
-        }
+        felled.write(Felled { boss: script.name });
         let master = script.master.and_then(|m| {
             masters
                 .iter()

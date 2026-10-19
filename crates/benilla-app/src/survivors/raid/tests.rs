@@ -580,6 +580,7 @@ fn raid_world(dt: f32, now: f32, party: u8) -> World {
     world.init_resource::<Messages<crate::creature_anim::SwingMessage>>();
     world.init_resource::<Messages<crate::combat_text::CombatTextSpawn>>();
     world.init_resource::<Messages<Hit>>();
+    world.init_resource::<Messages<Felled>>();
     world
 }
 
@@ -2178,8 +2179,7 @@ fn ragnaros_drops_his_hoard_and_his_fall_clears_the_core() {
     let mut world = raid_world(0.1, 400.0, 1);
     world.init_resource::<Messages<enemies::Loot>>();
     world.init_resource::<Messages<Yelled>>();
-    world.init_resource::<crate::survivors::hud::ResultsNotes>();
-    for _ in 0..20 {
+    for _ in 0..3 {
         world.write_message(enemies::Loot {
             pos: Vec3::ZERO,
             xp: 1,
@@ -2193,25 +2193,10 @@ fn ragnaros_drops_his_hoard_and_his_fall_clears_the_core() {
     assert!(yells
         .iter()
         .all(|y| y.kit == RAGNAROS_DEATH && y.text.contains("Molten Core is cleared")));
-    let notes = &world.resource::<crate::survivors::hud::ResultsNotes>().0;
-    assert!(!notes.is_empty(), "twenty falls drop something");
-    for (text, _) in notes {
-        assert!(
-            RAGNAROS_LOOT
-                .iter()
-                .any(|(id, name, _)| text.contains(name) && text.contains(&id.to_string())),
-            "{text}"
-        );
-    }
-    assert_eq!(
-        RAGNAROS_LOOT.iter().map(|l| l.1).collect::<Vec<_>>(),
-        [
-            "Sulfuron Ingot",
-            "Eye of Sulfuras",
-            "Bonereaver's Edge",
-            "Band of Accuria"
-        ]
-    );
+    // Each fall drops his hoard: the gear's raid loot reads it ([`Felled`]).
+    let felled: Vec<Felled> = world.resource_mut::<Messages<Felled>>().drain().collect();
+    assert_eq!(felled, vec![Felled { boss: "Ragnaros" }; 3]);
+    assert!(crate::survivors::gear::raid::loot_for("Ragnaros").is_some());
 }
 
 #[test]

@@ -35,8 +35,19 @@ pub(in crate::survivors) struct Source {
     pub chance: f32,
 }
 
-/// Every boss that drops `item`, in battleground and roster order.
+/// Every boss that drops `item`, in battleground and roster order; a raid piece's Molten Core
+/// bosses, each with its odds for a solo kill.
 pub(in crate::survivors) fn sources(item: &Item) -> Vec<Source> {
+    if super::raid_piece(item.id).is_some() {
+        return super::raid::sources(item.id)
+            .into_iter()
+            .map(|(boss, chance)| Source {
+                zone: "Molten Core",
+                boss,
+                chance,
+            })
+            .collect();
+    }
     drops::ZONES
         .iter()
         .flat_map(|z| z.bosses.iter().map(move |d| (z.map, d)))

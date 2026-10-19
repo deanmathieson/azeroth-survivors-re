@@ -357,6 +357,11 @@ pub(in crate::survivors) struct Hello {
     pub(in crate::survivors) mount_hat: Option<super::super::stable::CosmeticHat>,
     /// Completed-deck trinket pinned by this player's own profile.
     pub(in crate::survivors) pinned_trinket: Option<String>,
+    /// How many pieces of its class's Tier 1 set the picked class wears: the host grants the set's
+    /// 8-piece proc on it (the 3 and 5 are in `bonuses`).
+    pub(in crate::survivors) tier: u8,
+    /// The Bound raid jewelry this player's account keeps, by jewelry key: worn from the start.
+    pub(in crate::survivors) bound: Vec<String>,
     /// The build it runs ([`super::build_tag`]): the host turns away any other.
     pub(in crate::survivors) build: String,
 }
@@ -662,6 +667,8 @@ mod tests {
                 scale: 1.0,
             }),
             pinned_trinket: None,
+            tier: 5,
+            bound: vec!["band_of_accuria".into()],
             build: "p1-0.2.0-abc1234".into(),
         };
         assert_eq!(round(&hello), hello);

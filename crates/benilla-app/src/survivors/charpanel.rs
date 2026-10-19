@@ -30,7 +30,7 @@ use bevy::ui_render::ui_material::MaterialNode;
 
 use super::armory::{self, TabCtx};
 use super::bonus::School;
-use super::gear::{class_gear, hero_name, GearSave, ItemIcon, Slot};
+use super::gear::{class_gear, hero_name, tier_set, GearSave, ItemIcon, Slot};
 use super::hud::{self, rgb, HudFont};
 use super::jewelry::SLOTS;
 use super::meta::MetaParts;
@@ -676,6 +676,18 @@ fn hero_column(p: &mut ChildSpawnerCommands, ctx: &TabCtx, sheet: &Sheet) {
             let (name, color) = worn.map_or(("Empty", DIM), |i| (i.name, i.rarity.color()));
             fill_text(r, ctx, name, 11.0, color);
         });
+    }
+    // The class's Tier 1 set, once any of it is worn: each step, green once reached.
+    if let Some(set) = tier_set(sheet.class) {
+        let on = set.worn(&sheet.gear.equipped_ids());
+        if on > 0 {
+            gap(p, 4.0);
+            armory::para(p, ctx, &format!("{} ({on}/8)", set.name), 11.0, GOLD);
+            for b in &set.bonuses {
+                let color = if on >= b.pieces { UP } else { DIM };
+                armory::para(p, ctx, &format!("({}) {}", b.pieces, b.text), 10.0, color);
+            }
+        }
     }
     gap(p, 8.0);
     heading(p, ctx, "Jewelry");

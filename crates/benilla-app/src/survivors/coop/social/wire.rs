@@ -65,6 +65,12 @@ pub(in crate::survivors) enum Body {
         max: u32,
     },
     Emoted(u8),
+    /// Rolled at a group roll for this piece of gear, as Need or Greed.
+    LootRoll {
+        item: u16,
+        pick: RollPick,
+        value: u32,
+    },
     /// Won a group roll for this piece of gear.
     Won {
         item: u16,

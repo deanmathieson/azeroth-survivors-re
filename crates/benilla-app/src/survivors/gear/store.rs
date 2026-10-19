@@ -1,12 +1,14 @@
 //! Where each class's [`GearSave`] lives: its profile record, saved with the profile, or, while a
 //! [`Shadow`] is up, an in-memory copy that is never saved. Every read and write of gear goes
-//! through [`GearStore`], [`GearRead`] or [`class_gear`], so the two never mix.
+//! through [`GearStore`], [`GearRead`] or [`class_gear`], so the two never mix. The account's
+//! [`RaidVault`] lives beside it the same way.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use super::super::data::CLASSES;
 use super::super::profile::{slug, Profile};
+use super::raid::{self, Kept, RaidKind, RaidPiece, RaidVault};
 use super::{items_for, GearSave};
 
 /// Gear kept in memory only: the `WOW_SURVIVORS_GEAR` screenshot aid, or an auto-runner run the
@@ -18,6 +20,8 @@ pub(super) struct Shadow {
     extra: usize,
     /// Per class, in [`CLASSES`] order; `None` until filled.
     classes: Option<Vec<GearSave>>,
+    /// The account's raid vault, filled with the classes.
+    vault: Option<RaidVault>,
 }
 
 impl Shadow {
@@ -25,6 +29,7 @@ impl Shadow {
         Self {
             extra,
             classes: None,
+            vault: None,
         }
     }
 
@@ -44,6 +49,7 @@ impl Shadow {
             })
             .collect();
         self.classes = Some(classes);
+        self.vault = Some(profile.map_or_else(RaidVault::default, |p| p.raid.clone()));
     }
 }
 
@@ -79,6 +85,25 @@ fn gear_of<'a>(
     }
 }
 
+/// Nothing kept, for a world without a profile.
+static NO_VAULT: RaidVault = RaidVault::EMPTY;
+
+/// The account's raid vault: the shadow's once filled, else the profile's.
+fn vault_of<'a>(profile: Option<&'a Profile>, shadow: Option<&'a Shadow>) -> &'a RaidVault {
+    match shadow.and_then(|s| s.vault.as_ref()) {
+        Some(vault) => vault,
+        None => profile.map_or(&NO_VAULT, |p| &p.raid),
+    }
+}
+
+/// The account's raid vault, read straight from the world.
+pub(in crate::survivors) fn raid_vault(world: &World) -> &RaidVault {
+    vault_of(
+        world.get_resource::<Profile>(),
+        world.get_resource::<Shadow>(),
+    )
+}
+
 /// Class `class`'s gear, read straight from the world (the Armory's tab builders).
 pub(in crate::survivors) fn class_gear(world: &World, class: usize) -> &GearSave {
     gear_of(
@@ -98,6 +123,10 @@ pub(in crate::survivors) struct GearRead<'w> {
 impl GearRead<'_> {
     pub(in crate::survivors) fn get(&self, class: usize) -> &GearSave {
         gear_of(self.profile.as_deref(), self.shadow.as_deref(), class)
+    }
+
+    pub(in crate::survivors) fn vault(&self) -> &RaidVault {
+        vault_of(self.profile.as_deref(), self.shadow.as_deref())
     }
 
     /// Whether any class's gear may have changed since the system last ran.
@@ -135,6 +164,51 @@ impl GearStore<'_> {
         let out = f(&mut profile.classes.entry(slug(name)).or_default().gear);
         profile.mark_dirty();
         Some(out)
+    }
+
+    /// Change the account's raid vault with `f`, as [`GearStore::edit`] changes gear. `None`, and
+    /// `f` unrun, without a profile.
+    pub(super) fn edit_vault<R>(&mut self, f: impl FnOnce(&mut RaidVault) -> R) -> Option<R> {
+        if let Some(shadow) = self.shadow.as_deref_mut() {
+            shadow.fill(self.profile.as_deref());
+            return shadow.vault.as_mut().map(f);
+        }
+        let profile = self.profile.as_deref_mut()?;
+        let out = f(&mut profile.raid);
+        profile.mark_dirty();
+        Some(out)
+    }
+
+    /// Keep raid piece `piece`, won by a player of class `class`: gear in its keeper's class
+    /// ([`raid::keeper`]), jewelry and quest items in the vault. Then, with an Eye and an Ingot
+    /// held, the forge lights and Sulfuras joins the gear of every class it is for: the second
+    /// value says it did.
+    pub(super) fn keep_raid(&mut self, piece: &RaidPiece, class: usize) -> (Kept, bool) {
+        let kept = match piece.kind {
+            RaidKind::Gear => {
+                let to = raid::keeper(piece, class);
+                if self.get(to).has(piece.item.id) {
+                    Kept::Duplicate
+                } else {
+                    let mut unused = RaidVault::default();
+                    self.edit(to, |g| raid::keep(piece, Some(g), &mut unused))
+                        .unwrap_or(Kept::Duplicate)
+                }
+            }
+            _ => self
+                .edit_vault(|v| raid::keep(piece, None, v))
+                .unwrap_or(Kept::Duplicate),
+        };
+        let forged =
+            matches!(kept, Kept::Counted(_)) && self.edit_vault(raid::forge).unwrap_or(false);
+        if forged {
+            if let Some(sulfuras) = raid::raid_piece(raid::SULFURAS) {
+                for &c in raid::SULFURAS_CLASSES {
+                    self.edit(c, |g| g.collect(&sulfuras.item));
+                }
+            }
+        }
+        (kept, forged)
     }
 }
 

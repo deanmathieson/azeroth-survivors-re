@@ -11,7 +11,7 @@ use bevy_replicon::server::server_tick::ServerTick;
 use super::super::campfire::{self, Camp, CampAsk, CampProp, VendorItem};
 use super::super::data;
 use super::super::enemies::{self, Enemy, Gem};
-use super::super::gear::GearRead;
+use super::super::gear::{self, GearRead};
 use super::super::hand;
 use super::super::hero::{self, Hero};
 use super::super::hud::{Choice, Offer};
@@ -48,6 +48,9 @@ pub(super) struct Peer {
     pub(super) mount_display: u32,
     pub(super) mount_hat: Option<super::super::stable::CosmeticHat>,
     pub(super) pinned_trinket: Option<String>,
+    /// Its Tier 1 pieces worn, and its Bound raid jewelry ([`Hello::tier`], [`Hello::bound`]).
+    pub(super) tier: u8,
+    pub(super) bound: Vec<String>,
     pub(super) hero: Option<Entity>,
 }
 
@@ -238,6 +241,8 @@ pub(super) fn greet(
             mount_display: h.mount_display,
             mount_hat: h.mount_hat,
             pinned_trinket: h.pinned_trinket.clone(),
+            tier: h.tier.min(8),
+            bound: h.bound.clone(),
             // A repeated hello (sent until welcomed) keeps the hero it has.
             hero: old_hero,
         });
@@ -616,6 +621,14 @@ pub(super) fn spawn_peer_hero(
         .and_then(jewelry::darkmoon_piece)
     {
         jewelry::put_on(&mut state, piece);
+    }
+    // Its Tier 1 set's 8-piece, and its Bound raid jewelry: only keys the raid binds, never any
+    // other piece of the catalog.
+    gear::raid::apply_tier(&mut state, class, peer.tier);
+    for key in &peer.bound {
+        if let Some(piece) = gear::raid::bound_piece(key) {
+            jewelry::put_on(&mut state, piece);
+        }
     }
     let e = hero::spawn_hero(commands, state, peer.trainer, peer.sex, run.guid(), pos);
     let mut remote = commands.entity(e);

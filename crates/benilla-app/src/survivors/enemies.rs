@@ -1622,6 +1622,10 @@ pub(super) fn move_enemies(
                 let thorns = struck.thorns * struck.stats().might;
                 hits.write(Hit::direct(target, ent, thorns, false));
             }
+            // A full Battlegear of Might strikes a share of the blow back.
+            if struck.reflect > 0.0 {
+                hits.write(Hit::direct(target, ent, raw * struck.reflect, false));
+            }
             // A paladin's Retribution Aura answers the blow with holy damage, the paladin's own.
             if let Some((paladin, reflect)) = synergy::reflect(&struck, run.level) {
                 hits.write(Hit {

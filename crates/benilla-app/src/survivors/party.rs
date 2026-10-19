@@ -146,6 +146,9 @@ pub(super) struct HeroState {
     pub thorns_spell: u32,
     pub heal_rate: f32,
     pub heal_t: f32,
+    /// The share of each melee blow taken that is struck back at the attacker: a full Battlegear
+    /// of Might ([`super::gear::apply_tier`]).
+    pub reflect: f32,
     /// The class mobility's cooldown and running effect.
     pub(super) mobile: mobility::MobilityState,
     /// Seconds since this hero fell, while the death plays out.
@@ -217,6 +220,7 @@ impl Default for HeroState {
             thorns_spell: 0,
             heal_rate: 0.0,
             heal_t: 0.0,
+            reflect: 0.0,
             mobile: mobility::MobilityState::default(),
             dead_t: None,
             revive_t: 0.0,

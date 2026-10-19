@@ -1,7 +1,9 @@
 //! The Armory's Collection tab: the picked class's 45 pieces as a grid, a row per rarity (with the
 //! battlegrounds that drop it) and a column per slot, uncollected pieces a dim "?" and worn ones
-//! badged "E". The left column tallies the collection; clicking a piece shows it under Details,
-//! with what it grants, who drops it and an Equip button once it is collected.
+//! badged "E". Under them, Molten Core: the class's Tier 1 set in its slots, and the raid's named
+//! pieces it may wear. The left column tallies the collection and the account's raid vault;
+//! clicking a piece shows it under Details, with what it grants, who drops it and an Equip button
+//! once it is collected.
 //!
 //! The other gear tabs share this file's kit: [`item_icon`], [`item_tip`], [`progress_bar`] and
 //! [`sheen`].
@@ -12,9 +14,11 @@ use bevy::ui_render::ui_material::MaterialNode;
 use super::{columns, para, text, ArmoryTip, Column, TabCtx};
 use crate::glue::art::{DIM, GOLD};
 use crate::glue::widgets::{glue_button, outlined_text, overlay, GlueBtnKind, GlueText, Hilight};
+use crate::survivors::gear::raid::RaidKind;
 use crate::survivors::gear::{
-    class_gear, item, items_for, percent, progress, rarity_label, sources, zones_dropping,
-    GearAction, GearSave, GearView, Item, ItemIcon, Slot, RARITIES,
+    class_gear, gear_for, item, items_for, percent, progress, raid_piece, raid_vault, rarity_label,
+    set_of, sources, tier_set, usable_by, zones_dropping, GearAction, GearSave, GearView, Item,
+    ItemIcon, RaidVault, Slot, RARITIES,
 };
 
 /// `GREEN_FONT_COLOR`: what a piece grants, and a worn piece.
@@ -31,7 +35,7 @@ pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
         .res::<GearView>()
         .and_then(|v| v.item)
         .and_then(item)
-        .filter(|i| Some(i.class) == class);
+        .filter(|i| class.is_some_and(|c| usable_by(i, c)));
     columns(parent, ctx, Some("Collection"), false, |col, p| {
         let Some(class) = class else {
             if col == Column::Center {
@@ -41,15 +45,22 @@ pub(super) fn build(parent: &mut ChildSpawnerCommands, ctx: &TabCtx) {
         };
         let gear = class_gear(ctx.world, class);
         match col {
-            Column::Left => tally(p, ctx, class, gear),
+            Column::Left => tally(p, ctx, class, gear, raid_vault(ctx.world)),
             Column::Center => grid(p, ctx, class, gear, picked),
             Column::Details => details(p, ctx, gear, picked),
         }
     });
 }
 
-/// The left column: pieces collected in all and by rarity, and how many slots are filled.
-fn tally(p: &mut ChildSpawnerCommands, ctx: &TabCtx, class: usize, gear: &GearSave) {
+/// The left column: pieces collected in all and by rarity, and how many slots are filled; then
+/// Molten Core's pieces, the Tier 1 set worn, and what the account's raid vault holds.
+fn tally(
+    p: &mut ChildSpawnerCommands,
+    ctx: &TabCtx,
+    class: usize,
+    gear: &GearSave,
+    vault: &RaidVault,
+) {
     let (have, of) = progress(class, gear, None);
     p.spawn(Node {
         justify_content: JustifyContent::Center,
@@ -82,6 +93,32 @@ fn tally(p: &mut ChildSpawnerCommands, ctx: &TabCtx, class: usize, gear: &GearSa
         GOLD,
         &format!("{worn} / {}", Slot::ALL.len()),
     );
+    let raid: Vec<_> = gear_for(class).collect();
+    let have = raid.iter().filter(|r| gear.has(r.item.id)).count();
+    row(
+        p,
+        ctx,
+        "Molten Core",
+        GOLD,
+        &format!("{have} / {}", raid.len()),
+    );
+    if let Some(set) = tier_set(class) {
+        let on = set.worn(&gear.equipped_ids());
+        row(p, ctx, set.name, GOLD, &format!("{on} / 8"));
+    }
+    row(p, ctx, "Eye of Sulfuras", GOLD, &vault.eyes.to_string());
+    row(p, ctx, "Sulfuron Ingots", GOLD, &vault.ingots.to_string());
+    for id in &vault.bound {
+        if let Some(r) = raid_piece(*id) {
+            para(
+                p,
+                ctx,
+                &format!("Bound: {}", r.item.name),
+                11.0,
+                r.item.rarity.color(),
+            );
+        }
+    }
     p.spawn(Node {
         flex_grow: 1.0,
         ..default()
@@ -89,7 +126,8 @@ fn tally(p: &mut ChildSpawnerCommands, ctx: &TabCtx, class: usize, gear: &GearSa
     para(
         p,
         ctx,
-        "Bosses drop gear for the class you play. Click a piece to see where it drops.",
+        "Bosses drop gear for the class you play. Molten Core's Bound jewelry is worn from the \
+         start of every run. Click a piece to see where it drops.",
         11.0,
         DIM,
     );
@@ -213,6 +251,71 @@ fn grid(
                         gear,
                         picked.is_some_and(|p| p.id == piece.id),
                     );
+                });
+            }
+        });
+    }
+    raid_rows(p, ctx, class, gear, picked);
+}
+
+/// Molten Core under the rarities: the class's Tier 1 set in its slots, then the raid's named
+/// pieces it may wear, as many to a row as there are slots.
+fn raid_rows(
+    p: &mut ChildSpawnerCommands,
+    ctx: &TabCtx,
+    class: usize,
+    gear: &GearSave,
+    picked: Option<&Item>,
+) {
+    let cells = || Node {
+        flex_shrink: 0.0,
+        column_gap: Val::Px(2.0),
+        ..default()
+    };
+    let cell = || Node {
+        flex_grow: 1.0,
+        flex_basis: Val::Px(0.0),
+        justify_content: JustifyContent::Center,
+        ..default()
+    };
+    let label = |p: &mut ChildSpawnerCommands, text_: &str, color: Color| {
+        p.spawn(Node {
+            flex_shrink: 0.0,
+            margin: UiRect::top(Val::Px(10.0)),
+            ..default()
+        })
+        .with_children(|l| {
+            text(l, ctx, text_, 13.0, color);
+        });
+    };
+    let is_picked = |id: u16| picked.is_some_and(|p| p.id == id);
+    if let Some(set) = tier_set(class) {
+        label(p, &format!("Molten Core: {}", set.name), GOLD);
+        p.spawn(cells()).with_children(|r| {
+            for slot in Slot::ALL {
+                r.spawn(cell()).with_children(|c| {
+                    if let Some(piece) = set.pieces().find(|q| q.item.slot == slot) {
+                        piece_cell(c, ctx, &piece.item, gear, is_picked(piece.item.id));
+                    }
+                });
+            }
+        });
+    }
+    let named: Vec<&'static Item> = gear_for(class)
+        .filter(|r| set_of(r.item.id).is_none())
+        .map(|r| &r.item)
+        .collect();
+    if named.is_empty() {
+        return;
+    }
+    label(p, "Molten Core: named drops", GOLD);
+    for chunk in named.chunks(Slot::ALL.len()) {
+        p.spawn(cells()).with_children(|r| {
+            for i in 0..Slot::ALL.len() {
+                r.spawn(cell()).with_children(|c| {
+                    if let Some(&piece) = chunk.get(i) {
+                        piece_cell(c, ctx, piece, gear, is_picked(piece.id));
+                    }
                 });
             }
         });
@@ -347,20 +450,30 @@ fn details(p: &mut ChildSpawnerCommands, ctx: &TabCtx, gear: &GearSave, picked: 
             1.0,
         );
     });
-    para(
-        p,
-        ctx,
-        &format!("{} {}", rarity_label(piece.rarity), piece.slot.label()),
-        12.0,
-        Color::WHITE,
-    );
+    para(p, ctx, &kind_line(piece), 12.0, Color::WHITE);
     let (status, color) = status(have, worn);
     para(p, ctx, status, 12.0, color);
     gap(p, 6.0);
     for b in piece.bonuses {
         para(p, ctx, &b.describe(), 12.0, TIP_GREEN);
     }
+    for (line, color) in set_lines(piece, gear) {
+        para(p, ctx, &line, 11.0, color);
+    }
+    if let Some(r) = raid_piece(piece.id) {
+        para(p, ctx, &format!("Item {} in 1.12", r.real), 10.0, DIM);
+    }
     gap(p, 8.0);
+    if piece.id == crate::survivors::gear::SULFURAS {
+        para(
+            p,
+            ctx,
+            "Forged from an Eye of Sulfuras and a Sulfuron Ingot, for the Warrior, the Paladin \
+             and the Shaman.",
+            11.0,
+            DIM,
+        );
+    }
     para(p, ctx, "Dropped by", 13.0, GOLD);
     for s in sources(piece) {
         para(p, ctx, s.boss, 12.0, Color::WHITE);
@@ -441,27 +554,50 @@ pub(super) fn item_icon(p: &mut ChildSpawnerCommands, icon: &'static str, size: 
 /// line is the useful 1.12-style comparison when the same slot already has an item.
 pub(in crate::survivors) fn item_tip(piece: &Item, gear: &GearSave) -> ArmoryTip {
     let (status, color) = status(gear.has(piece.id), gear.wears(piece.id));
-    let lines = std::iter::once((
-        format!("{} {}", rarity_label(piece.rarity), piece.slot.label()),
-        piece.rarity.color(),
-    ))
-    .chain(
-        piece
-            .bonuses
-            .iter()
-            .map(|b| (format!("Equip: {}", b.describe()), TIP_GREEN)),
-    )
-    .chain(
-        gear.worn(piece.slot)
-            .filter(|worn| worn.id != piece.id)
-            .map(|worn| (format!("Currently equipped: {}", worn.name), DIM)),
-    )
-    .chain(std::iter::once((status.to_string(), color)))
-    .collect();
+    let lines = std::iter::once((kind_line(piece), piece.rarity.color()))
+        .chain(
+            piece
+                .bonuses
+                .iter()
+                .map(|b| (format!("Equip: {}", b.describe()), TIP_GREEN)),
+        )
+        .chain(set_lines(piece, gear))
+        .chain(
+            gear.worn(piece.slot)
+                .filter(|_| raid_piece(piece.id).is_none_or(|r| r.kind == RaidKind::Gear))
+                .filter(|worn| worn.id != piece.id)
+                .map(|worn| (format!("Currently equipped: {}", worn.name), DIM)),
+        )
+        .chain(std::iter::once((status.to_string(), color)))
+        .collect();
     ArmoryTip {
         title: piece.name.to_string(),
         lines,
     }
+}
+
+/// A piece's second tooltip line: "Epic Head"; a raid piece's own ("Bound Epic Ring",
+/// "Quest Item").
+fn kind_line(piece: &Item) -> String {
+    match raid_piece(piece.id) {
+        Some(r) => r.label(),
+        None => format!("{} {}", rarity_label(piece.rarity), piece.slot.label()),
+    }
+}
+
+/// A Tier 1 piece's set block, as the 1.12 tooltip prints it: the set and how many of it `gear`
+/// wears, then each step, green once reached.
+pub(in crate::survivors) fn set_lines(piece: &Item, gear: &GearSave) -> Vec<(String, Color)> {
+    let Some(set) = set_of(piece.id) else {
+        return Vec::new();
+    };
+    let on = set.worn(&gear.equipped_ids());
+    std::iter::once((format!("{} ({on}/8)", set.name), GOLD))
+        .chain(set.bonuses.iter().map(|b| {
+            let color = if on >= b.pieces { TIP_GREEN } else { DIM };
+            (format!("({}) Set: {}", b.pieces, b.text), color)
+        }))
+        .collect()
 }
 
 /// A list row's hover sheen: the quest log's, else the zone list's.
@@ -501,6 +637,37 @@ mod tests {
         gear.collect(p);
         assert_eq!(item_tip(p, &gear).lines.last().unwrap().0, "Equipped");
         assert_eq!(status(true, false).0, "Collected");
+    }
+
+    #[test]
+    fn tier_one_tips_show_the_set_and_its_steps() {
+        let set = tier_set(4).unwrap();
+        let pieces: Vec<_> = set.pieces().collect();
+        let mut gear = GearSave::default();
+        for p in &pieces[..3] {
+            gear.collect(&p.item);
+        }
+        let tip = item_tip(&pieces[0].item, &gear);
+        assert_eq!(tip.lines[0].0, "Epic Head");
+        let at = |s: &str| {
+            tip.lines
+                .iter()
+                .find(|l| l.0.starts_with(s))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(at(set.name).0, "Vestments of Prophecy (3/8)");
+        assert_eq!(at("(3) Set:").1, TIP_GREEN);
+        assert_eq!(at("(5) Set:").1, DIM);
+        assert_eq!(at("(8) Set:").1, DIM);
+        // A named raid piece has no set; jewelry and quest items say what they are.
+        let staff = raid_piece(2111).unwrap();
+        assert!(set_lines(&staff.item, &gear).is_empty());
+        assert_eq!(
+            kind_line(&raid_piece(2135).unwrap().item),
+            "Bound Legendary Ring"
+        );
+        assert_eq!(kind_line(&raid_piece(2150).unwrap().item), "Quest Item");
     }
 
     #[test]

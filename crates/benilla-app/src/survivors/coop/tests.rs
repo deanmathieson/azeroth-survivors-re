@@ -518,6 +518,8 @@ fn a_deathcharger_and_tiny_party_hat_reach_the_host_and_client_mirror_over_loopb
             scale: 1.0,
         }),
         pinned_trinket: None,
+        tier: 0,
+        bound: Vec::new(),
         hero: None,
     };
     let (host_hero, theirs) = {
@@ -758,6 +760,8 @@ fn co_op_never_waits_and_remote_players_bank_jewelry_and_catch_up() {
         mount_display: 0,
         mount_hat: None,
         pinned_trinket: None,
+        tier: 0,
+        bound: Vec::new(),
         hero: None,
     };
     // Joining at level 6, it banks five hands; and one jewelry choice from a cache.
@@ -857,6 +861,8 @@ fn a_client_on_another_build_is_turned_away_with_a_reason() {
             scale: 1.0,
         }),
         pinned_trinket: None,
+        tier: 0,
+        bound: Vec::new(),
         build: build.into(),
     };
     let (stale, fresh) = (world.spawn_empty().id(), world.spawn_empty().id());
@@ -1053,6 +1059,8 @@ fn host_applies_a_clients_cosmetics_to_its_hero_only() {
         mount_display: 0,
         mount_hat: None,
         pinned_trinket: None,
+        tier: 0,
+        bound: Vec::new(),
         hero: Some(theirs),
     });
     let hat = CosmeticHat {
